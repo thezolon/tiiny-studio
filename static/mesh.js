@@ -32,7 +32,7 @@ const MeshWS = {
   render() {
     if (!this.mounted) return;
     this.renderGate();
-    $("#mPanel").replaceChildren(...this.panel());
+    $("#mPanel").replaceChildren(...this.panel().filter(Boolean));  // hidden parts are null, which append would print
     this.renderFoot(); this.renderStage(); this.renderStrip();
   },
   renderGate() {

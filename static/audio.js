@@ -77,7 +77,7 @@ const AudioWS = {
     if (!this.mounted) return;
     $("#aTools").replaceChildren(...TOOLS.map((t) => el("button", { "aria-pressed": A.tool === t.id, onclick: () => { A.tool = t.id; store.set("audio.tool", t.id); this.render(); } }, icon(t.icon), t.label)));
     this.renderGate();
-    $("#aPanel").replaceChildren(...{ speech: () => this.speechPanel(), loop: () => this.loopPanel(), song: () => this.songPanel(), transcribe: () => this.transcribePanel() }[A.tool]());
+    $("#aPanel").replaceChildren(...{ speech: () => this.speechPanel(), loop: () => this.loopPanel(), song: () => this.songPanel(), transcribe: () => this.transcribePanel() }[A.tool]().filter(Boolean));  // hidden parts are null
     this.renderFoot(); this.renderStage(); this.renderStrip();
   },
   renderGate() {
