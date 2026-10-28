@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Tiiny Pocket itself (TiinyOS, the device, models)
+    url: https://github.com/thezolon/tiiny-api-notes
+    about: Device behaviour that isn't the studio's doing is documented (and collected) in tiiny-api-notes.

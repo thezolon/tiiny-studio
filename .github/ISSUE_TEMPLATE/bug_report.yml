@@ -1,0 +1,67 @@
+name: Bug report
+description: Something in Tiiny Studio doesn't work as it should
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time. Please **don't paste API keys, passwords or your network addresses**: the studio
+        never needs them in a report (write `192.168.1.50` or "my Tiiny's address" instead).
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What you did, what you expected, and what happened instead. Screenshots help a lot.
+      placeholder: |
+        1. In Audio → Song, picked AceStep-XL-Turbo
+        2. Clicked Compose
+        3. Got "…" after 2 seconds
+    validations:
+      required: true
+  - type: dropdown
+    id: install
+    attributes:
+      label: How do you run the studio?
+      options:
+        - Desktop app on Windows (x64)
+        - Desktop app on Windows (ARM)
+        - Desktop app on macOS (Apple Silicon)
+        - Desktop app on macOS (Intel)
+        - Desktop app on Linux (.deb)
+        - Desktop app on Linux (AppImage)
+        - Docker
+        - From source (Rust or Python server)
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Tiiny Studio version
+      description: Shown in Settings (gear icon), e.g. 0.2.1
+    validations:
+      required: true
+  - type: dropdown
+    id: connection
+    attributes:
+      label: How is the Tiiny connected?
+      options:
+        - Wi-Fi / LAN
+        - USB cable
+        - Not sure
+    validations:
+      required: true
+  - type: input
+    id: tiinyos
+    attributes:
+      label: TiinyOS version (if you know it)
+      description: From the TiinyOS app, e.g. device services 0.1.36
+  - type: input
+    id: model
+    attributes:
+      label: Model involved (if any)
+      description: e.g. HiDream-O1-Image-Dev, AceStep-XL-Turbo, Hunyuan3D-2.1
+  - type: textarea
+    id: more
+    attributes:
+      label: Anything else?
+      description: OS version, error messages, whether it happens every time.
