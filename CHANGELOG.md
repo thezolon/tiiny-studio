@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.2.1 (2026-10-28)
+
+Fixes from the first day of use, and screenshots in the README.
+
+- **Songs with AceStep** (new in TiinyOS 0.1.36) work: the device has no preview for AceStep, so the studio now asks
+  for the whole song. A "preview first" request makes an 8-second song.
+- **Cancel works while a 3D model or audio is being made.** The view redrew every 1.5 s and could swallow the click.
+- **A model load the Tiiny gives up on** shows an error after about 30 s instead of spinning for 6 minutes.
+- No more stray "null" text in the 3D and Song panels.
+- README: screenshots, and a tip for 3D (cut the subject out first: Hunyuan3D builds the background too).
+
 ## 0.2.0 (2026-10-28)
 
 The studio is rewritten in Rust and now comes as a **desktop app** for Windows, macOS and Linux as well as the
