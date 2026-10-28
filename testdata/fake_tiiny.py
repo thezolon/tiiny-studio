@@ -58,6 +58,7 @@ CATALOG = [
     model("Fake/Whisper-ASR", "Whisper ASR", "ASR", 10, [], "audio", "text"),
     model("Fake/Foundation-1", "Foundation-1", "Music Generation", 25, [], "text", "audio"),
     model("Fake/SongGeneration-v2", "SongGeneration", "Music Generation", 45, [], "text", "audio"),
+    model("ACE-Step/AceStep-Fake", "AceStep", "Music Generation", 40, [], "text", "audio"),
     model("Tencent/Hunyuan3D-2.1", "Hunyuan3D", "Image-to-3D", 50, [], "image", "3d"),
     model("Fake/PP-OCRv6", "PP-OCRv6", "OCR", 5, [], "image", "text"),
     model("Qwen/Qwen3-Embedding-0.6B", "Qwen3 Embedding", "Embedding", 1),
@@ -363,6 +364,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_json(404, {"detail": "Not Found"})
         if method == "POST" and p in ("/v1/music/generate/wav", "/v1/generate/wav"):
             return self.send_bytes(200, WAV, "audio/wav")
+        if method == "POST" and p.startswith("/v1/music/generate/") and str(self.body.get("model", "")).startswith("ACE-Step/"):
+            return self.send_json(500, {"success": False, "audio_data": None, "error": "AceStep preview generation is not implemented"})  # TiinyOS 0.1.36
         if method == "POST" and p in ("/v1/music/generate", "/v1/music/generate/preview", "/v1/music/generate/resume", "/v1/generate"):
             sid = self.body.get("session_id") or f"sess-{len(st.sessions) + 1}"
             st.sessions[sid] = "completed"

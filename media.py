@@ -475,6 +475,11 @@ SONG_CONFIG = ("caption", "lyrics", "generation_type", "seconds_total", "seed", 
 FULL_SONG_SECONDS = 240  # at or above this, the gateway path renders the model's full-length arrangement
 
 
+def is_ace_step(model):
+    """AceStep songs go through the gateway's plain /generate (no preview/resume, no SongGeneration port API)."""
+    return model.startswith("ACE-Step/")
+
+
 def run_song(m, job, req):
     config = {k: req[k] for k in SONG_CONFIG if req.get(k) not in (None, "")}
     if config.get("generation_type", "mixed") != "bgm" and not (config.get("lyrics") or "").strip():
@@ -487,7 +492,7 @@ def run_song(m, job, req):
     inst = m.running_instance(job["model"])
     gw, auth = f"{m.settings.url}/v1/music/generate", m.gateway_headers()
     stop = threading.Event()
-    direct = m.port_open(m.settings.host, inst.get("port")) and not req.get("preview") and not req.get("resume_session")
+    direct = not is_ace_step(job["model"]) and m.port_open(m.settings.host, inst.get("port")) and not req.get("preview") and not req.get("resume_session")
     threading.Thread(target=song_progress, args=(m, job, f"http://{m.settings.host}:{inst.get('port')}" if direct else None, stop), daemon=True).start()
     try:
         code, res, route, url = _compose(m, job, req, config, inst, direct, gw, auth)
@@ -501,6 +506,15 @@ def run_song(m, job, req):
 def _compose(m, job, req, config, inst, direct, gw, auth):
     route, url = "direct", None
     body = {"model": job["model"], "config": config}
+    if is_ace_step(job["model"]):
+        # AceStep (TiinyOS 0.1.36): the gateway's plain /generate composes the whole song at seconds_total on every
+        # link; it has no preview or resume ("AceStep preview generation is not implemented"). A preview request
+        # becomes an 8-second song.
+        if req.get("preview") and not config.get("seconds_total"):
+            config["seconds_total"] = 8
+        job["message"] = "Composing"
+        code, res = m.http("POST", gw, body, headers=auth)
+        return code, res, "gateway", url
     if req.get("resume_session"):
         # Continue a saved preview to the full-length song (the gateway renders the whole arrangement).
         route = "gateway-full"

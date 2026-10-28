@@ -167,6 +167,19 @@ class Audio(ContractCase):
         self.assertEqual(py["entry"]["params"]["route"], "gateway-full")
         self.same_job(self.song(flags=gw))  # no length: 60 s
 
+    def test_song_ace_step(self):
+        # AceStep: the gateway's plain /generate on every link (it has no preview/resume and no port API)
+        ace = "ACE-Step/AceStep-Fake"
+        for extra in ({"seconds_total": 30}, {"seconds_total": 30, "flags": {"closed_port": True}}, {"preview": True}):
+            py, rs = self.same_job(self.song(model=ace, load=ace, **extra))
+            self.assertEqual(py["status"], "done", extra)
+            self.assertEqual(py["entry"]["params"]["route"], "gateway")
+            self.assertNotIn("resume", py["entry"])
+            self.files_equal(py, rs)
+            posts = [(p, b) for m, p, _, b, _ in self.calls() if m == "POST"]
+            self.assertEqual([p for p, _ in posts], ["/v1/music/generate"], extra)
+            self.assertEqual(posts[0][1]["config"]["seconds_total"], 8 if "preview" in extra else 30)
+
     def test_song_preview_then_resume(self):
         outs = []
         for base in (self.h.py_url, self.h.rs_url):

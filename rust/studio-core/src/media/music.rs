@@ -14,6 +14,11 @@ const LOOP_CONFIG: [&str; 4] = ["seconds_total", "steps", "cfg_scale", "seed"];
 const SONG_CONFIG: [&str; 9] = ["caption", "lyrics", "generation_type", "seconds_total", "seed", "steps", "temperature", "top_k", "top_p"];
 const FULL_SONG_SECONDS: f64 = 240.0; // at or above this, the gateway path renders the model's full-length arrangement
 
+/// AceStep songs go through the gateway's plain /generate (no preview/resume, no SongGeneration port API).
+fn is_ace_step(model: &str) -> bool {
+    model.starts_with("ACE-Step/")
+}
+
 /// {k: req[k] for k in keys if req.get(k) not in (None, "")}
 fn pick(req: &Value, keys: &[&str]) -> Map<String, Value> {
     keys.iter()
@@ -106,7 +111,7 @@ pub async fn run_song(ctx: Ctx) -> JobResult {
     let host = cur.host();
     let gw = format!("{}/v1/music/generate", cur.url);
     let port = inst.get("port").and_then(Value::as_u64);
-    let direct = port_open(&host, port).await && !req.get("preview").is_some_and(truthy) && !req.get("resume_session").is_some_and(truthy);
+    let direct = !is_ace_step(&model) && port_open(&host, port).await && !req.get("preview").is_some_and(truthy) && !req.get("resume_session").is_some_and(truthy);
     let direct_url = direct.then(|| format!("http://{host}:{}", port.unwrap_or(0)));
     let progress = tokio::spawn(song_progress(ctx.clone(), direct_url));
     let composed = compose(&ctx, &mut config, &inst, direct, &gw, &host).await;
@@ -128,6 +133,18 @@ async fn compose(ctx: &Ctx, config: &mut Map<String, Value>, inst: &Value, direc
         }
         (format!("{gw}{path}"), body)
     };
+    if is_ace_step(model) {
+        // AceStep (TiinyOS 0.1.36): the gateway's plain /generate composes the whole song at seconds_total on every
+        // link; it has no preview or resume ("AceStep preview generation is not implemented"). A preview request
+        // becomes an 8-second song.
+        if req.get("preview").is_some_and(truthy) && !config.get("seconds_total").is_some_and(truthy) {
+            config.insert("seconds_total".into(), json!(8));
+        }
+        ctx.update(json!({"message": "Composing"}));
+        let (url, body) = post("", json!(config), None);
+        let (code, res) = http(ctx, "POST", &url, Some(body), 3600, true).await?;
+        return Ok((code, res, "gateway", None));
+    }
     if req.get("resume_session").is_some_and(truthy) {
         // Continue a saved preview to the full-length song (the gateway renders the whole arrangement).
         ctx.update(json!({"message": "Composing the full song (this takes a while)"}));
