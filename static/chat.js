@@ -279,7 +279,7 @@ const ChatWS = {
       body,
       (x.artifacts || []).length ? el("div", { class: "msg-art" }, x.artifacts.map((a) => this.artifact(a))) : null,
       x.pending ? el("div", { class: "msg-status" }, el("span", { class: "dot busy" }), x.status || "Working…",
-        el("button", { class: "btn-sm ghost", onclick: () => C.job && cancelJob(C.job) }, "Stop")) : null,
+        el("button", { class: "btn-sm ghost", ...onPress(() => C.job && cancelJob(C.job)) }, "Stop")) : null,
       x.error ? el("div", { class: "msg-error" }, x.error) : null,
       !x.pending && !x.error ? el("div", { class: "msg-meta" }, [x.model && shortName(x.model), x.seconds && `${x.seconds}s`].filter(Boolean).join(" · "),
         el("button", { class: "btn-sm ghost", title: "Copy the reply", onclick: () => { navigator.clipboard?.writeText(x.text || ""); toast("Copied"); } }, "Copy")) : null);

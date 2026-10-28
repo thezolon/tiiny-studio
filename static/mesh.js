@@ -155,7 +155,7 @@ const MeshWS = {
     const cur = plan.indexOf(j.stage || plan[0]);
     head.replaceChildren(el("div", { class: "crumb" }, el("b", {}, j.status === "queued" ? "Queued" : "Building 3D model"), " · " + (j.label || "")));
     const box = stage.querySelector(".mesh-pending") || (() => { stage.replaceChildren(); const b = el("div", { class: "pending mesh-pending" }); stage.append(b); return b; })();
-    box.replaceChildren(
+    box.replaceChildren(...[
       M.view.src ? el("img", { class: "src-ghost", src: M.view.src, alt: "" }) : null,
       el("div", { class: "pending-inner" },
         el("div", { class: "big" }, j.status === "queued" ? "Waiting" : fmtSec(t)),
@@ -163,7 +163,7 @@ const MeshWS = {
         el("div", { class: "bar" }, el("i", { style: `width:${j.progress || 0}%` })),
         el("ol", { class: "pipeline" }, plan.map((s, i) => el("li", { class: i < cur ? "done" : i === cur && j.status === "running" ? "now" : "" }, names[s]))),
         el("div", { class: "prompt-echo" }, j.est ? `usually about ${fmtSec(j.est)}` : ""),
-        el("button", { class: "tb cancel", onclick: () => cancelJob(j.id) }, "Cancel")));
+        el("button", { class: "tb cancel", disabled: !!j.stopping, title: j.stopping ? STOPPING : "", ...onPress((b) => stopButton(b, j.id)) }, j.stopping ? "Stopping…" : "Cancel"))].filter(Boolean));
   },
   renderStrip() {
     const items = [];

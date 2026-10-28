@@ -100,7 +100,7 @@ function renderJobsMenu() {
     el("span", { class: "dot " + (j.status === "running" ? "busy" : "") }),
     el("button", { class: "jobs-menu-label", title: "Open its workspace", onclick: () => { menu.hidden = true; setWs(wsOfJob(j)); } },
       el("b", {}, j.label || j.kind), el("small", {}, j.stopping ? STOPPING : j.status === "running" ? (j.tool_message || j.message || "Working…") + (j.progress ? ` · ${j.progress}%` : "") : `Waiting · #${j.queue_pos || 1} in line`)),
-    el("button", { class: "btn-sm ghost", disabled: !!j.stopping, onclick: (e) => stopButton(e.currentTarget, j.id) }, j.stopping ? "Stopping…" : j.status === "running" ? "Cancel" : "Remove"))));
+    el("button", { class: "btn-sm ghost", disabled: !!j.stopping, ...onPress((b) => stopButton(b, j.id)) }, j.stopping ? "Stopping…" : j.status === "running" ? "Cancel" : "Remove"))));
 }
 function toggleJobsMenu() {
   renderJobsMenu();
@@ -110,6 +110,12 @@ function toggleJobsMenu() {
 const STOPPING = "Stopping: the Tiiny finishes its current step, then the result is thrown away";
 /** Cancel from a button: it shows "Stopping…" at once, since a running job ends only when the device answers. */
 function stopButton(btn, id) { btn.disabled = true; btn.textContent = "Stopping…"; btn.title = STOPPING; cancelJob(id); }
+/** For buttons in views that redraw while a job runs (every poll): a click needs press and release on the same
+ *  element, so a redraw in between swallowed it. Act on the press; keyboard activation still comes as a click. */
+const onPress = (act) => ({
+  onpointerdown: (e) => { if (e.button === 0) { e.preventDefault(); act(e.currentTarget); } },
+  onclick: (e) => { if (e.detail === 0) act(e.currentTarget); },
+});
 async function cancelJob(id) { try { await api(`/api/jobs/${id}/cancel`, { method: "POST", body: "{}" }); } catch (e) { toast(e.message, "err"); } pollJobs(); }
 
 /* ---------- models per tool ---------- */
@@ -333,7 +339,7 @@ function pendingCard(j, onCancel) {
       el("div", { class: "sub" }, j.status === "queued" ? `#${j.queue_pos || 1} in the device queue — the Tiiny runs one job at a time` : j.message || j.status),
       el("div", { class: "bar" }, el("i", { style: `width:${pct.toFixed(1)}%` })),
       el("div", { class: "prompt-echo" }, j.label || j.kind),
-      el("button", { class: "tb cancel", disabled: !!j.stopping, title: j.stopping ? STOPPING : "", onclick: (e) => onCancel ? onCancel(j) : stopButton(e.currentTarget, j.id) }, j.stopping ? "Stopping…" : "Cancel")));
+      el("button", { class: "tb cancel", disabled: !!j.stopping, title: j.stopping ? STOPPING : "", ...onPress((b) => onCancel ? onCancel(j) : stopButton(b, j.id)) }, j.stopping ? "Stopping…" : "Cancel")));
 }
 
 // DOMContentLoaded fires after every classic script (audio.js, mesh.js) has run.
