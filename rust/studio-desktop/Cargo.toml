@@ -1,0 +1,26 @@
+[package]
+name = "studio-desktop"
+description = "Tiiny Studio desktop app: a window on the built-in studio server"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[[bin]]
+name = "tiiny-studio"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+studio-core = { path = "../studio-core", features = ["clipboard"] }
+tokio.workspace = true
+tauri = { version = "2", features = ["tray-icon"] }
+tauri-plugin-single-instance = "2"
+tauri-plugin-window-state = "2"
+tauri-plugin-dialog = "2"
+tauri-plugin-opener = "2"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+serde_json = "1"
+tauri-plugin-autostart = "2"

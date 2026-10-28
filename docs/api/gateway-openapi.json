@@ -1,0 +1,3248 @@
+{
+ "openapi": "3.1.0",
+ "info": {
+  "title": "FastAPI",
+  "version": "0.1.0"
+ },
+ "paths": {
+  "/": {
+   "get": {
+    "summary": "Read Root",
+    "description": "Return a simple health payload for the root endpoint.",
+    "operationId": "read_root__get",
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "type": "object",
+         "title": "Response Read Root  Get"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/sys/status": {
+   "get": {
+    "tags": [
+     "system"
+    ],
+    "summary": "System Status",
+    "description": "Return system status for the floating ball widget.\n\nProvides CPU, GPU, and NPU utilization percentages, and memory usage stats.",
+    "operationId": "system_status_api_v1_sys_status_get",
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "type": "object",
+         "title": "Response System Status Api V1 Sys Status Get"
+        }
+       }
+      }
+     },
+     "400": {
+      "description": "Error retrieving system status.",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ]
+   }
+  },
+  "/api/v1/sys/performance": {
+   "get": {
+    "tags": [
+     "system"
+    ],
+    "summary": "Performance Stats",
+    "operationId": "performance_stats_api_v1_sys_performance_get",
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "parameters": [
+     {
+      "name": "limit",
+      "in": "query",
+      "required": false,
+      "schema": {
+       "type": "integer",
+       "maximum": 1000,
+       "minimum": 1,
+       "default": 100,
+       "title": "Limit"
+      }
+     },
+     {
+      "name": "sort_by",
+      "in": "query",
+      "required": false,
+      "schema": {
+       "type": "string",
+       "pattern": "^(count|avg_ms|p95_ms|max_ms|error_count)$",
+       "default": "p95_ms",
+       "title": "Sort By"
+      }
+     },
+     {
+      "name": "include_stats_endpoint",
+      "in": "query",
+      "required": false,
+      "schema": {
+       "type": "boolean",
+       "default": false,
+       "title": "Include Stats Endpoint"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/PerformanceStatsResponse"
+        }
+       }
+      }
+     },
+     "400": {
+      "description": "Error retrieving performance stats.",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/sys/device_info": {
+   "get": {
+    "tags": [
+     "system"
+    ],
+    "summary": "Device Info",
+    "description": "Return device information.",
+    "operationId": "device_info_api_v1_sys_device_info_get",
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/DeviceInfo"
+        }
+       }
+      }
+     },
+     "400": {
+      "description": "Error retrieving device information.",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/sys/setting": {
+   "post": {
+    "tags": [
+     "system"
+    ],
+    "summary": "Update Setting",
+    "description": "Update a setting in the device information.",
+    "operationId": "update_setting_api_v1_sys_setting_post",
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "additionalProperties": {
+         "type": "string"
+        },
+        "type": "object",
+        "title": "Update Data"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      }
+     },
+     "400": {
+      "description": "Error updating settings.",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ]
+   }
+  },
+  "/api/v1/sys/base_urls": {
+   "post": {
+    "tags": [
+     "system"
+    ],
+    "summary": "Runtime Base Urls",
+    "description": "Read or update runtime base URLs for RustFS, Remote Auth, and the remote service.",
+    "operationId": "runtime_base_urls_api_v1_sys_base_urls_post",
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "anyOf": [
+         {
+          "$ref": "#/components/schemas/RuntimeBaseUrlConfigRequest"
+         },
+         {
+          "type": "null"
+         }
+        ],
+        "title": "Payload"
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/RuntimeBaseUrlConfigResponse"
+        }
+       }
+      }
+     },
+     "400": {
+      "description": "Error reading or updating base URLs.",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ]
+   }
+  },
+  "/api/v1/sys/storage": {
+   "get": {
+    "tags": [
+     "system"
+    ],
+    "summary": "Storage Info",
+    "description": "Return storage usage information.",
+    "operationId": "storage_info_api_v1_sys_storage_get",
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/StorageInfo"
+        }
+       }
+      }
+     },
+     "400": {
+      "description": "Error retrieving storage info.",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ]
+   }
+  },
+  "/api/v1/sys/storage/llm": {
+   "get": {
+    "tags": [
+     "system"
+    ],
+    "summary": "Llm Storage Info",
+    "description": "Return detailed storage usage for LLM models.",
+    "operationId": "llm_storage_info_api_v1_sys_storage_llm_get",
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/LLMStorageInfo"
+        }
+       }
+      }
+     },
+     "400": {
+      "description": "Error retrieving LLM storage info.",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ]
+   }
+  },
+  "/api/v1/sys/storage/agent": {
+   "get": {
+    "tags": [
+     "system"
+    ],
+    "summary": "Agent Storage Info",
+    "description": "Return detailed storage usage for Agent apps.",
+    "operationId": "agent_storage_info_api_v1_sys_storage_agent_get",
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/AgentStorageInfo"
+        }
+       }
+      }
+     },
+     "400": {
+      "description": "Error retrieving Agent storage info.",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ]
+   }
+  },
+  "/api/v1/sys/storage/agent/{agent_name}": {
+   "delete": {
+    "tags": [
+     "system"
+    ],
+    "summary": "Delete Agent",
+    "description": "Delete the data directory for a specific agent.",
+    "operationId": "delete_agent_api_v1_sys_storage_agent__agent_name__delete",
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "parameters": [
+     {
+      "name": "agent_name",
+      "in": "path",
+      "required": true,
+      "schema": {
+       "type": "string",
+       "title": "Agent Name"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      }
+     },
+     "400": {
+      "description": "Invalid agent name provided.",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "404": {
+      "description": "Agent data not found.",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "500": {
+      "description": "Failed to delete agent data.",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/sys/ac_power/": {
+   "get": {
+    "tags": [
+     "system"
+    ],
+    "summary": "Get Ac Power",
+    "description": "获取 AC Power Recovery 状态.",
+    "operationId": "get_ac_power_api_v1_sys_ac_power__get",
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/AcPowerStatusResponse"
+        }
+       }
+      }
+     },
+     "400": {
+      "description": "Error retrieving AC power status.",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "500": {
+      "description": "Failed to retrieve AC power status.",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ]
+   },
+   "post": {
+    "tags": [
+     "system"
+    ],
+    "summary": "Set Ac Power",
+    "description": "设置 AC Power Recovery 状态.\n\nArgs:\n    request: 包含 switch 字段的请求体，0 表示关闭，1 表示开启",
+    "operationId": "set_ac_power_api_v1_sys_ac_power__post",
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/AcPowerRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/AcPowerResponse"
+        }
+       }
+      }
+     },
+     "400": {
+      "description": "Invalid input or error setting AC power status.",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "500": {
+      "description": "Failed to set AC power status.",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ]
+   }
+  },
+  "/api/v1/sys/reboot/": {
+   "post": {
+    "tags": [
+     "system"
+    ],
+    "summary": "Reboot",
+    "description": "重启系统（特权容器中影响宿主机）.",
+    "operationId": "reboot_api_v1_sys_reboot__post",
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/SystemActionResponse"
+        }
+       }
+      }
+     },
+     "400": {
+      "description": "Error rebooting system.",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "500": {
+      "description": "Failed to reboot system.",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ]
+   }
+  },
+  "/api/v1/sys/shutdown/": {
+   "post": {
+    "tags": [
+     "system"
+    ],
+    "summary": "Shutdown",
+    "description": "关闭系统（特权容器中影响宿主机）.",
+    "operationId": "shutdown_api_v1_sys_shutdown__post",
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/SystemActionResponse"
+        }
+       }
+      }
+     },
+     "400": {
+      "description": "Error shutting down system.",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "500": {
+      "description": "Failed to shutdown system.",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ]
+   }
+  },
+  "/api/v1/apps": {
+   "get": {
+    "tags": [
+     "apps"
+    ],
+    "summary": "Get App Index",
+    "description": "Retrieve the application index or app detail filtered by app_id.\n\nReturns:\n    The application index when `id` is omitted, otherwise a filtered app detail list.",
+    "operationId": "get_app_index_api_v1_apps_get",
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "parameters": [
+     {
+      "name": "id",
+      "in": "query",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "Filter by app_id and return app detail list.",
+       "title": "Id"
+      },
+      "description": "Filter by app_id and return app detail list."
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "Successful response with app index or a filtered app detail list.",
+      "content": {
+       "application/json": {
+        "schema": {
+         "anyOf": [
+          {
+           "$ref": "#/components/schemas/AppIndex"
+          },
+          {
+           "type": "array",
+           "items": {
+            "$ref": "#/components/schemas/AppDetail"
+           }
+          }
+         ],
+         "title": "Response Get App Index Api V1 Apps Get"
+        }
+       }
+      },
+      "headers": {
+       "is_cached": {
+        "description": "Indicates if the response was served from cache",
+        "schema": {
+         "type": "boolean"
+        }
+       }
+      }
+     },
+     "400": {
+      "description": "Error response when the app index cannot be retrieved.",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/apps/icons": {
+   "get": {
+    "tags": [
+     "apps"
+    ],
+    "summary": "Get App Icons",
+    "description": "Retrieve the application icons.\n\nReturns:\n    A list of application icons.",
+    "operationId": "get_app_icons_api_v1_apps_icons_get",
+    "responses": {
+     "200": {
+      "description": "Successful response with the application icons.",
+      "content": {
+       "application/json": {
+        "schema": {
+         "items": {
+          "additionalProperties": {
+           "type": "string"
+          },
+          "type": "object"
+         },
+         "type": "array",
+         "title": "Response Get App Icons Api V1 Apps Icons Get"
+        }
+       }
+      }
+     },
+     "400": {
+      "description": "Error response when the app icons cannot be retrieved.",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ]
+   }
+  },
+  "/api/v1/chat/history/": {
+   "get": {
+    "tags": [
+     "history"
+    ],
+    "summary": "Get Chat History",
+    "description": "Retrieve chat history with pagination and filtering.",
+    "operationId": "get_chat_history_api_v1_chat_history__get",
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "parameters": [
+     {
+      "name": "app_id",
+      "in": "query",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "App Id"
+      }
+     },
+     {
+      "name": "session_id",
+      "in": "query",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Session Id"
+      }
+     },
+     {
+      "name": "page",
+      "in": "query",
+      "required": false,
+      "schema": {
+       "type": "integer",
+       "minimum": 1,
+       "default": 1,
+       "title": "Page"
+      }
+     },
+     {
+      "name": "per_page",
+      "in": "query",
+      "required": false,
+      "schema": {
+       "type": "integer",
+       "maximum": 100,
+       "minimum": 1,
+       "default": 20,
+       "title": "Per Page"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "Successful response with chat history.",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ChatHistoryResponse"
+        }
+       }
+      }
+     },
+     "400": {
+      "description": "Error response when chat history cannot be retrieved.",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/chat/history/sessions": {
+   "get": {
+    "tags": [
+     "history"
+    ],
+    "summary": "Get Sessions",
+    "description": "Retrieve all chat sessions for a given app_id.",
+    "operationId": "get_sessions_api_v1_chat_history_sessions_get",
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "parameters": [
+     {
+      "name": "app_id",
+      "in": "query",
+      "required": true,
+      "schema": {
+       "type": "string",
+       "title": "App Id"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "Successful response with session list.",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/SessionListResponse"
+        }
+       }
+      }
+     },
+     "400": {
+      "description": "Error response when sessions cannot be retrieved.",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/chat/history/{session_id}": {
+   "delete": {
+    "tags": [
+     "history"
+    ],
+    "summary": "Delete Chat History",
+    "description": "Delete chat history by session_id.",
+    "operationId": "delete_chat_history_api_v1_chat_history__session_id__delete",
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ],
+    "parameters": [
+     {
+      "name": "session_id",
+      "in": "path",
+      "required": true,
+      "schema": {
+       "type": "string",
+       "title": "Session Id"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "Successful response with deletion counts.",
+      "content": {
+       "application/json": {
+        "schema": {
+         "type": "object",
+         "additionalProperties": {
+          "type": "integer"
+         },
+         "title": "Response 200 Delete Chat History Api V1 Chat History  Session Id  Delete"
+        }
+       }
+      }
+     },
+     "400": {
+      "description": "Error response when history cannot be deleted.",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/connect": {
+   "post": {
+    "tags": [
+     "account"
+    ],
+    "summary": "Connect",
+    "description": "Legacy bootstrap endpoint; account/connect flows have migrated to authd.",
+    "operationId": "connect_api_v1_connect_post",
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "anyOf": [
+          {
+           "$ref": "#/components/schemas/ConnectResponseOK"
+          },
+          {
+           "$ref": "#/components/schemas/ConnectResponseNotActivate"
+          },
+          {
+           "$ref": "#/components/schemas/ConnectResponseNotAuth"
+          },
+          {
+           "$ref": "#/components/schemas/ConnectResponseDeviceError"
+          }
+         ],
+         "title": "Response Connect Api V1 Connect Post"
+        }
+       }
+      }
+     }
+    },
+    "deprecated": true
+   }
+  },
+  "/api/v1/account/set_main_password": {
+   "post": {
+    "tags": [
+     "account"
+    ],
+    "summary": "Set Main Password",
+    "operationId": "set_main_password_api_v1_account_set_main_password_post",
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/StatusOK"
+        }
+       }
+      }
+     }
+    },
+    "deprecated": true
+   }
+  },
+  "/api/v1/account/set_local_account_info": {
+   "post": {
+    "tags": [
+     "account"
+    ],
+    "summary": "Set Local Account Info",
+    "operationId": "set_local_account_info_api_v1_account_set_local_account_info_post",
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/SetLocalAccountInfoResponse"
+        }
+       }
+      }
+     }
+    },
+    "deprecated": true
+   }
+  },
+  "/api/v1/account/auth": {
+   "post": {
+    "tags": [
+     "account"
+    ],
+    "summary": "Auth",
+    "operationId": "auth_api_v1_account_auth_post",
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "anyOf": [
+          {
+           "$ref": "#/components/schemas/AuthResponseOK"
+          },
+          {
+           "$ref": "#/components/schemas/ConnectResponseNotActivate"
+          }
+         ],
+         "title": "Response Auth Api V1 Account Auth Post"
+        }
+       }
+      }
+     }
+    },
+    "deprecated": true
+   }
+  },
+  "/api/v1/account/check_mail_sign_up_status": {
+   "post": {
+    "tags": [
+     "account"
+    ],
+    "summary": "Check Mail Sign Up Status",
+    "operationId": "check_mail_sign_up_status_api_v1_account_check_mail_sign_up_status_post",
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/StatusOK"
+        }
+       }
+      }
+     }
+    },
+    "deprecated": true
+   }
+  },
+  "/api/v1/account/send_mail_code": {
+   "post": {
+    "tags": [
+     "account"
+    ],
+    "summary": "Send Mail Code",
+    "operationId": "send_mail_code_api_v1_account_send_mail_code_post",
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/StatusOK"
+        }
+       }
+      }
+     }
+    },
+    "deprecated": true
+   }
+  },
+  "/api/v1/account/check_mail_code": {
+   "post": {
+    "tags": [
+     "account"
+    ],
+    "summary": "Check Mail Code",
+    "operationId": "check_mail_code_api_v1_account_check_mail_code_post",
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "anyOf": [
+          {
+           "$ref": "#/components/schemas/StatusOK"
+          },
+          {
+           "$ref": "#/components/schemas/CheckMainPasswordResponseOK"
+          }
+         ],
+         "title": "Response Check Mail Code Api V1 Account Check Mail Code Post"
+        }
+       }
+      }
+     }
+    },
+    "deprecated": true
+   }
+  },
+  "/api/v1/account/login_with_mail_code": {
+   "post": {
+    "tags": [
+     "account"
+    ],
+    "summary": "Login With Mail Code",
+    "operationId": "login_with_mail_code_api_v1_account_login_with_mail_code_post",
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "anyOf": [
+          {
+           "$ref": "#/components/schemas/StatusOK"
+          },
+          {
+           "$ref": "#/components/schemas/SetLocalAccountInfoResponse"
+          }
+         ],
+         "title": "Response Login With Mail Code Api V1 Account Login With Mail Code Post"
+        }
+       }
+      }
+     }
+    },
+    "deprecated": true
+   }
+  },
+  "/api/v1/account/check_main_password": {
+   "post": {
+    "tags": [
+     "account"
+    ],
+    "summary": "Check Main Password",
+    "operationId": "check_main_password_api_v1_account_check_main_password_post",
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/CheckMainPasswordResponseOK"
+        }
+       }
+      }
+     }
+    },
+    "deprecated": true
+   }
+  },
+  "/api/v1/account/change_password": {
+   "post": {
+    "tags": [
+     "account"
+    ],
+    "summary": "Change Password",
+    "operationId": "change_password_api_v1_account_change_password_post",
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/StatusOK"
+        }
+       }
+      }
+     }
+    },
+    "deprecated": true
+   }
+  },
+  "/api/v1/account/change_mail": {
+   "post": {
+    "tags": [
+     "account"
+    ],
+    "summary": "Change Mail",
+    "operationId": "change_mail_api_v1_account_change_mail_post",
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/StatusOK"
+        }
+       }
+      }
+     }
+    },
+    "deprecated": true
+   }
+  },
+  "/api/v1/account/reset_password": {
+   "post": {
+    "tags": [
+     "account"
+    ],
+    "summary": "Reset Password",
+    "operationId": "reset_password_api_v1_account_reset_password_post",
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/StatusOK"
+        }
+       }
+      }
+     }
+    },
+    "deprecated": true
+   }
+  },
+  "/api/v1/account/bind_email": {
+   "post": {
+    "tags": [
+     "account"
+    ],
+    "summary": "Bind Email",
+    "operationId": "bind_email_api_v1_account_bind_email_post",
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/StatusOK"
+        }
+       }
+      }
+     }
+    },
+    "deprecated": true
+   }
+  },
+  "/api/v1/account/upload_feedback": {
+   "post": {
+    "tags": [
+     "account"
+    ],
+    "summary": "Upload Feedback",
+    "operationId": "upload_feedback_api_v1_account_upload_feedback_post",
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/UploadFeedbackRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/StatusOK"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ]
+   }
+  },
+  "/api/v1/webapp/": {
+   "get": {
+    "tags": [
+     "webapp"
+    ],
+    "summary": "Get Web App List",
+    "description": "Get list of available web apps",
+    "operationId": "get_web_app_list_api_v1_webapp__get",
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/WebAppListResponse"
+        }
+       }
+      }
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ]
+   }
+  },
+  "/api/v1/webapp/start": {
+   "post": {
+    "tags": [
+     "webapp"
+    ],
+    "summary": "Start Web App",
+    "description": "Start a web app",
+    "operationId": "start_web_app_api_v1_webapp_start_post",
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/WebAppStartRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/WebAppStartResponse"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ]
+   }
+  },
+  "/api/v1/webapp/stop": {
+   "post": {
+    "tags": [
+     "webapp"
+    ],
+    "summary": "Stop Web App",
+    "description": "Stop a web app",
+    "operationId": "stop_web_app_api_v1_webapp_stop_post",
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/WebAppStopRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/WebAppStopResponse"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ]
+   }
+  },
+  "/api/v1/webapp/running": {
+   "get": {
+    "tags": [
+     "webapp"
+    ],
+    "summary": "Get Running Web Apps",
+    "description": "Get list of currently running web apps",
+    "operationId": "get_running_web_apps_api_v1_webapp_running_get",
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/WebAppRunningList"
+        }
+       }
+      }
+     }
+    },
+    "security": [
+     {
+      "HTTPBearer": []
+     }
+    ]
+   }
+  }
+ },
+ "components": {
+  "schemas": {
+   "AcPowerRequest": {
+    "properties": {
+     "switch": {
+      "type": "integer",
+      "title": "Switch"
+     }
+    },
+    "type": "object",
+    "required": [
+     "switch"
+    ],
+    "title": "AcPowerRequest"
+   },
+   "AcPowerResponse": {
+    "properties": {
+     "status": {
+      "type": "string",
+      "title": "Status"
+     },
+     "message": {
+      "type": "string",
+      "title": "Message"
+     }
+    },
+    "type": "object",
+    "required": [
+     "status",
+     "message"
+    ],
+    "title": "AcPowerResponse"
+   },
+   "AcPowerStatusResponse": {
+    "properties": {
+     "status": {
+      "type": "string",
+      "title": "Status"
+     },
+     "ac_power": {
+      "type": "boolean",
+      "title": "Ac Power"
+     }
+    },
+    "type": "object",
+    "required": [
+     "status",
+     "ac_power"
+    ],
+    "title": "AcPowerStatusResponse"
+   },
+   "AgentStorageDetail": {
+    "properties": {
+     "name": {
+      "type": "string",
+      "title": "Name"
+     },
+     "size_bytes": {
+      "type": "integer",
+      "title": "Size Bytes"
+     }
+    },
+    "type": "object",
+    "required": [
+     "name",
+     "size_bytes"
+    ],
+    "title": "AgentStorageDetail"
+   },
+   "AgentStorageInfo": {
+    "properties": {
+     "total_size": {
+      "type": "integer",
+      "title": "Total Size"
+     },
+     "apps": {
+      "items": {
+       "$ref": "#/components/schemas/AgentStorageDetail"
+      },
+      "type": "array",
+      "title": "Apps"
+     }
+    },
+    "type": "object",
+    "required": [
+     "total_size",
+     "apps"
+    ],
+    "title": "AgentStorageInfo"
+   },
+   "App": {
+    "properties": {
+     "app_id": {
+      "type": "string",
+      "title": "App Id",
+      "description": "The unique identifier for the app."
+     },
+     "app_name": {
+      "type": "string",
+      "title": "App Name",
+      "description": "The name of the app."
+     },
+     "app_desc": {
+      "type": "string",
+      "title": "App Desc",
+      "description": "A brief description of the app."
+     },
+     "is_built_in": {
+      "type": "boolean",
+      "title": "Is Built In",
+      "description": "Whether the app is a built-in app."
+     },
+     "coming_soon": {
+      "type": "boolean",
+      "title": "Coming Soon",
+      "description": "Whether the app is coming soon."
+     },
+     "built_in_sort_by_id": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Built In Sort By Id",
+      "description": "The sort order for built-in apps."
+     },
+     "icon": {
+      "type": "string",
+      "title": "Icon",
+      "description": "The icon for the app."
+     },
+     "small_icon": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Small Icon",
+      "description": "The small icon for the app."
+     },
+     "categories": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array",
+      "title": "Categories",
+      "description": "Categories associated with the app."
+     },
+     "tags": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array",
+      "title": "Tags",
+      "description": "Tags associated with the app."
+     },
+     "header_pictures": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array",
+      "title": "Header Pictures",
+      "description": "A list of header pictures for the app."
+     },
+     "platforms": {
+      "items": {
+       "$ref": "#/components/schemas/Platform"
+      },
+      "type": "array",
+      "title": "Platforms",
+      "description": "A list of platforms for the app.",
+      "default": []
+     },
+     "auther": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Auther",
+      "description": "The author of the app."
+     },
+     "update_time": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Update Time",
+      "description": "The last update time of the app (Unix timestamp)."
+     },
+     "model_type": {
+      "anyOf": [
+       {
+        "items": {
+         "type": "string"
+        },
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Model Type",
+      "description": "Model types supported by the app."
+     },
+     "default_model": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array",
+      "title": "Default Model",
+      "description": "Default models for the app."
+     },
+     "total_likes": {
+      "type": "integer",
+      "title": "Total Likes",
+      "description": "Total likes for the app.",
+      "default": 0
+     },
+     "license": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "License",
+      "description": "License of the app."
+     }
+    },
+    "type": "object",
+    "required": [
+     "app_id",
+     "app_name",
+     "app_desc",
+     "is_built_in",
+     "coming_soon",
+     "icon",
+     "categories",
+     "tags",
+     "header_pictures"
+    ],
+    "title": "App",
+    "description": "Pydantic model for an application."
+   },
+   "AppDetail": {
+    "properties": {
+     "app_id": {
+      "type": "string",
+      "title": "App Id",
+      "description": "The unique identifier for the app."
+     },
+     "app_name": {
+      "type": "string",
+      "title": "App Name",
+      "description": "The name of the app."
+     },
+     "model_type": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array",
+      "title": "Model Type",
+      "description": "Model types supported by the app."
+     },
+     "default_model": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array",
+      "title": "Default Model",
+      "description": "Default models for the app."
+     }
+    },
+    "type": "object",
+    "required": [
+     "app_id",
+     "app_name"
+    ],
+    "title": "AppDetail",
+    "description": "Pydantic model for id-filtered app detail responses."
+   },
+   "AppIndex": {
+    "properties": {
+     "app": {
+      "items": {
+       "$ref": "#/components/schemas/App"
+      },
+      "type": "array",
+      "title": "App",
+      "description": "A list of applications."
+     },
+     "categories": {
+      "items": {
+       "$ref": "#/components/schemas/Category"
+      },
+      "type": "array",
+      "title": "Categories",
+      "description": "A list of categories."
+     },
+     "carousel": {
+      "items": {
+       "$ref": "#/components/schemas/CarouselItem"
+      },
+      "type": "array",
+      "title": "Carousel",
+      "description": "A list of carousel items."
+     }
+    },
+    "type": "object",
+    "required": [
+     "app",
+     "categories",
+     "carousel"
+    ],
+    "title": "AppIndex",
+    "description": "Pydantic model for the app index."
+   },
+   "AuthResponseOK": {
+    "properties": {
+     "status": {
+      "type": "string",
+      "const": "ok",
+      "title": "Status",
+      "default": "ok"
+     },
+     "device_id": {
+      "type": "string",
+      "title": "Device Id"
+     },
+     "auth_key": {
+      "type": "string",
+      "title": "Auth Key"
+     },
+     "user_info": {
+      "$ref": "#/components/schemas/UserInfo"
+     }
+    },
+    "type": "object",
+    "required": [
+     "device_id",
+     "auth_key",
+     "user_info"
+    ],
+    "title": "AuthResponseOK"
+   },
+   "CarouselItem": {
+    "properties": {
+     "image": {
+      "type": "string",
+      "title": "Image",
+      "description": "The image URL for the carousel item."
+     },
+     "link": {
+      "type": "string",
+      "title": "Link",
+      "description": "The link for the carousel item."
+     }
+    },
+    "type": "object",
+    "required": [
+     "image",
+     "link"
+    ],
+    "title": "CarouselItem",
+    "description": "Pydantic model for a carousel item."
+   },
+   "Category": {
+    "properties": {
+     "name": {
+      "type": "string",
+      "title": "Name",
+      "description": "The name of the category."
+     },
+     "sorted_position": {
+      "type": "integer",
+      "title": "Sorted Position",
+      "description": "The sort order for the category."
+     }
+    },
+    "type": "object",
+    "required": [
+     "name",
+     "sorted_position"
+    ],
+    "title": "Category",
+    "description": "Pydantic model for a category."
+   },
+   "ChatHistoryResponse": {
+    "properties": {
+     "data": {
+      "items": {
+       "$ref": "#/components/schemas/HistoryItem"
+      },
+      "type": "array",
+      "title": "Data"
+     },
+     "total": {
+      "type": "integer",
+      "title": "Total"
+     },
+     "page": {
+      "type": "integer",
+      "title": "Page"
+     },
+     "per_page": {
+      "type": "integer",
+      "title": "Per Page"
+     }
+    },
+    "type": "object",
+    "required": [
+     "data",
+     "total",
+     "page",
+     "per_page"
+    ],
+    "title": "ChatHistoryResponse",
+    "description": "Response model for a list of chat history entries."
+   },
+   "ChatMessage": {
+    "properties": {
+     "role": {
+      "type": "string",
+      "title": "Role"
+     },
+     "content": {
+      "title": "Content"
+     }
+    },
+    "type": "object",
+    "required": [
+     "role",
+     "content"
+    ],
+    "title": "ChatMessage",
+    "description": "Represents a single message in a chat."
+   },
+   "CheckMainPasswordResponseOK": {
+    "properties": {
+     "status": {
+      "type": "string",
+      "const": "ok",
+      "title": "Status",
+      "default": "ok"
+     },
+     "auth_token": {
+      "type": "string",
+      "title": "Auth Token"
+     }
+    },
+    "type": "object",
+    "required": [
+     "auth_token"
+    ],
+    "title": "CheckMainPasswordResponseOK"
+   },
+   "ConnectResponseDeviceError": {
+    "properties": {
+     "error_code": {
+      "type": "integer",
+      "title": "Error Code",
+      "default": 190003
+     },
+     "status": {
+      "type": "string",
+      "const": "device_error",
+      "title": "Status",
+      "default": "device_error"
+     },
+     "msg": {
+      "type": "string",
+      "title": "Msg"
+     },
+     "device_id": {
+      "type": "string",
+      "title": "Device Id"
+     }
+    },
+    "type": "object",
+    "required": [
+     "msg",
+     "device_id"
+    ],
+    "title": "ConnectResponseDeviceError"
+   },
+   "ConnectResponseNotActivate": {
+    "properties": {
+     "error_code": {
+      "type": "integer",
+      "title": "Error Code",
+      "default": 190001
+     },
+     "status": {
+      "type": "string",
+      "const": "not_activate",
+      "title": "Status",
+      "default": "not_activate"
+     },
+     "device_id": {
+      "type": "string",
+      "title": "Device Id"
+     }
+    },
+    "type": "object",
+    "required": [
+     "device_id"
+    ],
+    "title": "ConnectResponseNotActivate"
+   },
+   "ConnectResponseNotAuth": {
+    "properties": {
+     "error_code": {
+      "type": "integer",
+      "title": "Error Code",
+      "default": 190002
+     },
+     "status": {
+      "type": "string",
+      "const": "not_auth",
+      "title": "Status",
+      "default": "not_auth"
+     },
+     "device_id": {
+      "type": "string",
+      "title": "Device Id"
+     }
+    },
+    "type": "object",
+    "required": [
+     "device_id"
+    ],
+    "title": "ConnectResponseNotAuth"
+   },
+   "ConnectResponseOK": {
+    "properties": {
+     "status": {
+      "type": "string",
+      "const": "ok",
+      "title": "Status",
+      "default": "ok"
+     },
+     "user_info": {
+      "$ref": "#/components/schemas/UserInfo"
+     },
+     "webapps": {
+      "items": {
+       "$ref": "#/components/schemas/WebAppStatus"
+      },
+      "type": "array",
+      "title": "Webapps",
+      "default": []
+     }
+    },
+    "type": "object",
+    "required": [
+     "user_info"
+    ],
+    "title": "ConnectResponseOK"
+   },
+   "DeviceInfo": {
+    "properties": {
+     "device_model_name": {
+      "type": "string",
+      "title": "Device Model Name"
+     },
+     "device_model_date": {
+      "type": "string",
+      "title": "Device Model Date"
+     },
+     "device_name": {
+      "type": "string",
+      "title": "Device Name"
+     },
+     "device_model_version": {
+      "type": "string",
+      "title": "Device Model Version"
+     },
+     "tiiny_os": {
+      "type": "string",
+      "title": "Tiiny Os"
+     },
+     "cpu": {
+      "type": "string",
+      "title": "Cpu"
+     },
+     "gpu": {
+      "type": "string",
+      "title": "Gpu"
+     },
+     "dnpu": {
+      "type": "string",
+      "title": "Dnpu"
+     },
+     "peak_int8": {
+      "type": "string",
+      "title": "Peak Int8"
+     },
+     "ram": {
+      "type": "string",
+      "title": "Ram"
+     },
+     "storage": {
+      "type": "string",
+      "title": "Storage"
+     },
+     "network": {
+      "type": "string",
+      "title": "Network"
+     },
+     "version": {
+      "type": "string",
+      "title": "Version"
+     },
+     "setting": {
+      "additionalProperties": true,
+      "type": "object",
+      "title": "Setting",
+      "default": {}
+     }
+    },
+    "type": "object",
+    "required": [
+     "device_model_name",
+     "device_model_date",
+     "device_name",
+     "device_model_version",
+     "tiiny_os",
+     "cpu",
+     "gpu",
+     "dnpu",
+     "peak_int8",
+     "ram",
+     "storage",
+     "network",
+     "version"
+    ],
+    "title": "DeviceInfo"
+   },
+   "ErrorResponse": {
+    "properties": {
+     "code": {
+      "type": "integer",
+      "title": "Code",
+      "description": "Error code"
+     },
+     "msg": {
+      "type": "string",
+      "title": "Msg",
+      "description": "Error message"
+     },
+     "detail": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Detail",
+      "description": "Detailed error information"
+     }
+    },
+    "type": "object",
+    "required": [
+     "code",
+     "msg"
+    ],
+    "title": "ErrorResponse"
+   },
+   "HTTPValidationError": {
+    "properties": {
+     "detail": {
+      "items": {
+       "$ref": "#/components/schemas/ValidationError"
+      },
+      "type": "array",
+      "title": "Detail"
+     }
+    },
+    "type": "object",
+    "title": "HTTPValidationError"
+   },
+   "HistoryItem": {
+    "properties": {
+     "id": {
+      "type": "string",
+      "title": "Id"
+     },
+     "created": {
+      "type": "integer",
+      "title": "Created"
+     },
+     "model": {
+      "type": "string",
+      "title": "Model"
+     },
+     "messages": {
+      "items": {
+       "$ref": "#/components/schemas/ChatMessage"
+      },
+      "type": "array",
+      "title": "Messages"
+     },
+     "usage": {
+      "additionalProperties": {
+       "type": "integer"
+      },
+      "type": "object",
+      "title": "Usage"
+     },
+     "session_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Session Id"
+     },
+     "app_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "App Id"
+     }
+    },
+    "type": "object",
+    "required": [
+     "id",
+     "created",
+     "model",
+     "messages",
+     "usage"
+    ],
+    "title": "HistoryItem",
+    "description": "Represents a single chat history entry."
+   },
+   "LLMStorageDetail": {
+    "properties": {
+     "id": {
+      "type": "string",
+      "title": "Id"
+     },
+     "model": {
+      "type": "string",
+      "title": "Model"
+     },
+     "source": {
+      "type": "string",
+      "title": "Source"
+     },
+     "size_bytes": {
+      "type": "integer",
+      "title": "Size Bytes"
+     }
+    },
+    "type": "object",
+    "required": [
+     "id",
+     "model",
+     "source",
+     "size_bytes"
+    ],
+    "title": "LLMStorageDetail"
+   },
+   "LLMStorageInfo": {
+    "properties": {
+     "total_size": {
+      "type": "integer",
+      "title": "Total Size"
+     },
+     "models": {
+      "items": {
+       "$ref": "#/components/schemas/LLMStorageDetail"
+      },
+      "type": "array",
+      "title": "Models"
+     }
+    },
+    "type": "object",
+    "required": [
+     "total_size",
+     "models"
+    ],
+    "title": "LLMStorageInfo"
+   },
+   "PerformanceEndpointStats": {
+    "properties": {
+     "method": {
+      "type": "string",
+      "title": "Method"
+     },
+     "path": {
+      "type": "string",
+      "title": "Path"
+     },
+     "count": {
+      "type": "integer",
+      "title": "Count"
+     },
+     "error_count": {
+      "type": "integer",
+      "title": "Error Count"
+     },
+     "status_code_counts": {
+      "additionalProperties": {
+       "type": "integer"
+      },
+      "type": "object",
+      "title": "Status Code Counts"
+     },
+     "avg_ms": {
+      "type": "number",
+      "title": "Avg Ms"
+     },
+     "min_ms": {
+      "type": "number",
+      "title": "Min Ms"
+     },
+     "max_ms": {
+      "type": "number",
+      "title": "Max Ms"
+     },
+     "p50_ms": {
+      "type": "number",
+      "title": "P50 Ms"
+     },
+     "p90_ms": {
+      "type": "number",
+      "title": "P90 Ms"
+     },
+     "p95_ms": {
+      "type": "number",
+      "title": "P95 Ms"
+     },
+     "p99_ms": {
+      "type": "number",
+      "title": "P99 Ms"
+     },
+     "last_duration_ms": {
+      "type": "number",
+      "title": "Last Duration Ms"
+     },
+     "last_seen_at": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Last Seen At"
+     }
+    },
+    "type": "object",
+    "required": [
+     "method",
+     "path",
+     "count",
+     "error_count",
+     "status_code_counts",
+     "avg_ms",
+     "min_ms",
+     "max_ms",
+     "p50_ms",
+     "p90_ms",
+     "p95_ms",
+     "p99_ms",
+     "last_duration_ms"
+    ],
+    "title": "PerformanceEndpointStats"
+   },
+   "PerformanceStatsResponse": {
+    "properties": {
+     "summary": {
+      "$ref": "#/components/schemas/PerformanceSummaryStats"
+     },
+     "endpoints": {
+      "items": {
+       "$ref": "#/components/schemas/PerformanceEndpointStats"
+      },
+      "type": "array",
+      "title": "Endpoints"
+     },
+     "sample_size": {
+      "type": "integer",
+      "title": "Sample Size"
+     },
+     "sort_by": {
+      "type": "string",
+      "title": "Sort By"
+     },
+     "limit": {
+      "type": "integer",
+      "title": "Limit"
+     }
+    },
+    "type": "object",
+    "required": [
+     "summary",
+     "endpoints",
+     "sample_size",
+     "sort_by",
+     "limit"
+    ],
+    "title": "PerformanceStatsResponse"
+   },
+   "PerformanceSummaryStats": {
+    "properties": {
+     "total_requests": {
+      "type": "integer",
+      "title": "Total Requests"
+     },
+     "total_errors": {
+      "type": "integer",
+      "title": "Total Errors"
+     },
+     "error_rate": {
+      "type": "number",
+      "title": "Error Rate"
+     },
+     "avg_ms": {
+      "type": "number",
+      "title": "Avg Ms"
+     },
+     "min_ms": {
+      "type": "number",
+      "title": "Min Ms"
+     },
+     "max_ms": {
+      "type": "number",
+      "title": "Max Ms"
+     },
+     "p50_ms": {
+      "type": "number",
+      "title": "P50 Ms"
+     },
+     "p90_ms": {
+      "type": "number",
+      "title": "P90 Ms"
+     },
+     "p95_ms": {
+      "type": "number",
+      "title": "P95 Ms"
+     },
+     "p99_ms": {
+      "type": "number",
+      "title": "P99 Ms"
+     },
+     "last_updated_at": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Last Updated At"
+     }
+    },
+    "type": "object",
+    "required": [
+     "total_requests",
+     "total_errors",
+     "error_rate",
+     "avg_ms",
+     "min_ms",
+     "max_ms",
+     "p50_ms",
+     "p90_ms",
+     "p95_ms",
+     "p99_ms"
+    ],
+    "title": "PerformanceSummaryStats"
+   },
+   "Platform": {
+    "properties": {
+     "name": {
+      "type": "string",
+      "title": "Name",
+      "description": "The name of the platform (e.g., 'windows-x86-64')."
+     },
+     "app_version": {
+      "type": "string",
+      "title": "App Version",
+      "description": "The version of the app for this platform."
+     },
+     "app_size": {
+      "type": "integer",
+      "title": "App Size",
+      "description": "The size of the app in KB for this platform."
+     },
+     "update_time": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Update Time",
+      "description": "The last update time for this platform (Unix timestamp)."
+     },
+     "auther": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Auther",
+      "description": "The author of this version of the app."
+     },
+     "status": {
+      "type": "integer",
+      "title": "Status",
+      "description": "The status of the app on this platform."
+     },
+     "blob": {
+      "type": "string",
+      "title": "Blob",
+      "description": "The blob filename of the app for this platform."
+     },
+     "blob_url": {
+      "type": "string",
+      "title": "Blob Url",
+      "description": "The URL of the app blob for this platform.",
+      "default": ""
+     },
+     "sha256sum": {
+      "type": "string",
+      "title": "Sha256Sum",
+      "description": "The SHA256 checksum of the app blob for this platform."
+     },
+     "blob_path": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Blob Path",
+      "description": "The path to the app's binary blob in Minio."
+     },
+     "update_description": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Update Description",
+      "description": "Update description for this platform."
+     },
+     "auther_avator": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Auther Avator",
+      "description": "Author avatar URL for this platform."
+     },
+     "license": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "License",
+      "description": "License for this platform."
+     }
+    },
+    "type": "object",
+    "required": [
+     "name",
+     "app_version",
+     "app_size",
+     "status",
+     "blob",
+     "sha256sum"
+    ],
+    "title": "Platform",
+    "description": "Pydantic model for an application platform."
+   },
+   "RuntimeBaseUrlConfigRequest": {
+    "properties": {
+     "rustfs_endpoint": {
+      "anyOf": [
+       {
+        "type": "string",
+        "minLength": 1,
+        "format": "uri"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Rustfs Endpoint"
+     },
+     "remote_auth_base_url": {
+      "anyOf": [
+       {
+        "type": "string",
+        "minLength": 1,
+        "format": "uri"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Remote Auth Base Url"
+     },
+     "service_base_url": {
+      "anyOf": [
+       {
+        "type": "string",
+        "minLength": 1,
+        "format": "uri"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Service Base Url"
+     }
+    },
+    "type": "object",
+    "title": "RuntimeBaseUrlConfigRequest"
+   },
+   "RuntimeBaseUrlConfigResponse": {
+    "properties": {
+     "status": {
+      "type": "string",
+      "title": "Status"
+     },
+     "message": {
+      "type": "string",
+      "title": "Message"
+     },
+     "updated": {
+      "type": "boolean",
+      "title": "Updated"
+     },
+     "rustfs_endpoint": {
+      "type": "string",
+      "title": "Rustfs Endpoint"
+     },
+     "remote_auth_base_url": {
+      "type": "string",
+      "title": "Remote Auth Base Url"
+     },
+     "service_base_url": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Service Base Url"
+     },
+     "refreshed_services": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array",
+      "title": "Refreshed Services"
+     }
+    },
+    "type": "object",
+    "required": [
+     "status",
+     "message",
+     "updated",
+     "rustfs_endpoint",
+     "remote_auth_base_url"
+    ],
+    "title": "RuntimeBaseUrlConfigResponse"
+   },
+   "SessionItem": {
+    "properties": {
+     "session_id": {
+      "type": "string",
+      "title": "Session Id"
+     },
+     "last_updated": {
+      "type": "integer",
+      "title": "Last Updated"
+     },
+     "title": {
+      "type": "string",
+      "title": "Title"
+     }
+    },
+    "type": "object",
+    "required": [
+     "session_id",
+     "last_updated",
+     "title"
+    ],
+    "title": "SessionItem",
+    "description": "Represents a single chat session."
+   },
+   "SessionListResponse": {
+    "properties": {
+     "sessions": {
+      "items": {
+       "$ref": "#/components/schemas/SessionItem"
+      },
+      "type": "array",
+      "title": "Sessions"
+     }
+    },
+    "type": "object",
+    "required": [
+     "sessions"
+    ],
+    "title": "SessionListResponse",
+    "description": "Response model for a list of chat sessions."
+   },
+   "SetLocalAccountInfoResponse": {
+    "properties": {
+     "status": {
+      "type": "string",
+      "const": "ok",
+      "title": "Status",
+      "default": "ok"
+     },
+     "auth_key": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Auth Key"
+     },
+     "device_id": {
+      "type": "string",
+      "title": "Device Id"
+     }
+    },
+    "type": "object",
+    "required": [
+     "device_id"
+    ],
+    "title": "SetLocalAccountInfoResponse"
+   },
+   "StatusOK": {
+    "properties": {
+     "status": {
+      "type": "string",
+      "const": "ok",
+      "title": "Status",
+      "default": "ok"
+     }
+    },
+    "type": "object",
+    "title": "StatusOK"
+   },
+   "StorageDetail": {
+    "properties": {
+     "name": {
+      "type": "string",
+      "title": "Name"
+     },
+     "size_bytes": {
+      "type": "integer",
+      "title": "Size Bytes"
+     }
+    },
+    "type": "object",
+    "required": [
+     "name",
+     "size_bytes"
+    ],
+    "title": "StorageDetail"
+   },
+   "StorageInfo": {
+    "properties": {
+     "total_bytes": {
+      "type": "integer",
+      "title": "Total Bytes"
+     },
+     "used_bytes": {
+      "type": "integer",
+      "title": "Used Bytes"
+     },
+     "remaining_bytes": {
+      "type": "integer",
+      "title": "Remaining Bytes"
+     },
+     "details": {
+      "items": {
+       "$ref": "#/components/schemas/StorageDetail"
+      },
+      "type": "array",
+      "title": "Details"
+     }
+    },
+    "type": "object",
+    "required": [
+     "total_bytes",
+     "used_bytes",
+     "remaining_bytes",
+     "details"
+    ],
+    "title": "StorageInfo"
+   },
+   "SystemActionResponse": {
+    "properties": {
+     "status": {
+      "type": "string",
+      "title": "Status"
+     },
+     "message": {
+      "type": "string",
+      "title": "Message"
+     }
+    },
+    "type": "object",
+    "required": [
+     "status",
+     "message"
+    ],
+    "title": "SystemActionResponse"
+   },
+   "UploadFeedbackRequest": {
+    "properties": {
+     "mail": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Mail"
+     },
+     "content": {
+      "type": "string",
+      "title": "Content"
+     },
+     "images": {
+      "anyOf": [
+       {
+        "additionalProperties": {
+         "type": "string"
+        },
+        "type": "object"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Images"
+     }
+    },
+    "type": "object",
+    "required": [
+     "content"
+    ],
+    "title": "UploadFeedbackRequest"
+   },
+   "UserInfo": {
+    "properties": {
+     "user_name": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "User Name"
+     },
+     "avatar_id": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Avatar Id"
+     },
+     "region": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Region"
+     },
+     "email": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Email"
+     }
+    },
+    "type": "object",
+    "title": "UserInfo"
+   },
+   "ValidationError": {
+    "properties": {
+     "loc": {
+      "items": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "integer"
+        }
+       ]
+      },
+      "type": "array",
+      "title": "Location"
+     },
+     "msg": {
+      "type": "string",
+      "title": "Message"
+     },
+     "type": {
+      "type": "string",
+      "title": "Error Type"
+     }
+    },
+    "type": "object",
+    "required": [
+     "loc",
+     "msg",
+     "type"
+    ],
+    "title": "ValidationError"
+   },
+   "WebAppListResponse": {
+    "properties": {
+     "status": {
+      "type": "string",
+      "title": "Status",
+      "default": "ok"
+     },
+     "error_code": {
+      "type": "integer",
+      "title": "Error Code",
+      "default": 0
+     },
+     "webapps": {
+      "additionalProperties": {
+       "type": "string"
+      },
+      "type": "object",
+      "title": "Webapps"
+     }
+    },
+    "type": "object",
+    "required": [
+     "webapps"
+    ],
+    "title": "WebAppListResponse"
+   },
+   "WebAppRunningList": {
+    "properties": {
+     "webapps": {
+      "items": {
+       "$ref": "#/components/schemas/WebAppStatus"
+      },
+      "type": "array",
+      "title": "Webapps"
+     }
+    },
+    "type": "object",
+    "required": [
+     "webapps"
+    ],
+    "title": "WebAppRunningList"
+   },
+   "WebAppStartRequest": {
+    "properties": {
+     "app_container_name": {
+      "type": "string",
+      "title": "App Container Name"
+     }
+    },
+    "type": "object",
+    "required": [
+     "app_container_name"
+    ],
+    "title": "WebAppStartRequest"
+   },
+   "WebAppStartResponse": {
+    "properties": {
+     "status": {
+      "type": "string",
+      "title": "Status"
+     },
+     "error_code": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Error Code"
+     },
+     "msg": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Msg"
+     }
+    },
+    "type": "object",
+    "required": [
+     "status"
+    ],
+    "title": "WebAppStartResponse"
+   },
+   "WebAppStatus": {
+    "properties": {
+     "app_container_name": {
+      "type": "string",
+      "title": "App Container Name"
+     },
+     "status": {
+      "type": "string",
+      "title": "Status"
+     },
+     "container_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Container Id"
+     },
+     "port": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Port"
+     }
+    },
+    "type": "object",
+    "required": [
+     "app_container_name",
+     "status"
+    ],
+    "title": "WebAppStatus"
+   },
+   "WebAppStopRequest": {
+    "properties": {
+     "app_container_name": {
+      "type": "string",
+      "title": "App Container Name"
+     }
+    },
+    "type": "object",
+    "required": [
+     "app_container_name"
+    ],
+    "title": "WebAppStopRequest"
+   },
+   "WebAppStopResponse": {
+    "properties": {
+     "status": {
+      "type": "string",
+      "title": "Status"
+     },
+     "error_code": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Error Code"
+     },
+     "msg": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Msg"
+     }
+    },
+    "type": "object",
+    "required": [
+     "status"
+    ],
+    "title": "WebAppStopResponse"
+   }
+  },
+  "securitySchemes": {
+   "HTTPBearer": {
+    "type": "http",
+    "scheme": "bearer"
+   }
+  }
+ }
+}

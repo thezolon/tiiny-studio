@@ -1,0 +1,38 @@
+Tiiny Studio
+Copyright 2026 Zolon Farsane (https://github.com/thezolon)
+
+This product includes software developed by Zolon Farsane.
+Licensed under the Apache License, Version 2.0 (see LICENSE).
+
+Tiiny Studio is an unofficial community project and is not affiliated with or endorsed by Tiiny.
+
+----------------------------------------------------------------------
+Third-party software
+----------------------------------------------------------------------
+
+<model-viewer> 3.5.0 (static/vendor/model-viewer.min.js)
+Copyright Google LLC
+Licensed under the Apache License, Version 2.0 (see static/vendor/model-viewer.LICENSE).
+https://modelviewer.dev
+
+The <model-viewer> bundle includes:
+  - Lit, Copyright 2017 Google LLC, BSD-3-Clause license
+  - three.js, Copyright 2010-2023 Three.js Authors, MIT license
+Their license headers are kept inside the bundled file.
+
+PDF.js 4.10.38 (static/vendor/pdfjs/pdf.min.mjs, pdf.worker.min.mjs)
+Copyright Mozilla Foundation
+Licensed under the Apache License, Version 2.0 (see static/vendor/pdfjs/LICENSE).
+https://mozilla.github.io/pdf.js/
+
+Adobe CMap resources (static/vendor/pdfjs/cmaps/), shipped with PDF.js
+Copyright 1990-2009 Adobe Systems Incorporated
+BSD-3-Clause license (see static/vendor/pdfjs/cmaps/LICENSE).
+
+UTIF.js 3.1.0 (static/vendor/utif.js)
+Copyright (c) 2017 Photopea
+MIT license (see static/vendor/utif.LICENSE).
+
+pako 1.0.11, inflate only (static/vendor/pako_inflate.min.js)
+Copyright (C) 2014-2017 by Vitaly Puzrin and Andrei Tuputcyn
+MIT and Zlib licenses (see static/vendor/pako.LICENSE).

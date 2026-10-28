@@ -1,0 +1,18 @@
+services:
+  studio:
+    # Pulls the prebuilt image when it's published; builds from this folder when it isn't (or with --build).
+    image: ghcr.io/thezolon/tiiny-studio:latest
+    build: .
+    container_name: tiiny-studio
+    ports:
+      # Private by default: only this computer can open the studio. To allow other devices on your
+      # network, set STUDIO_BIND=0.0.0.0 in .env (and a STUDIO_PASSWORD).
+      - "${STUDIO_BIND:-127.0.0.1}:7860:7860"
+    environment:
+      STUDIO_BIND: ${STUDIO_BIND:-127.0.0.1}  # lets the app show whether LAN access is on
+    env_file:
+      - path: .env
+        required: false
+    volumes:
+      - ./data:/data
+    restart: unless-stopped

@@ -1,0 +1,432 @@
+"""A fake Tiiny device for contract tests: answers what Tiiny Studio asks the real one, with canned data.
+Usage: python fake_tiiny.py [--port N] [--key KEY] [--launch-delay SECONDS]
+Or import it: `server, url = fake_tiiny.start()`; `server.state` holds the models, tasks and request log.
+Every request is recorded (minus the Authorization header): GET /__requests, POST /__reset (no auth).
+POST /__flags {..} switches on test behaviour until the next reset: "fail" {path: [status, message]}, "delay" {path: seconds},
+"closed_port", "no_music_gateway", "speech_text", "task_polls" N, "task_hold", "fail_stage" name, "rich_texture", "song_tracks".
+Everything except GET / and /__* needs `Authorization: Bearer <key>`, like the device. stdlib only."""
+import argparse
+import base64
+import hashlib
+import io
+import json
+import re
+import struct
+import sys
+import threading
+import time
+import wave
+import zlib
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import parse_qs, unquote, urlparse
+
+
+def tiny_png():
+    raw = b"\x00\xff\x80\x20"  # one RGB pixel, filter byte 0
+    def chunk(t, d):
+        c = struct.pack(">I", len(d)) + t + d
+        return c + struct.pack(">I", zlib.crc32(t + d) & 0xFFFFFFFF)
+    return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", 1, 1, 8, 2, 0, 0, 0))
+            + chunk(b"IDAT", zlib.compress(raw)) + chunk(b"IEND", b""))
+
+
+def tiny_wav(seconds=0.25, rate=24000):
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(rate)
+        w.writeframes(b"\x00\x00" * int(seconds * rate))
+    return buf.getvalue()
+
+
+PNG, WAV = tiny_png(), tiny_wav()
+GLB = b"glTF" + struct.pack("<II", 2, 12)  # header only: enough to be recognisable, not to be loaded
+MP3 = b"ID3" + bytes(2000)
+CHAT_MODEL = "Qwen/Qwen3-4B-Instruct"
+
+
+def model(mid, name, mtype, npu, supported=(), inp="text", out="text"):
+    return {"id": mid, "display_name": name, "params": "4B", "type": mtype, "input": inp, "output": out, "supported": list(supported),
+            "desc": f"Fake {name}", "npu_usage": npu, "load_time": 20, "costMemory": npu * 100, "size": 1 << 30, "version": 1}  # the device sends numbers
+
+
+CATALOG = [
+    model(CHAT_MODEL, "Qwen3 4B", "Text Generation", 30, ["Tool Use"]),
+    model("Qwen/Qwen-Image-2.1", "Qwen Image", "Text-to-Image", 60, ["Image Editing"], "text", "image"),
+    model("Qwen/Qwen3-TTS-Base", "Qwen3 TTS", "Text-to-Speech", 15, [], "text", "audio"),
+    model("Fake/Whisper-ASR", "Whisper ASR", "ASR", 10, [], "audio", "text"),
+    model("Fake/Foundation-1", "Foundation-1", "Music Generation", 25, [], "text", "audio"),
+    model("Fake/SongGeneration-v2", "SongGeneration", "Music Generation", 45, [], "text", "audio"),
+    model("Tencent/Hunyuan3D-2.1", "Hunyuan3D", "Image-to-3D", 50, [], "image", "3d"),
+    model("Fake/PP-OCRv6", "PP-OCRv6", "OCR", 5, [], "image", "text"),
+    model("Qwen/Qwen3-Embedding-0.6B", "Qwen3 Embedding", "Embedding", 1),
+]
+
+
+class State:
+    def __init__(self, key, launch_delay, running):
+        self.key, self.launch_delay, self.initial = key, launch_delay, tuple(running)
+        self.lock = threading.Lock()
+        self.port = 0
+        self.reset()
+
+    def reset(self):
+        with self.lock:
+            self.requests, self.shutdowns = [], 0
+            self.running = {mid: self._instance(mid) for mid in self.initial}
+            self.pending, self.tasks, self.sessions = set(), {}, {}
+            self.flags = {}
+
+    def _instance(self, mid):
+        m = next(m for m in CATALOG if m["id"] == mid)
+        return {"model_id": mid, "port": self.port, "npu_usage": m["npu_usage"], "active_request_count": 0}
+
+    def used(self):
+        return sum(r["npu_usage"] for r in self.running.values())
+
+    def launch(self, mid):
+        with self.lock:
+            if mid in self.running or mid in self.pending:
+                return
+            self.pending.add(mid)
+
+        def done():
+            with self.lock:
+                if mid in self.pending:
+                    self.pending.discard(mid)
+                    self.running[mid] = self._instance(mid)
+        threading.Timer(self.launch_delay, done).start()
+
+    def stop(self, mid):
+        with self.lock:
+            self.running.pop(mid, None)
+            self.pending.discard(mid)
+
+
+def parse_multipart(ctype, body):
+    """{'fields': {name: text}, 'files': {name: filename}, 'sums': {name: sha1 of the file}} of a multipart body."""
+    m = re.search(r"boundary=([^;]+)", ctype or "")
+    out = {"fields": {}, "files": {}, "sums": {}}
+    if not m:
+        return out
+    for part in body.split(b"--" + m.group(1).strip('"').encode())[1:-1]:
+        head, _, data = part.partition(b"\r\n\r\n")
+        h = head.decode("utf-8", "replace")
+        name = re.search(r'name="([^"]*)"', h)
+        fn = re.search(r'filename="([^"]*)"', h)
+        if name and fn:
+            out["files"][name.group(1)] = fn.group(1)
+            out["sums"][name.group(1)] = hashlib.sha1(data[:-2]).hexdigest()
+        elif name:
+            out["fields"][name.group(1)] = data.rstrip(b"\r\n").decode("utf-8", "replace")
+    return out
+
+
+def last_user_text(body):
+    msgs = body.get("messages") or []
+    if not msgs or msgs[-1].get("role") != "user":
+        return ""
+    c = msgs[-1].get("content")
+    if isinstance(c, list):
+        c = " ".join(p.get("text", "") for p in c if isinstance(p, dict))
+    return c or ""
+
+
+class Handler(BaseHTTPRequestHandler):
+    def log_message(self, *a):
+        pass
+
+    # ---------- plumbing ----------
+    @property
+    def st(self):
+        return self.server.state
+
+    def send_bytes(self, code, data, ctype):
+        self.send_response(code)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
+    def send_json(self, code, obj):
+        self.send_bytes(code, json.dumps(obj).encode(), "application/json")
+
+    def err(self, code, msg):
+        self.send_json(code, {"error": {"message": msg}})
+
+    def handle_any(self, method):
+        u = urlparse(self.path)
+        path = u.path
+        n = int(self.headers.get("Content-Length") or 0)
+        raw = self.rfile.read(n) if n else b""
+        ctype = self.headers.get("Content-Type") or ""
+        body, extra = None, {}
+        if "json" in ctype and raw:
+            try:
+                body = json.loads(raw)
+            except ValueError:
+                pass
+        elif ctype.startswith("multipart/"):
+            extra = {"multipart": parse_multipart(ctype, raw)}
+        if path.startswith("/__"):
+            return self.control(method, path, body)
+        with self.st.lock:
+            self.st.requests.append({"method": method, "path": path, "query": parse_qs(u.query), "body": body, **extra})
+        open_paths = method == "GET" and (path == "/" or path.endswith("/icon"))  # the device serves model icons without a key
+        # a model container's own port (what Studio reaches directly over Wi-Fi/LAN) takes no key
+        open_paths = open_paths or path in ("/v1/generate", "/v1/generate/wav") or path.startswith("/v1/sessions")
+        if not open_paths:
+            if self.headers.get("Authorization") != f"Bearer {self.st.key}":
+                return self.err(401, "Unauthorized")
+        self.body, self.multi, self.query = body if isinstance(body, dict) else {}, extra.get("multipart"), parse_qs(u.query)
+        flags = self.st.flags
+        if path in flags.get("delay", {}):  # a slow model; the live session lets progress polling see something
+            self.st.sessions["live"] = "running"
+            time.sleep(flags["delay"][path])
+            self.st.sessions.pop("live", None)
+        if path in flags.get("fail", {}):
+            return self.err(*flags["fail"][path])
+        if not self.route(method, unquote(path)):
+            self.err(404, "endpoint not found")
+
+    def control(self, method, path, body=None):
+        if method == "GET" and path == "/__requests":
+            with self.st.lock:
+                return self.send_json(200, list(self.st.requests))
+        if method == "POST" and path == "/__reset":
+            self.st.reset()
+            return self.send_json(200, {"ok": True})
+        if method == "POST" and path == "/__reset_log":  # clear the request log only (models stay loaded)
+            with self.st.lock:
+                self.st.requests = []
+            return self.send_json(200, {"ok": True})
+        if method == "POST" and path == "/__flags":
+            self.st.flags.update(body or {})
+            return self.send_json(200, {"ok": True})
+        self.err(404, "not found")
+
+    do_GET = lambda self: self.handle_any("GET")
+    do_POST = lambda self: self.handle_any("POST")
+    do_DELETE = lambda self: self.handle_any("DELETE")
+    do_PATCH = lambda self: self.handle_any("PATCH")
+    do_PUT = lambda self: self.handle_any("PUT")
+
+    # ---------- routes ----------
+    def route(self, method, p):
+        st = self.st
+        if method == "GET" and p == "/":
+            self.send_bytes(200, b"<html><body>Fake Tiiny status page</body></html>", "text/html; charset=utf-8")
+        elif method == "GET" and p == "/api/v1/models/":
+            self.send_json(200, {"data": [{**m, "status": "running" if m["id"] in st.running else "stopped"} for m in CATALOG]})
+        elif method == "GET" and p == "/api/v1/models/online_models":
+            # the device answers a bare list here, keyed by model_id
+            self.send_json(200, [{**{k: v for k, v in m.items() if k not in ("id", "display_name", "costMemory", "size", "version")}, "model_id": m["id"], "name": m["display_name"]} for m in CATALOG])
+        elif method == "GET" and re.fullmatch(r"/api/v1/models/online_models/.+/icon", p):
+            self.send_bytes(200, PNG, "image/png")
+        elif method == "GET" and p == "/api/v1/models/running":
+            with st.lock:
+                running = [{**r, "port": 1} if st.flags.get("closed_port") else r for r in st.running.values()]  # a link that only exposes the gateway
+                self.send_json(200, {"instances": {"running": running, "pending": [{"model_id": m} for m in st.pending]},
+                                     "pending": []})
+        elif method == "GET" and p == "/api/v1/models/types":
+            self.send_json(200, {"data": sorted({m["type"] for m in CATALOG})})
+        elif method == "GET" and (m := re.fullmatch(r"/api/v1/models/(.+)/unload_candidate", p)):
+            self.unload_candidate(m.group(1))
+        elif method == "POST" and p == "/api/v1/models/unload_all":
+            with st.lock:
+                st.running.clear()
+                st.pending.clear()
+            self.send_json(200, {"status": "ok"})
+        elif method == "POST" and (m := re.fullmatch(r"/api/v1/models/(.+)/(launch|stop)", p)):
+            if not any(c["id"] == m.group(1) for c in CATALOG):
+                return self.err(404, f"model {m.group(1)} not found") or True
+            (st.launch if m.group(2) == "launch" else st.stop)(m.group(1))
+            self.send_json(200, {"status": "ok", "message": m.group(2) + " accepted"})
+        elif method == "POST" and (m := re.fullmatch(r"/api/v1/models/(.+)/interrupt", p)):
+            # like 0.1.36: only stops an in-flight chat completion
+            self.send_json(200, {"success": False, "interrupted": 0, "models": [],
+                                 "error_reason": f"No in-flight chat completion found for '{m.group(1)}'."})
+        elif method == "GET" and p == "/v1/models":
+            self.send_json(200, {"object": "list", "data": [
+                {"id": mid, "object": "model", "aliases": ["default"] if mid == CHAT_MODEL else [], "supports_vision": False,
+                 "supports_chat": mid == CHAT_MODEL, "context_window": 32768,
+                 # an object since the 2026-10 TiinyOS update (was a bool)
+                 "thinking": {"supported": True, "toggleable": True, "enabled_by_default": True, "levels": ["low", "medium", "high"], "default_level": "medium"}} for mid in list(st.running)]})
+        elif method == "GET" and p == "/api/tags":
+            self.send_json(200, {"models": [{"name": m["id"]} for m in CATALOG]})
+        elif method == "GET" and p == "/v1/capabilities":
+            self.send_json(200, {"capabilities": ["chat"]})
+        elif method == "POST" and p == "/api/v1/sys/shutdown/":
+            with st.lock:
+                st.shutdowns += 1
+            self.send_json(200, {"status": "ok", "message": "System shutdown will be initiated in seconds via host API"})
+        elif method == "GET" and p == "/api/v1/sys/status":
+            self.send_json(200, {"cpu": {"total_percent": 12.5}, "memory": {"usage_percent": 40.0}, "gpu": {}, "npus": [], "disk": {}})
+        elif method == "GET" and p == "/api/v1/sys/device_info":
+            self.send_json(200, {"device_name": "Fake Tiiny"})
+        elif method == "GET" and p == "/api/v1/sys/ac_power/":
+            self.send_json(200, {"status": "ok", "ac_power": False})
+        elif method == "GET" and p == "/api/v1/npu/status":
+            self.send_json(200, {"devices": [{"util_percent": 7, "mem_used_mb": st.used() * 100, "mem_total_mb": 10000, "temp_c": 41.5,
+                                              "power_w": 9.5}], "cpu": {"total_percent": 12.5}, "memory": {"usage_percent": 40.0},
+                                 "npu": {"status": "ok"}})
+        elif method == "POST" and p == "/v1/chat/completions":
+            self.chat()
+        elif method == "POST" and p in ("/v1/images/generations", "/v1/images/edits"):
+            if st.flags.get("image_warmup", 0) > 0:  # like Qwen-Image just after it reports "running"
+                st.flags["image_warmup"] -= 1
+                return self.send_json(500, {"error": {"message": "xh2a backend fail"}})
+            self.send_json(200, {"created": int(time.time()), "data": [{"b64_json": base64.b64encode(PNG).decode()}]})
+        elif method == "POST" and p == "/v1/audio/speech":
+            if st.flags.get("speech_text"):
+                self.send_bytes(200, b"not audio at all", "text/plain")
+            else:
+                self.send_bytes(200, WAV, "audio/wav")
+        elif method == "POST" and p == "/v1/audio/transcriptions":
+            self.send_json(200, {"text": "fake transcript"})
+        elif method == "POST" and p == "/v1/ocr":
+            self.send_json(200, {"data": [{"text": "FAKE OCR", "lines": [{"text": "FAKE OCR", "score": 0.99}]}]})
+        elif method == "POST" and p == "/v1/embeddings":
+            inputs = self.body.get("input")
+            inputs = inputs if isinstance(inputs, list) else [inputs]
+            self.send_json(200, {"object": "list", "model": self.body.get("model"), "usage": {"prompt_tokens": 1, "total_tokens": 1},
+                                 "data": [{"object": "embedding", "index": i, "embedding": [round((len(str(t)) + j) % 7 / 7, 4) for j in range(8)]}
+                                          for i, t in enumerate(inputs)]})
+        elif p.startswith(("/v1/music/", "/v1/generate", "/v1/sessions")):
+            self.music(method, p)
+        elif p.startswith(("/v1/3d/", "/v1/tasks")):
+            self.tasks3d(method, p)
+        else:
+            return False
+        return True
+
+    def unload_candidate(self, mid):
+        m = next((c for c in CATALOG if c["id"] == mid), None)
+        if not m:
+            return self.err(404, f"model {mid} not found")
+        with self.st.lock:
+            victims, free = [], 100 - self.st.used()
+            for rid, r in self.st.running.items():
+                if free >= m["npu_usage"] or rid == mid:
+                    break
+                victims.append(rid)
+                free += r["npu_usage"]
+            self.send_json(200, {"unload_required": bool(victims), "model_id": victims, "npu_required": m["npu_usage"],
+                                 "npu_available": 100 - self.st.used()})
+
+    def chat(self):
+        b = self.body
+        text = last_user_text(b)
+        tools = b.get("tools") or []
+        if not b.get("stream"):
+            msg = {"role": "assistant", "content": "Fake reply."}
+            return self.send_json(200, {"id": "chatcmpl-fake", "object": "chat.completion", "created": int(time.time()), "model": b.get("model"),
+                                        "choices": [{"index": 0, "message": msg, "finish_reason": "stop"}],
+                                        "usage": {"prompt_tokens": 5, "completion_tokens": 3, "total_tokens": 8}})
+        chunks = []
+        if (b.get("chat_template_kwargs") or {}).get("enable_thinking", True) is not False and b.get("reasoning_effort") != "none":
+            chunks += [{"reasoning_content": "Thinking"}, {"reasoning_content": " it over."}]
+        finish = "stop"
+        if "FAKE_TOOL" in text and tools:
+            name = tools[0]["function"]["name"]
+            chunks += [{"tool_calls": [{"index": 0, "id": "call_fake", "type": "function", "function": {"name": name, "arguments": ""}}]},
+                       {"tool_calls": [{"index": 0, "function": {"arguments": "{}"}}]}]
+            finish = "tool_calls"
+        else:
+            chunks += [{"content": "Fake "}, {"content": "reply."}]
+        out = b""
+        for d in chunks:
+            out += b"data: " + json.dumps({"id": "chatcmpl-fake", "object": "chat.completion.chunk", "choices": [{"index": 0, "delta": d, "finish_reason": None}]}).encode() + b"\n\n"
+        out += b"data: " + json.dumps({"id": "chatcmpl-fake", "object": "chat.completion.chunk", "choices": [{"index": 0, "delta": {}, "finish_reason": finish}]}).encode() + b"\n\n"
+        self.send_bytes(200, out + b"data: [DONE]\n\n", "text/event-stream")
+
+    def song(self, sid):
+        out = {"success": True, "audio_data": base64.b64encode(WAV).decode(), "session_id": sid, "duration": 0.25}
+        if self.st.flags.get("song_tracks"):  # stems: "Mixed" duplicates the song, short ones are ignored
+            stem = base64.b64encode(WAV + bytes(1000)).decode()
+            out["audio_outputs"] = {"Vocals": stem, "Mixed": stem, "Bass Line": stem, "Tiny": "abc"}
+        return out
+
+    def music(self, method, p):
+        st = self.st
+        if method == "GET" and p in ("/v1/music/info", "/v1/music/sessions", "/v1/sessions"):
+            if p == "/v1/music/info":
+                return self.send_json(200, {"models": [m["id"] for m in CATALOG if m["type"] == "Music Generation"]})
+            return self.send_json(200, {"sessions": [{"session_id": s, "status": v, "progress": 1.0} for s, v in st.sessions.items()]})
+        if method == "GET" and (m := re.fullmatch(r"/v1/music/sessions/([\w-]+)/download", p)):
+            return self.send_bytes(200, MP3, "audio/mpeg")
+        if method == "DELETE" and (m := re.fullmatch(r"/v1/sessions/([\w-]+)", p)):
+            st.sessions.pop(m.group(1), None)
+            return self.send_json(200, {"success": True})
+        if method == "POST" and p == "/v1/music/generate/wav" and st.flags.get("no_music_gateway"):
+            return self.send_json(404, {"detail": "Not Found"})
+        if method == "POST" and p in ("/v1/music/generate/wav", "/v1/generate/wav"):
+            return self.send_bytes(200, WAV, "audio/wav")
+        if method == "POST" and p in ("/v1/music/generate", "/v1/music/generate/preview", "/v1/music/generate/resume", "/v1/generate"):
+            sid = self.body.get("session_id") or f"sess-{len(st.sessions) + 1}"
+            st.sessions[sid] = "completed"
+            return self.send_json(200, self.song(sid))
+        self.err(404, "endpoint not found")
+
+    def tasks3d(self, method, p):
+        st = self.st
+        if method == "GET" and p == "/v1/3d/capabilities":
+            return self.send_json(200, {"stages": ["background", "shape", "simplify", "texture", "export"]})
+        if method == "POST" and p in ("/v1/3d/tasks", "/v1/tasks"):
+            stage = (self.multi or {}).get("fields", {}).get("stage") or "shape"
+            tid = f"task-{len(st.tasks) + 1}"
+            st.tasks[tid] = {"stage": stage, "polls": 0, "cancelled": False}
+            return self.send_json(200, {"data": {"task_id": tid, "status": "queued"}})
+        m = re.fullmatch(r"/v1/(?:3d/)?tasks/([\w-]+)(/cancel)?", p)
+        t = st.tasks.get(m.group(1)) if m else None
+        if not t:
+            return self.err(404, "task not found")
+        if method == "POST" and m.group(2):
+            t["cancelled"] = not st.flags.get("ignore_cancel")  # ignore_cancel: a device that never stops the task
+            return self.send_json(200, {"data": {"task_id": m.group(1), "status": "cancelled"}})
+        if method == "GET" and not m.group(2):
+            t["polls"] += 1  # queued -> running -> completed on successive polls
+            status = "cancelled" if t["cancelled"] else "running" if t["polls"] < st.flags.get("task_polls", 2) or st.flags.get("task_hold") else "completed"
+            if status == "completed" and st.flags.get("fail_stage") == t["stage"]:
+                return self.send_json(200, {"data": {"task_id": m.group(1), "status": "failed", "error": "out of memory"}})
+            d = {"task_id": m.group(1), "status": status, "progress": 100 if status == "completed" else 40, "message": status}
+            if status == "completed" and t["stage"] == "texture" and st.flags.get("rich_texture"):
+                d["result"] = {"output": {"artifacts": [{"artifact_type": "material_pbr", "filename": "mat.png", "mime_type": "image/png", "payload_key": "material"},
+                                                         {"artifact_type": "mesh_glb", "filename": "textured.glb", "mime_type": "model/gltf-binary", "payload_key": "glb"}],
+                                          "material": base64.b64encode(PNG).decode(), "glb": base64.b64encode(GLB + b"tex").decode(), "metadata": {"stage": "texture"}}}
+            elif status == "completed":
+                d["result"] = {"output": {"artifact_type": "mesh_glb", "filename": f"{t['stage']}.glb", "mime_type": "model/gltf-binary",
+                                          "glb": base64.b64encode(GLB).decode(), "metadata": {"stage": t["stage"]}}}
+            return self.send_json(200, {"data": d})
+        self.err(404, "endpoint not found")
+
+
+def make_server(port=0, key="fake-key", launch_delay=0.2, running=(CHAT_MODEL,), host="127.0.0.1"):
+    srv = ThreadingHTTPServer((host, port), Handler)
+    srv.daemon_threads = True
+    srv.state = State(key, launch_delay, running)
+    srv.state.port = srv.server_address[1]  # model "containers" answer on the fake's own port
+    srv.state.reset()
+    return srv
+
+
+def start(port=0, **kw):
+    """Run a fake Tiiny in a thread. Returns (server, base_url); stop it with server.shutdown(); server.server_close()."""
+    srv = make_server(port, **kw)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    return srv, f"http://127.0.0.1:{srv.server_address[1]}"  # (a Docker container reaches it as host.docker.internal)
+
+
+if __name__ == "__main__":
+    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap.add_argument("--port", type=int, default=0)
+    ap.add_argument("--key", default="fake-key")
+    ap.add_argument("--launch-delay", type=float, default=0.2)
+    a = ap.parse_args()
+    srv = make_server(a.port, a.key, a.launch_delay)
+    print(f"fake Tiiny on http://127.0.0.1:{srv.server_address[1]} (key {a.key!r})", flush=True)
+    try:
+        srv.serve_forever()
+    except KeyboardInterrupt:
+        sys.exit(0)

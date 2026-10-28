@@ -1,0 +1,54 @@
+# Rust port checks on every push and pull request that touches it: cargo tests on Windows, macOS and
+# Linux, the contract tests (Python reference vs Rust, against the fake Tiiny) and a desktop app build.
+# Never contacts a real device.
+name: Rust
+
+on:
+  push:
+    paths: ["rust/**", "static/**", "testdata/fake_tiiny.py", "testdata/contract/**", "*.py", ".github/workflows/rust.yml"]
+  pull_request:
+    paths: ["rust/**", "static/**", "testdata/fake_tiiny.py", "testdata/contract/**", "*.py", ".github/workflows/rust.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Test on ${{ matrix.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: Windows, os: windows-latest }
+          - { name: Windows ARM, os: windows-11-arm }
+          - { name: macOS, os: macos-latest }
+          - { name: Linux, os: ubuntu-22.04 }
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: rust
+    steps:
+      - uses: actions/checkout@v7
+      - name: Linux desktop libraries (WebKitGTK)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with: { workspaces: rust }
+      - uses: actions/setup-python@v7
+        with: { python-version: "3.12" }
+      - name: cargo test
+        run: cargo test --workspace
+      - name: Build the server and the desktop app
+        run: cargo build --workspace
+      - name: Contract tests (fake Tiiny)
+        working-directory: .
+        shell: bash
+        run: if [ -d testdata/contract ]; then python -m unittest discover testdata/contract -v; else echo "no contract tests yet"; fi
+      - name: Document reader parity (Python vs Rust)
+        working-directory: .
+        shell: bash
+        run: |
+          pip install pillow python-docx
+          python testdata/extract_parity.py

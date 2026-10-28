@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "The window shows the local studio page over HTTP; the page itself calls no Tauri commands. Dialogs and the opener are used from Rust (tray menu) only.",
+  "windows": ["main"],
+  "permissions": []
+}

@@ -1,0 +1,7 @@
+data/
+.env
+rust/target/
+.claude/
+testdata/docs/
+dist/
+build/

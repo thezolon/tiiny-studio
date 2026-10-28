@@ -1,0 +1,18 @@
+[package]
+name = "studio-server"
+description = "Tiiny Studio headless server (Docker and LAN hosting)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[[bin]]
+name = "tiiny-studio-server"
+path = "src/main.rs"
+
+[dependencies]
+studio-core = { path = "../studio-core" }
+tokio.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"

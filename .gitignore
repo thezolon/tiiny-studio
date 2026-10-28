@@ -1,0 +1,21 @@
+# secrets and runtime data
+.env
+data/
+
+# generated probe outputs (scripts and small inputs are kept)
+testdata/out-*
+testdata/song.json
+testdata/song2.json
+testdata/task.json
+testdata/*.log
+testdata/loop-headers.txt
+__pycache__/
+testdata/docs/
+testdata/Tiiny Studio test vault/
+dist/
+build/
+.claude/worktrees/
+
+# maintainer notes, kept locally only
+CLAUDE.md
+tools/PLAN-*.md

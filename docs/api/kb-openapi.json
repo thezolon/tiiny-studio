@@ -1,0 +1,5114 @@
+{
+ "openapi": "3.1.0",
+ "info": {
+  "title": "SimpleMem Knowledge Base Service",
+  "description": "HTTP service for single-user long-term memory knowledge base",
+  "version": "2.0.0"
+ },
+ "paths": {
+  "/v1/backup": {
+   "get": {
+    "tags": [
+     "System"
+    ],
+    "summary": "Create Backup",
+    "operationId": "create_backup_v1_backup_get",
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      }
+     }
+    },
+    "security": [
+     {
+      "BearerAuth": []
+     }
+    ]
+   }
+  },
+  "/v1/backup/inspect": {
+   "get": {
+    "tags": [
+     "System"
+    ],
+    "summary": "Inspect Backup",
+    "operationId": "inspect_backup_v1_backup_inspect_get",
+    "parameters": [
+     {
+      "name": "deep",
+      "in": "query",
+      "required": false,
+      "schema": {
+       "type": "boolean",
+       "description": "Also run PRAGMA integrity_check on every SQLite store. Costs the same order as the size of those stores, so it is off by default (the client polls this endpoint); use it when deciding whether a backup is worth taking.",
+       "default": false,
+       "title": "Deep"
+      },
+      "description": "Also run PRAGMA integrity_check on every SQLite store. Costs the same order as the size of those stores, so it is off by default (the client polls this endpoint); use it when deciding whether a backup is worth taking."
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "type": "object",
+         "additionalProperties": true,
+         "title": "Response Inspect Backup V1 Backup Inspect Get"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    },
+    "security": [
+     {
+      "BearerAuth": []
+     }
+    ]
+   }
+  },
+  "/v1/restore/inspect": {
+   "post": {
+    "tags": [
+     "System"
+    ],
+    "summary": "Inspect Restore",
+    "operationId": "inspect_restore_v1_restore_inspect_post",
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "type": "object",
+         "title": "Response Inspect Restore V1 Restore Inspect Post"
+        }
+       }
+      }
+     }
+    },
+    "security": [
+     {
+      "BearerAuth": []
+     }
+    ]
+   }
+  },
+  "/v1/restore": {
+   "post": {
+    "tags": [
+     "System"
+    ],
+    "summary": "Restore Backup",
+    "operationId": "restore_backup_v1_restore_post",
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      }
+     }
+    },
+    "security": [
+     {
+      "BearerAuth": []
+     }
+    ]
+   }
+  },
+  "/v1/diagnostics": {
+   "get": {
+    "tags": [
+     "System"
+    ],
+    "summary": "Diagnostics",
+    "operationId": "diagnostics_v1_diagnostics_get",
+    "parameters": [
+     {
+      "name": "deep",
+      "in": "query",
+      "required": false,
+      "schema": {
+       "type": "boolean",
+       "description": "Also run PRAGMA integrity_check on every store. Costs the same order as the size of those stores, so it is off by default.",
+       "default": false,
+       "title": "Deep"
+      },
+      "description": "Also run PRAGMA integrity_check on every store. Costs the same order as the size of those stores, so it is off by default."
+     },
+     {
+      "name": "include",
+      "in": "query",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "Comma separated opt-ins for user content: file_names, content, model_log, broken_stores, recovery_probe. The default bundle is metadata only.",
+       "title": "Include"
+      },
+      "description": "Comma separated opt-ins for user content: file_names, content, model_log, broken_stores, recovery_probe. The default bundle is metadata only."
+     },
+     {
+      "name": "content_scope",
+      "in": "query",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "Required with include=content, e.g. day:2026-10-07 (no whole-database export)",
+       "title": "Content Scope"
+      },
+      "description": "Required with include=content, e.g. day:2026-10-07 (no whole-database export)"
+     },
+     {
+      "name": "limit",
+      "in": "query",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "integer",
+         "minimum": 1
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "Byte cap for the bundle, in bytes (default 64 MiB) -- not a line or item count: a value smaller than the bundle needs returns 413 diagnostics_too_large. The per-section copy budgets are a quarter of this cap, so the bundle stays under it by construction.",
+       "title": "Limit"
+      },
+      "description": "Byte cap for the bundle, in bytes (default 64 MiB) -- not a line or item count: a value smaller than the bundle needs returns 413 diagnostics_too_large. The per-section copy budgets are a quarter of this cap, so the bundle stays under it by construction."
+     },
+     {
+      "name": "item_timeout",
+      "in": "query",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "number",
+         "exclusiveMinimum": 0
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "Per-item timeout in seconds (default 5)",
+       "title": "Item Timeout"
+      },
+      "description": "Per-item timeout in seconds (default 5)"
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    },
+    "security": [
+     {
+      "BearerAuth": []
+     }
+    ]
+   }
+  },
+  "/health": {
+   "get": {
+    "tags": [
+     "System"
+    ],
+    "summary": "Health",
+    "operationId": "health_health_get",
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "type": "object",
+         "title": "Response Health Health Get"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/kb/memory/process": {
+   "post": {
+    "tags": [
+     "Conversation Queue"
+    ],
+    "summary": "Trigger Memory Processing",
+    "operationId": "trigger_memory_processing_kb_memory_process_post",
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/MemoryProcessingTriggerResponse"
+        }
+       }
+      }
+     }
+    },
+    "security": [
+     {
+      "BearerAuth": []
+     }
+    ]
+   }
+  },
+  "/kb/status/stream": {
+   "get": {
+    "tags": [
+     "System"
+    ],
+    "summary": "Status Stream",
+    "operationId": "status_stream_kb_status_stream_get",
+    "parameters": [
+     {
+      "name": "max_events",
+      "in": "query",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "integer",
+         "minimum": 1
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Max Events"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    },
+    "security": [
+     {
+      "BearerAuth": []
+     }
+    ]
+   }
+  },
+  "/kb/add": {
+   "post": {
+    "tags": [
+     "Dialogue Ingestion"
+    ],
+    "summary": "Add Memory",
+    "operationId": "add_memory_kb_add_post",
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/AddMemoryRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/AddResponse"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    },
+    "security": [
+     {
+      "BearerAuth": []
+     }
+    ]
+   }
+  },
+  "/kb/add/stream": {
+   "post": {
+    "tags": [
+     "Dialogue Ingestion"
+    ],
+    "summary": "Add Memory Stream",
+    "operationId": "add_memory_stream_kb_add_stream_post",
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/AddMemoryRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    },
+    "security": [
+     {
+      "BearerAuth": []
+     }
+    ]
+   }
+  },
+  "/kb/add-batch": {
+   "post": {
+    "tags": [
+     "Dialogue Ingestion"
+    ],
+    "summary": "Add Batch",
+    "operationId": "add_batch_kb_add_batch_post",
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/AddBatchRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/AddResponse"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    },
+    "security": [
+     {
+      "BearerAuth": []
+     }
+    ]
+   }
+  },
+  "/kb/finalize": {
+   "post": {
+    "tags": [
+     "Finalization"
+    ],
+    "summary": "Finalize",
+    "operationId": "finalize_kb_finalize_post",
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "anyOf": [
+         {
+          "$ref": "#/components/schemas/FinalizeRequest"
+         },
+         {
+          "type": "null"
+         }
+        ],
+        "title": "Req"
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "type": "object",
+         "title": "Response Finalize Kb Finalize Post"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    },
+    "security": [
+     {
+      "BearerAuth": []
+     }
+    ]
+   }
+  },
+  "/kb/finalize/stream": {
+   "post": {
+    "tags": [
+     "Finalization"
+    ],
+    "summary": "Finalize Stream",
+    "operationId": "finalize_stream_kb_finalize_stream_post",
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "anyOf": [
+         {
+          "$ref": "#/components/schemas/FinalizeRequest"
+         },
+         {
+          "type": "null"
+         }
+        ],
+        "title": "Req"
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    },
+    "security": [
+     {
+      "BearerAuth": []
+     }
+    ]
+   }
+  },
+  "/kb/finalize_conversation": {
+   "post": {
+    "tags": [
+     "Finalization"
+    ],
+    "summary": "Finalize Conversation",
+    "operationId": "finalize_conversation_kb_finalize_conversation_post",
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "type": "object",
+         "title": "Response Finalize Conversation Kb Finalize Conversation Post"
+        }
+       }
+      }
+     }
+    },
+    "security": [
+     {
+      "BearerAuth": []
+     }
+    ]
+   }
+  },
+  "/kb/query": {
+   "post": {
+    "tags": [
+     "Query & Retrieval"
+    ],
+    "summary": "Query Post",
+    "operationId": "query_post_kb_query_post",
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/QueryRequest"
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/QueryResponse"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    },
+    "security": [
+     {
+      "BearerAuth": []
+     }
+    ]
+   },
+   "get": {
+    "tags": [
+     "Query & Retrieval"
+    ],
+    "summary": "Query Get",
+    "operationId": "query_get_kb_query_get",
+    "parameters": [
+     {
+      "name": "question",
+      "in": "query",
+      "required": true,
+      "schema": {
+       "type": "string",
+       "minLength": 1,
+       "title": "Question"
+      }
+     },
+     {
+      "name": "fast_mode",
+      "in": "query",
+      "required": false,
+      "schema": {
+       "type": "boolean",
+       "default": false,
+       "title": "Fast Mode"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/QueryResponse"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    },
+    "security": [
+     {
+      "BearerAuth": []
+     }
+    ]
+   }
+  },
+  "/kb/query/stream": {
+   "post": {
+    "tags": [
+     "Query & Retrieval"
+    ],
+    "summary": "Query Stream",
+    "operationId": "query_stream_kb_query_stream_post",
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/QueryRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    },
+    "security": [
+     {
+      "BearerAuth": []
+     }
+    ]
+   }
+  },
+  "/kb/retrieve": {
+   "post": {
+    "tags": [
+     "Query & Retrieval"
+    ],
+    "summary": "Retrieve Post",
+    "operationId": "retrieve_post_kb_retrieve_post",
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/QueryRequest"
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/RetrieveResponse"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    },
+    "security": [
+     {
+      "BearerAuth": []
+     }
+    ]
+   },
+   "get": {
+    "tags": [
+     "Query & Retrieval"
+    ],
+    "summary": "Retrieve Get",
+    "operationId": "retrieve_get_kb_retrieve_get",
+    "parameters": [
+     {
+      "name": "question",
+      "in": "query",
+      "required": true,
+      "schema": {
+       "type": "string",
+       "minLength": 1,
+       "title": "Question"
+      }
+     },
+     {
+      "name": "fast_mode",
+      "in": "query",
+      "required": false,
+      "schema": {
+       "type": "boolean",
+       "default": false,
+       "title": "Fast Mode"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/RetrieveResponse"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    },
+    "security": [
+     {
+      "BearerAuth": []
+     }
+    ]
+   }
+  },
+  "/kb/context": {
+   "post": {
+    "tags": [
+     "Query & Retrieval"
+    ],
+    "summary": "Build Memory Context",
+    "operationId": "build_memory_context_kb_context_post",
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/MemoryContextRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/MemoryContextResponse"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    },
+    "security": [
+     {
+      "BearerAuth": []
+     }
+    ]
+   }
+  },
+  "/kb/upload_conversation": {
+   "post": {
+    "tags": [
+     "Conversation Queue"
+    ],
+    "summary": "Upload Conversation",
+    "operationId": "upload_conversation_kb_upload_conversation_post",
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/UploadConversationRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/UploadConversationResponse"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    },
+    "security": [
+     {
+      "BearerAuth": []
+     }
+    ]
+   }
+  },
+  "/kb/upload_conversation/stats": {
+   "get": {
+    "tags": [
+     "Conversation Queue"
+    ],
+    "summary": "Upload Conversation Stats",
+    "operationId": "upload_conversation_stats_kb_upload_conversation_stats_get",
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ConversationQueueStatsResponse"
+        }
+       }
+      }
+     }
+    },
+    "security": [
+     {
+      "BearerAuth": []
+     }
+    ]
+   }
+  },
+  "/kb/conversation_days": {
+   "get": {
+    "tags": [
+     "Conversation Queue"
+    ],
+    "summary": "List Conversation Days",
+    "operationId": "list_conversation_days_kb_conversation_days_get",
+    "parameters": [
+     {
+      "name": "limit",
+      "in": "query",
+      "required": false,
+      "schema": {
+       "type": "integer",
+       "maximum": 500,
+       "minimum": 1,
+       "default": 50,
+       "title": "Limit"
+      }
+     },
+     {
+      "name": "offset",
+      "in": "query",
+      "required": false,
+      "schema": {
+       "type": "integer",
+       "minimum": 0,
+       "default": 0,
+       "title": "Offset"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ConversationDayListResponse"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    },
+    "security": [
+     {
+      "BearerAuth": []
+     }
+    ]
+   }
+  },
+  "/kb/conversation_days/{day}": {
+   "get": {
+    "tags": [
+     "Conversation Queue"
+    ],
+    "summary": "Get Conversation Day",
+    "operationId": "get_conversation_day_kb_conversation_days__day__get",
+    "parameters": [
+     {
+      "name": "day",
+      "in": "path",
+      "required": true,
+      "schema": {
+       "type": "string",
+       "title": "Day"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ConversationDayResponse"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    },
+    "security": [
+     {
+      "BearerAuth": []
+     }
+    ]
+   },
+   "delete": {
+    "tags": [
+     "Conversation Queue"
+    ],
+    "summary": "Delete Conversation Day",
+    "operationId": "delete_conversation_day_kb_conversation_days__day__delete",
+    "parameters": [
+     {
+      "name": "day",
+      "in": "path",
+      "required": true,
+      "schema": {
+       "type": "string",
+       "title": "Day"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/DeleteConversationDayResponse"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    },
+    "security": [
+     {
+      "BearerAuth": []
+     }
+    ]
+   }
+  },
+  "/kb/conversation_days/{day}/retry": {
+   "post": {
+    "tags": [
+     "Conversation Queue"
+    ],
+    "summary": "Retry Conversation Day",
+    "description": "Requeue a day that was retired after using up its retry budget.",
+    "operationId": "retry_conversation_day_kb_conversation_days__day__retry_post",
+    "parameters": [
+     {
+      "name": "day",
+      "in": "path",
+      "required": true,
+      "schema": {
+       "type": "string",
+       "title": "Day"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/RetryConversationDayResponse"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    },
+    "security": [
+     {
+      "BearerAuth": []
+     }
+    ]
+   }
+  },
+  "/kb/memory/schedule": {
+   "get": {
+    "tags": [
+     "Conversation Queue"
+    ],
+    "summary": "Get Memory Processing Schedule",
+    "operationId": "get_memory_processing_schedule_kb_memory_schedule_get",
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "type": "object",
+         "title": "Response Get Memory Processing Schedule Kb Memory Schedule Get"
+        }
+       }
+      }
+     }
+    },
+    "security": [
+     {
+      "BearerAuth": []
+     }
+    ]
+   },
+   "put": {
+    "tags": [
+     "Conversation Queue"
+    ],
+    "summary": "Update Memory Processing Schedule",
+    "operationId": "update_memory_processing_schedule_kb_memory_schedule_put",
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/MemoryProcessingScheduleRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "type": "object",
+         "title": "Response Update Memory Processing Schedule Kb Memory Schedule Put"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    },
+    "security": [
+     {
+      "BearerAuth": []
+     }
+    ]
+   }
+  },
+  "/kb/memory/model": {
+   "get": {
+    "tags": [
+     "Conversation Queue"
+    ],
+    "summary": "Get Memory Processing Model",
+    "operationId": "get_memory_processing_model_kb_memory_model_get",
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "type": "object",
+         "title": "Response Get Memory Processing Model Kb Memory Model Get"
+        }
+       }
+      }
+     }
+    },
+    "security": [
+     {
+      "BearerAuth": []
+     }
+    ]
+   },
+   "put": {
+    "tags": [
+     "Conversation Queue"
+    ],
+    "summary": "Update Memory Processing Model",
+    "operationId": "update_memory_processing_model_kb_memory_model_put",
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/MemoryProcessingModelRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "type": "object",
+         "title": "Response Update Memory Processing Model Kb Memory Model Put"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    },
+    "security": [
+     {
+      "BearerAuth": []
+     }
+    ]
+   }
+  },
+  "/kb/memory/scope": {
+   "get": {
+    "tags": [
+     "Conversation Queue"
+    ],
+    "summary": "Get Memory Processing Scope",
+    "operationId": "get_memory_processing_scope_kb_memory_scope_get",
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "type": "object",
+         "title": "Response Get Memory Processing Scope Kb Memory Scope Get"
+        }
+       }
+      }
+     }
+    },
+    "security": [
+     {
+      "BearerAuth": []
+     }
+    ]
+   },
+   "put": {
+    "tags": [
+     "Conversation Queue"
+    ],
+    "summary": "Update Memory Processing Scope",
+    "operationId": "update_memory_processing_scope_kb_memory_scope_put",
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/MemoryProcessingScopeRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "type": "object",
+         "title": "Response Update Memory Processing Scope Kb Memory Scope Put"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    },
+    "security": [
+     {
+      "BearerAuth": []
+     }
+    ]
+   }
+  },
+  "/kb/upload": {
+   "post": {
+    "tags": [
+     "File Sources"
+    ],
+    "summary": "Upload File",
+    "operationId": "upload_file_kb_upload_post",
+    "requestBody": {
+     "content": {
+      "multipart/form-data": {
+       "schema": {
+        "$ref": "#/components/schemas/Body_upload_file_kb_upload_post"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/UploadResponse"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    },
+    "security": [
+     {
+      "BearerAuth": []
+     }
+    ]
+   }
+  },
+  "/kb/upload/stream": {
+   "post": {
+    "tags": [
+     "File Sources"
+    ],
+    "summary": "Upload File Stream",
+    "operationId": "upload_file_stream_kb_upload_stream_post",
+    "requestBody": {
+     "content": {
+      "multipart/form-data": {
+       "schema": {
+        "$ref": "#/components/schemas/Body_upload_file_stream_kb_upload_stream_post"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    },
+    "security": [
+     {
+      "BearerAuth": []
+     }
+    ]
+   }
+  },
+  "/kb/edit-file": {
+   "post": {
+    "tags": [
+     "File Sources"
+    ],
+    "summary": "Edit File",
+    "operationId": "edit_file_kb_edit_file_post",
+    "requestBody": {
+     "content": {
+      "multipart/form-data": {
+       "schema": {
+        "$ref": "#/components/schemas/Body_edit_file_kb_edit_file_post"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/EditFileResponse"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    },
+    "security": [
+     {
+      "BearerAuth": []
+     }
+    ]
+   }
+  },
+  "/kb/sources": {
+   "get": {
+    "tags": [
+     "File Sources"
+    ],
+    "summary": "List Sources",
+    "operationId": "list_sources_kb_sources_get",
+    "parameters": [
+     {
+      "name": "limit",
+      "in": "query",
+      "required": false,
+      "schema": {
+       "type": "integer",
+       "maximum": 500,
+       "minimum": 1,
+       "default": 50,
+       "title": "Limit"
+      }
+     },
+     {
+      "name": "offset",
+      "in": "query",
+      "required": false,
+      "schema": {
+       "type": "integer",
+       "minimum": 0,
+       "default": 0,
+       "title": "Offset"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "type": "object",
+         "additionalProperties": true,
+         "title": "Response List Sources Kb Sources Get"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    },
+    "security": [
+     {
+      "BearerAuth": []
+     }
+    ]
+   }
+  },
+  "/kb/sources/files": {
+   "get": {
+    "tags": [
+     "File Sources"
+    ],
+    "summary": "List File Sources",
+    "operationId": "list_file_sources_kb_sources_files_get",
+    "parameters": [
+     {
+      "name": "limit",
+      "in": "query",
+      "required": false,
+      "schema": {
+       "type": "integer",
+       "maximum": 500,
+       "minimum": 1,
+       "default": 50,
+       "title": "Limit"
+      }
+     },
+     {
+      "name": "offset",
+      "in": "query",
+      "required": false,
+      "schema": {
+       "type": "integer",
+       "minimum": 0,
+       "default": 0,
+       "title": "Offset"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "type": "object",
+         "additionalProperties": true,
+         "title": "Response List File Sources Kb Sources Files Get"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    },
+    "security": [
+     {
+      "BearerAuth": []
+     }
+    ]
+   }
+  },
+  "/kb/sources/conversations": {
+   "get": {
+    "tags": [
+     "File Sources"
+    ],
+    "summary": "List Conversation Sources",
+    "operationId": "list_conversation_sources_kb_sources_conversations_get",
+    "parameters": [
+     {
+      "name": "limit",
+      "in": "query",
+      "required": false,
+      "schema": {
+       "type": "integer",
+       "maximum": 500,
+       "minimum": 1,
+       "default": 50,
+       "title": "Limit"
+      }
+     },
+     {
+      "name": "offset",
+      "in": "query",
+      "required": false,
+      "schema": {
+       "type": "integer",
+       "minimum": 0,
+       "default": 0,
+       "title": "Offset"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "type": "object",
+         "additionalProperties": true,
+         "title": "Response List Conversation Sources Kb Sources Conversations Get"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    },
+    "security": [
+     {
+      "BearerAuth": []
+     }
+    ]
+   }
+  },
+  "/kb/sources/{source_id}": {
+   "patch": {
+    "tags": [
+     "File Sources"
+    ],
+    "summary": "Update Source",
+    "operationId": "update_source_kb_sources__source_id__patch",
+    "parameters": [
+     {
+      "name": "source_id",
+      "in": "path",
+      "required": true,
+      "schema": {
+       "type": "string",
+       "title": "Source Id"
+      }
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/UpdateSourceRequest"
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "type": "object",
+         "additionalProperties": true,
+         "title": "Response Update Source Kb Sources  Source Id  Patch"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    },
+    "security": [
+     {
+      "BearerAuth": []
+     }
+    ]
+   }
+  },
+  "/kb/files/{source_id}": {
+   "get": {
+    "tags": [
+     "File Sources"
+    ],
+    "summary": "Download File",
+    "operationId": "download_file_kb_files__source_id__get",
+    "parameters": [
+     {
+      "name": "source_id",
+      "in": "path",
+      "required": true,
+      "schema": {
+       "type": "string",
+       "title": "Source Id"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    },
+    "security": [
+     {
+      "BearerAuth": []
+     }
+    ]
+   }
+  },
+  "/kb/model/chat/completions": {
+   "post": {
+    "tags": [
+     "On-device Model"
+    ],
+    "summary": "Passthrough to the on-device first-turn title model",
+    "description": "Byte-level passthrough to the title model that runs inside this container (`llama-server`, 127.0.0.1:1234). The upstream is fixed by configuration and cannot be influenced by the request. Request bodies are size-capped and forwarded unparsed; responses are streamed back unmodified (SSE included). Not a general-purpose model proxy.",
+    "operationId": "chat_completions_kb_model_chat_completions_post",
+    "responses": {
+     "200": {
+      "description": "Successful Response"
+     },
+     "401": {
+      "description": "Missing or invalid bearer token"
+     },
+     "413": {
+      "description": "Request body exceeds the configured limit"
+     },
+     "502": {
+      "description": "The title model is unreachable"
+     },
+     "503": {
+      "description": "The title model is busy"
+     },
+     "504": {
+      "description": "The title model did not answer in time"
+     }
+    },
+    "security": [
+     {
+      "BearerAuth": []
+     }
+    ]
+   }
+  },
+  "/kb/user-context": {
+   "get": {
+    "tags": [
+     "User Context"
+    ],
+    "summary": "Get User Context",
+    "operationId": "get_user_context_kb_user_context_get",
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/UserContextResponse"
+        }
+       }
+      }
+     }
+    },
+    "security": [
+     {
+      "BearerAuth": []
+     }
+    ]
+   },
+   "put": {
+    "tags": [
+     "User Context"
+    ],
+    "summary": "Update User Context",
+    "operationId": "update_user_context_kb_user_context_put",
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/UserContextUpdateRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/UserContextResponse"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    },
+    "security": [
+     {
+      "BearerAuth": []
+     }
+    ]
+   }
+  },
+  "/kb/user-context/profile": {
+   "put": {
+    "tags": [
+     "User Context"
+    ],
+    "summary": "Replace User Context Profile",
+    "operationId": "replace_user_context_profile_kb_user_context_profile_put",
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/UserContextProfile"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/UserContextResponse"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    },
+    "security": [
+     {
+      "BearerAuth": []
+     }
+    ]
+   }
+  },
+  "/kb/user-context/profile/{field_name}": {
+   "patch": {
+    "tags": [
+     "User Context"
+    ],
+    "summary": "Patch User Context Profile Field",
+    "operationId": "patch_user_context_profile_field_kb_user_context_profile__field_name__patch",
+    "parameters": [
+     {
+      "name": "field_name",
+      "in": "path",
+      "required": true,
+      "schema": {
+       "type": "string",
+       "title": "Field Name"
+      }
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/UserContextProfileFieldUpdateRequest"
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/UserContextResponse"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    },
+    "security": [
+     {
+      "BearerAuth": []
+     }
+    ]
+   }
+  },
+  "/kb/user-context/upload": {
+   "post": {
+    "tags": [
+     "User Context"
+    ],
+    "summary": "Upload User Context",
+    "operationId": "upload_user_context_kb_user_context_upload_post",
+    "requestBody": {
+     "content": {
+      "multipart/form-data": {
+       "schema": {
+        "$ref": "#/components/schemas/Body_upload_user_context_kb_user_context_upload_post"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/UserContextResponse"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    },
+    "security": [
+     {
+      "BearerAuth": []
+     }
+    ]
+   }
+  },
+  "/kb/user-context/versions": {
+   "get": {
+    "tags": [
+     "User Context"
+    ],
+    "summary": "List User Context Versions",
+    "operationId": "list_user_context_versions_kb_user_context_versions_get",
+    "parameters": [
+     {
+      "name": "limit",
+      "in": "query",
+      "required": false,
+      "schema": {
+       "type": "integer",
+       "maximum": 200,
+       "minimum": 1,
+       "default": 50,
+       "title": "Limit"
+      }
+     },
+     {
+      "name": "offset",
+      "in": "query",
+      "required": false,
+      "schema": {
+       "type": "integer",
+       "minimum": 0,
+       "default": 0,
+       "title": "Offset"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/UserContextVersionListResponse"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    },
+    "security": [
+     {
+      "BearerAuth": []
+     }
+    ]
+   }
+  },
+  "/kb/user-context/versions/{version_id}": {
+   "get": {
+    "tags": [
+     "User Context"
+    ],
+    "summary": "Get User Context Version",
+    "operationId": "get_user_context_version_kb_user_context_versions__version_id__get",
+    "parameters": [
+     {
+      "name": "version_id",
+      "in": "path",
+      "required": true,
+      "schema": {
+       "type": "string",
+       "title": "Version Id"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/UserContextVersionResponse"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    },
+    "security": [
+     {
+      "BearerAuth": []
+     }
+    ]
+   }
+  },
+  "/kb/user-context/versions/{version_id}/restore": {
+   "post": {
+    "tags": [
+     "User Context"
+    ],
+    "summary": "Restore User Context Version",
+    "operationId": "restore_user_context_version_kb_user_context_versions__version_id__restore_post",
+    "parameters": [
+     {
+      "name": "version_id",
+      "in": "path",
+      "required": true,
+      "schema": {
+       "type": "string",
+       "title": "Version Id"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/UserContextResponse"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    },
+    "security": [
+     {
+      "BearerAuth": []
+     }
+    ]
+   }
+  },
+  "/kb/memory/facts": {
+   "get": {
+    "tags": [
+     "User Context"
+    ],
+    "summary": "List Memory Facts",
+    "operationId": "list_memory_facts_kb_memory_facts_get",
+    "parameters": [
+     {
+      "name": "status",
+      "in": "query",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": "active",
+       "title": "Status"
+      }
+     },
+     {
+      "name": "fact_type",
+      "in": "query",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Fact Type"
+      }
+     },
+     {
+      "name": "subject",
+      "in": "query",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Subject"
+      }
+     },
+     {
+      "name": "q",
+      "in": "query",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Q"
+      }
+     },
+     {
+      "name": "limit",
+      "in": "query",
+      "required": false,
+      "schema": {
+       "type": "integer",
+       "maximum": 500,
+       "minimum": 1,
+       "default": 100,
+       "title": "Limit"
+      }
+     },
+     {
+      "name": "offset",
+      "in": "query",
+      "required": false,
+      "schema": {
+       "type": "integer",
+       "minimum": 0,
+       "default": 0,
+       "title": "Offset"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/MemoryFactListResponse"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    },
+    "security": [
+     {
+      "BearerAuth": []
+     }
+    ]
+   },
+   "post": {
+    "tags": [
+     "User Context"
+    ],
+    "summary": "Create Memory Fact",
+    "operationId": "create_memory_fact_kb_memory_facts_post",
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/MemoryFactRequest"
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/MemoryFactResponse"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    },
+    "security": [
+     {
+      "BearerAuth": []
+     }
+    ]
+   }
+  },
+  "/kb/memory/facts/{fact_id}": {
+   "patch": {
+    "tags": [
+     "User Context"
+    ],
+    "summary": "Patch Memory Fact",
+    "operationId": "patch_memory_fact_kb_memory_facts__fact_id__patch",
+    "parameters": [
+     {
+      "name": "fact_id",
+      "in": "path",
+      "required": true,
+      "schema": {
+       "type": "string",
+       "title": "Fact Id"
+      }
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/MemoryFactPatchRequest"
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/MemoryFactResponse"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    },
+    "security": [
+     {
+      "BearerAuth": []
+     }
+    ]
+   },
+   "delete": {
+    "tags": [
+     "User Context"
+    ],
+    "summary": "Delete Memory Fact",
+    "operationId": "delete_memory_fact_kb_memory_facts__fact_id__delete",
+    "parameters": [
+     {
+      "name": "fact_id",
+      "in": "path",
+      "required": true,
+      "schema": {
+       "type": "string",
+       "title": "Fact Id"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/MemoryFactResponse"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    },
+    "security": [
+     {
+      "BearerAuth": []
+     }
+    ]
+   }
+  },
+  "/kb/memory/proposals": {
+   "get": {
+    "tags": [
+     "User Context"
+    ],
+    "summary": "List Memory Proposals",
+    "operationId": "list_memory_proposals_kb_memory_proposals_get",
+    "parameters": [
+     {
+      "name": "status",
+      "in": "query",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": "pending",
+       "title": "Status"
+      }
+     },
+     {
+      "name": "risk_level",
+      "in": "query",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Risk Level"
+      }
+     },
+     {
+      "name": "source_id",
+      "in": "query",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Source Id"
+      }
+     },
+     {
+      "name": "limit",
+      "in": "query",
+      "required": false,
+      "schema": {
+       "type": "integer",
+       "maximum": 500,
+       "minimum": 1,
+       "default": 100,
+       "title": "Limit"
+      }
+     },
+     {
+      "name": "offset",
+      "in": "query",
+      "required": false,
+      "schema": {
+       "type": "integer",
+       "minimum": 0,
+       "default": 0,
+       "title": "Offset"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/MemoryProposalListResponse"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    },
+    "security": [
+     {
+      "BearerAuth": []
+     }
+    ]
+   }
+  },
+  "/kb/memory/proposals/{proposal_id}/approve": {
+   "post": {
+    "tags": [
+     "User Context"
+    ],
+    "summary": "Approve Memory Proposal",
+    "operationId": "approve_memory_proposal_kb_memory_proposals__proposal_id__approve_post",
+    "parameters": [
+     {
+      "name": "proposal_id",
+      "in": "path",
+      "required": true,
+      "schema": {
+       "type": "string",
+       "title": "Proposal Id"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/MemoryProposalResponse"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    },
+    "security": [
+     {
+      "BearerAuth": []
+     }
+    ]
+   }
+  },
+  "/kb/memory/proposals/{proposal_id}/reject": {
+   "post": {
+    "tags": [
+     "User Context"
+    ],
+    "summary": "Reject Memory Proposal",
+    "operationId": "reject_memory_proposal_kb_memory_proposals__proposal_id__reject_post",
+    "parameters": [
+     {
+      "name": "proposal_id",
+      "in": "path",
+      "required": true,
+      "schema": {
+       "type": "string",
+       "title": "Proposal Id"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/MemoryProposalResponse"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    },
+    "security": [
+     {
+      "BearerAuth": []
+     }
+    ]
+   }
+  },
+  "/kb/delete-memory": {
+   "post": {
+    "tags": [
+     "Administration"
+    ],
+    "summary": "Delete Memory",
+    "operationId": "delete_memory_kb_delete_memory_post",
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/DeleteMemoryRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/DeleteMemoryResponse"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    },
+    "security": [
+     {
+      "BearerAuth": []
+     }
+    ]
+   }
+  },
+  "/kb/memories": {
+   "get": {
+    "tags": [
+     "Administration"
+    ],
+    "summary": "List Memories",
+    "operationId": "list_memories_kb_memories_get",
+    "parameters": [
+     {
+      "name": "limit",
+      "in": "query",
+      "required": false,
+      "schema": {
+       "type": "integer",
+       "maximum": 1000,
+       "minimum": 1,
+       "default": 100,
+       "title": "Limit"
+      }
+     },
+     {
+      "name": "offset",
+      "in": "query",
+      "required": false,
+      "schema": {
+       "type": "integer",
+       "minimum": 0,
+       "default": 0,
+       "title": "Offset"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "type": "object",
+         "additionalProperties": true,
+         "title": "Response List Memories Kb Memories Get"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    },
+    "security": [
+     {
+      "BearerAuth": []
+     }
+    ]
+   }
+  },
+  "/kb/clear": {
+   "post": {
+    "tags": [
+     "Administration"
+    ],
+    "summary": "Clear",
+    "operationId": "clear_kb_clear_post",
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "type": "object",
+         "title": "Response Clear Kb Clear Post"
+        }
+       }
+      }
+     }
+    },
+    "security": [
+     {
+      "BearerAuth": []
+     }
+    ]
+   }
+  }
+ },
+ "components": {
+  "schemas": {
+   "AddBatchRequest": {
+    "properties": {
+     "items": {
+      "items": {
+       "$ref": "#/components/schemas/AddMemoryRequest"
+      },
+      "type": "array",
+      "title": "Items"
+     },
+     "source_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Source Id"
+     },
+     "auto_finalize": {
+      "type": "boolean",
+      "title": "Auto Finalize",
+      "default": false
+     }
+    },
+    "type": "object",
+    "title": "AddBatchRequest"
+   },
+   "AddMemoryRequest": {
+    "properties": {
+     "speaker": {
+      "type": "string",
+      "minLength": 1,
+      "title": "Speaker"
+     },
+     "content": {
+      "type": "string",
+      "minLength": 1,
+      "title": "Content"
+     },
+     "timestamp": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Timestamp"
+     },
+     "source_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Source Id"
+     },
+     "auto_finalize": {
+      "type": "boolean",
+      "title": "Auto Finalize",
+      "default": false
+     }
+    },
+    "type": "object",
+    "required": [
+     "speaker",
+     "content"
+    ],
+    "title": "AddMemoryRequest"
+   },
+   "AddResponse": {
+    "properties": {
+     "success": {
+      "type": "boolean",
+      "title": "Success"
+     },
+     "source_id": {
+      "type": "string",
+      "title": "Source Id"
+     },
+     "chunks": {
+      "type": "integer",
+      "title": "Chunks"
+     },
+     "finalized": {
+      "type": "boolean",
+      "title": "Finalized"
+     },
+     "generated_entries": {
+      "type": "integer",
+      "title": "Generated Entries"
+     }
+    },
+    "type": "object",
+    "required": [
+     "success",
+     "source_id",
+     "chunks",
+     "finalized",
+     "generated_entries"
+    ],
+    "title": "AddResponse"
+   },
+   "Body_edit_file_kb_edit_file_post": {
+    "properties": {
+     "source_id": {
+      "type": "string",
+      "title": "Source Id"
+     },
+     "file": {
+      "type": "string",
+      "format": "binary",
+      "title": "File"
+     },
+     "timestamp": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Timestamp"
+     },
+     "auto_finalize": {
+      "type": "boolean",
+      "title": "Auto Finalize",
+      "default": true
+     }
+    },
+    "type": "object",
+    "required": [
+     "source_id",
+     "file"
+    ],
+    "title": "Body_edit_file_kb_edit_file_post"
+   },
+   "Body_upload_file_kb_upload_post": {
+    "properties": {
+     "file": {
+      "type": "string",
+      "format": "binary",
+      "title": "File"
+     },
+     "timestamp": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Timestamp"
+     },
+     "finalize_now": {
+      "type": "boolean",
+      "title": "Finalize Now",
+      "default": false
+     },
+     "source_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Source Id"
+     }
+    },
+    "type": "object",
+    "required": [
+     "file"
+    ],
+    "title": "Body_upload_file_kb_upload_post"
+   },
+   "Body_upload_file_stream_kb_upload_stream_post": {
+    "properties": {
+     "files": {
+      "items": {
+       "type": "string",
+       "format": "binary"
+      },
+      "type": "array",
+      "title": "Files"
+     },
+     "timestamp": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Timestamp"
+     },
+     "finalize_now": {
+      "type": "boolean",
+      "title": "Finalize Now",
+      "default": false
+     },
+     "source_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Source Id"
+     }
+    },
+    "type": "object",
+    "required": [
+     "files"
+    ],
+    "title": "Body_upload_file_stream_kb_upload_stream_post"
+   },
+   "Body_upload_user_context_kb_user_context_upload_post": {
+    "properties": {
+     "file": {
+      "type": "string",
+      "format": "binary",
+      "title": "File"
+     }
+    },
+    "type": "object",
+    "required": [
+     "file"
+    ],
+    "title": "Body_upload_user_context_kb_user_context_upload_post"
+   },
+   "ConversationDayListItem": {
+    "properties": {
+     "day": {
+      "type": "string",
+      "title": "Day"
+     },
+     "source_id": {
+      "type": "string",
+      "title": "Source Id"
+     },
+     "filename": {
+      "type": "string",
+      "title": "Filename"
+     },
+     "status": {
+      "type": "string",
+      "title": "Status"
+     },
+     "error_message": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Error Message"
+     },
+     "has_summary": {
+      "type": "boolean",
+      "title": "Has Summary"
+     },
+     "summary_consumed": {
+      "type": "boolean",
+      "title": "Summary Consumed"
+     },
+     "summary_memory_worthy": {
+      "type": "boolean",
+      "title": "Summary Memory Worthy"
+     },
+     "summary_refinement_status": {
+      "type": "string",
+      "title": "Summary Refinement Status",
+      "default": "skipped"
+     },
+     "summary_refinement_error": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Summary Refinement Error"
+     },
+     "summary_refinement_attempt_count": {
+      "type": "integer",
+      "title": "Summary Refinement Attempt Count",
+      "default": 0
+     },
+     "summary_refined_at": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Summary Refined At"
+     },
+     "summary_refinement_updated_at": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Summary Refinement Updated At"
+     },
+     "published_to_sources": {
+      "type": "boolean",
+      "title": "Published To Sources"
+     },
+     "journal_text": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Journal Text"
+     },
+     "journal_item_count": {
+      "type": "integer",
+      "title": "Journal Item Count",
+      "default": 0
+     },
+     "journal_updated_at": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Journal Updated At"
+     },
+     "created_at": {
+      "type": "string",
+      "title": "Created At"
+     },
+     "updated_at": {
+      "type": "string",
+      "title": "Updated At"
+     },
+     "content_updated_at": {
+      "type": "string",
+      "title": "Content Updated At"
+     },
+     "summary_updated_at": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Summary Updated At"
+     },
+     "finalized_at": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Finalized At"
+     }
+    },
+    "type": "object",
+    "required": [
+     "day",
+     "source_id",
+     "filename",
+     "status",
+     "has_summary",
+     "summary_consumed",
+     "summary_memory_worthy",
+     "published_to_sources",
+     "created_at",
+     "updated_at",
+     "content_updated_at"
+    ],
+    "title": "ConversationDayListItem"
+   },
+   "ConversationDayListResponse": {
+    "properties": {
+     "count": {
+      "type": "integer",
+      "title": "Count"
+     },
+     "total": {
+      "type": "integer",
+      "title": "Total"
+     },
+     "limit": {
+      "type": "integer",
+      "title": "Limit"
+     },
+     "offset": {
+      "type": "integer",
+      "title": "Offset"
+     },
+     "items": {
+      "items": {
+       "$ref": "#/components/schemas/ConversationDayListItem"
+      },
+      "type": "array",
+      "title": "Items"
+     }
+    },
+    "type": "object",
+    "required": [
+     "count",
+     "total",
+     "limit",
+     "offset",
+     "items"
+    ],
+    "title": "ConversationDayListResponse"
+   },
+   "ConversationDayResponse": {
+    "properties": {
+     "day": {
+      "type": "string",
+      "title": "Day"
+     },
+     "source_id": {
+      "type": "string",
+      "title": "Source Id"
+     },
+     "filename": {
+      "type": "string",
+      "title": "Filename"
+     },
+     "status": {
+      "type": "string",
+      "title": "Status"
+     },
+     "error_message": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Error Message"
+     },
+     "has_summary": {
+      "type": "boolean",
+      "title": "Has Summary"
+     },
+     "summary_consumed": {
+      "type": "boolean",
+      "title": "Summary Consumed"
+     },
+     "summary_memory_worthy": {
+      "type": "boolean",
+      "title": "Summary Memory Worthy"
+     },
+     "summary_refinement_status": {
+      "type": "string",
+      "title": "Summary Refinement Status",
+      "default": "skipped"
+     },
+     "summary_refinement_error": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Summary Refinement Error"
+     },
+     "summary_refinement_attempt_count": {
+      "type": "integer",
+      "title": "Summary Refinement Attempt Count",
+      "default": 0
+     },
+     "summary_refined_at": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Summary Refined At"
+     },
+     "summary_refinement_updated_at": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Summary Refinement Updated At"
+     },
+     "published_to_sources": {
+      "type": "boolean",
+      "title": "Published To Sources"
+     },
+     "journal_text": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Journal Text"
+     },
+     "journal_item_count": {
+      "type": "integer",
+      "title": "Journal Item Count",
+      "default": 0
+     },
+     "journal_updated_at": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Journal Updated At"
+     },
+     "created_at": {
+      "type": "string",
+      "title": "Created At"
+     },
+     "updated_at": {
+      "type": "string",
+      "title": "Updated At"
+     },
+     "content_updated_at": {
+      "type": "string",
+      "title": "Content Updated At"
+     },
+     "summary_updated_at": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Summary Updated At"
+     },
+     "finalized_at": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Finalized At"
+     },
+     "journal_items": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array",
+      "title": "Journal Items"
+     },
+     "summary_text": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Summary Text"
+     }
+    },
+    "type": "object",
+    "required": [
+     "day",
+     "source_id",
+     "filename",
+     "status",
+     "has_summary",
+     "summary_consumed",
+     "summary_memory_worthy",
+     "published_to_sources",
+     "created_at",
+     "updated_at",
+     "content_updated_at"
+    ],
+    "title": "ConversationDayResponse"
+   },
+   "ConversationQueueStatsResponse": {
+    "properties": {
+     "queued": {
+      "type": "integer",
+      "title": "Queued"
+     },
+     "processing": {
+      "type": "integer",
+      "title": "Processing"
+     },
+     "summarized": {
+      "type": "integer",
+      "title": "Summarized"
+     },
+     "failed": {
+      "type": "integer",
+      "title": "Failed"
+     },
+     "buffered": {
+      "type": "integer",
+      "title": "Buffered"
+     },
+     "refinement_queued": {
+      "type": "integer",
+      "title": "Refinement Queued",
+      "default": 0
+     },
+     "refinement_processing": {
+      "type": "integer",
+      "title": "Refinement Processing",
+      "default": 0
+     },
+     "refinement_success": {
+      "type": "integer",
+      "title": "Refinement Success",
+      "default": 0
+     },
+     "refinement_failed": {
+      "type": "integer",
+      "title": "Refinement Failed",
+      "default": 0
+     },
+     "refinement_skipped": {
+      "type": "integer",
+      "title": "Refinement Skipped",
+      "default": 0
+     }
+    },
+    "type": "object",
+    "required": [
+     "queued",
+     "processing",
+     "summarized",
+     "failed",
+     "buffered"
+    ],
+    "title": "ConversationQueueStatsResponse"
+   },
+   "DeleteConversationDayResponse": {
+    "properties": {
+     "success": {
+      "type": "boolean",
+      "title": "Success"
+     },
+     "source_id": {
+      "type": "string",
+      "title": "Source Id"
+     },
+     "deleted_entries": {
+      "type": "integer",
+      "title": "Deleted Entries"
+     },
+     "removed_chunks": {
+      "type": "integer",
+      "title": "Removed Chunks"
+     },
+     "day": {
+      "type": "string",
+      "title": "Day"
+     },
+     "deleted_facts": {
+      "type": "integer",
+      "title": "Deleted Facts",
+      "default": 0
+     },
+     "deleted_proposals": {
+      "type": "integer",
+      "title": "Deleted Proposals",
+      "default": 0
+     },
+     "deleted_source": {
+      "type": "boolean",
+      "title": "Deleted Source",
+      "default": false
+     },
+     "deleted_journal_file": {
+      "type": "boolean",
+      "title": "Deleted Journal File",
+      "default": false
+     },
+     "orphan_entries_deleted": {
+      "type": "integer",
+      "title": "Orphan Entries Deleted",
+      "default": 0
+     },
+     "context_versions_retained": {
+      "items": {
+       "additionalProperties": true,
+       "type": "object"
+      },
+      "type": "array",
+      "title": "Context Versions Retained"
+     },
+     "context_proposals_retained": {
+      "items": {
+       "additionalProperties": true,
+       "type": "object"
+      },
+      "type": "array",
+      "title": "Context Proposals Retained"
+     }
+    },
+    "type": "object",
+    "required": [
+     "success",
+     "source_id",
+     "deleted_entries",
+     "removed_chunks",
+     "day"
+    ],
+    "title": "DeleteConversationDayResponse"
+   },
+   "DeleteMemoryRequest": {
+    "properties": {
+     "source_id": {
+      "type": "string",
+      "minLength": 1,
+      "title": "Source Id"
+     }
+    },
+    "type": "object",
+    "required": [
+     "source_id"
+    ],
+    "title": "DeleteMemoryRequest"
+   },
+   "DeleteMemoryResponse": {
+    "properties": {
+     "success": {
+      "type": "boolean",
+      "title": "Success"
+     },
+     "source_id": {
+      "type": "string",
+      "title": "Source Id"
+     },
+     "deleted_entries": {
+      "type": "integer",
+      "title": "Deleted Entries"
+     },
+     "removed_chunks": {
+      "type": "integer",
+      "title": "Removed Chunks"
+     },
+     "day": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Day"
+     },
+     "deleted_facts": {
+      "type": "integer",
+      "title": "Deleted Facts",
+      "default": 0
+     },
+     "deleted_proposals": {
+      "type": "integer",
+      "title": "Deleted Proposals",
+      "default": 0
+     },
+     "deleted_source": {
+      "type": "boolean",
+      "title": "Deleted Source",
+      "default": false
+     },
+     "deleted_journal_file": {
+      "type": "boolean",
+      "title": "Deleted Journal File",
+      "default": false
+     },
+     "orphan_entries_deleted": {
+      "type": "integer",
+      "title": "Orphan Entries Deleted",
+      "default": 0
+     },
+     "context_versions_retained": {
+      "items": {
+       "additionalProperties": true,
+       "type": "object"
+      },
+      "type": "array",
+      "title": "Context Versions Retained"
+     },
+     "context_proposals_retained": {
+      "items": {
+       "additionalProperties": true,
+       "type": "object"
+      },
+      "type": "array",
+      "title": "Context Proposals Retained"
+     }
+    },
+    "type": "object",
+    "required": [
+     "success",
+     "source_id",
+     "deleted_entries",
+     "removed_chunks"
+    ],
+    "title": "DeleteMemoryResponse"
+   },
+   "EditFileResponse": {
+    "properties": {
+     "success": {
+      "type": "boolean",
+      "title": "Success"
+     },
+     "source_id": {
+      "type": "string",
+      "title": "Source Id"
+     },
+     "filename": {
+      "type": "string",
+      "title": "Filename"
+     },
+     "chunks": {
+      "type": "integer",
+      "title": "Chunks"
+     },
+     "chars": {
+      "type": "integer",
+      "title": "Chars"
+     },
+     "finalized": {
+      "type": "boolean",
+      "title": "Finalized"
+     },
+     "generated_entries": {
+      "type": "integer",
+      "title": "Generated Entries"
+     },
+     "deleted_entries": {
+      "type": "integer",
+      "title": "Deleted Entries"
+     }
+    },
+    "type": "object",
+    "required": [
+     "success",
+     "source_id",
+     "filename",
+     "chunks",
+     "chars",
+     "finalized",
+     "generated_entries",
+     "deleted_entries"
+    ],
+    "title": "EditFileResponse"
+   },
+   "FinalizeRequest": {
+    "properties": {
+     "source_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Source Id"
+     },
+     "auto_load_embedding_model": {
+      "type": "boolean",
+      "title": "Auto Load Embedding Model",
+      "default": false
+     }
+    },
+    "type": "object",
+    "title": "FinalizeRequest"
+   },
+   "HTTPValidationError": {
+    "properties": {
+     "detail": {
+      "items": {
+       "$ref": "#/components/schemas/ValidationError"
+      },
+      "type": "array",
+      "title": "Detail"
+     }
+    },
+    "type": "object",
+    "title": "HTTPValidationError"
+   },
+   "MemoryContextRequest": {
+    "properties": {
+     "query": {
+      "type": "string",
+      "minLength": 1,
+      "title": "Query"
+     },
+     "fast_mode": {
+      "type": "boolean",
+      "title": "Fast Mode",
+      "default": true
+     },
+     "include_user_context": {
+      "type": "boolean",
+      "title": "Include User Context",
+      "default": true
+     },
+     "include_facts": {
+      "type": "boolean",
+      "title": "Include Facts",
+      "default": true
+     },
+     "include_vector_memories": {
+      "type": "boolean",
+      "title": "Include Vector Memories",
+      "default": true
+     },
+     "max_tokens": {
+      "anyOf": [
+       {
+        "type": "integer",
+        "maximum": 8000.0,
+        "minimum": 1.0
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Max Tokens"
+     }
+    },
+    "type": "object",
+    "required": [
+     "query"
+    ],
+    "title": "MemoryContextRequest"
+   },
+   "MemoryContextResponse": {
+    "properties": {
+     "success": {
+      "type": "boolean",
+      "title": "Success",
+      "default": true
+     },
+     "context": {
+      "type": "string",
+      "title": "Context"
+     },
+     "sections": {
+      "additionalProperties": true,
+      "type": "object",
+      "title": "Sections"
+     },
+     "citations": {
+      "items": {
+       "additionalProperties": true,
+       "type": "object"
+      },
+      "type": "array",
+      "title": "Citations"
+     },
+     "token_estimate": {
+      "type": "integer",
+      "title": "Token Estimate"
+     }
+    },
+    "type": "object",
+    "required": [
+     "context",
+     "sections",
+     "citations",
+     "token_estimate"
+    ],
+    "title": "MemoryContextResponse"
+   },
+   "MemoryFactListResponse": {
+    "properties": {
+     "success": {
+      "type": "boolean",
+      "title": "Success",
+      "default": true
+     },
+     "items": {
+      "items": {
+       "additionalProperties": true,
+       "type": "object"
+      },
+      "type": "array",
+      "title": "Items"
+     },
+     "count": {
+      "type": "integer",
+      "title": "Count"
+     },
+     "total": {
+      "type": "integer",
+      "title": "Total"
+     }
+    },
+    "type": "object",
+    "required": [
+     "items",
+     "count",
+     "total"
+    ],
+    "title": "MemoryFactListResponse"
+   },
+   "MemoryFactPatchRequest": {
+    "properties": {
+     "fact_type": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Fact Type"
+     },
+     "subject": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Subject"
+     },
+     "predicate": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Predicate"
+     },
+     "object": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Object"
+     },
+     "qualifiers": {
+      "anyOf": [
+       {
+        "additionalProperties": true,
+        "type": "object"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Qualifiers"
+     },
+     "confidence": {
+      "anyOf": [
+       {
+        "type": "number",
+        "maximum": 1.0,
+        "minimum": 0.0
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Confidence"
+     },
+     "source_type": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Source Type"
+     },
+     "source_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Source Id"
+     },
+     "source_entry_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Source Entry Id"
+     },
+     "evidence": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Evidence"
+     }
+    },
+    "additionalProperties": false,
+    "type": "object",
+    "title": "MemoryFactPatchRequest"
+   },
+   "MemoryFactRequest": {
+    "properties": {
+     "fact_type": {
+      "type": "string",
+      "minLength": 1,
+      "title": "Fact Type"
+     },
+     "subject": {
+      "type": "string",
+      "minLength": 1,
+      "title": "Subject",
+      "default": "user"
+     },
+     "predicate": {
+      "type": "string",
+      "minLength": 1,
+      "title": "Predicate"
+     },
+     "object": {
+      "type": "string",
+      "minLength": 1,
+      "title": "Object"
+     },
+     "qualifiers": {
+      "additionalProperties": true,
+      "type": "object",
+      "title": "Qualifiers"
+     },
+     "confidence": {
+      "type": "number",
+      "maximum": 1.0,
+      "minimum": 0.0,
+      "title": "Confidence",
+      "default": 0.7
+     },
+     "source_type": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Source Type"
+     },
+     "source_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Source Id"
+     },
+     "source_entry_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Source Entry Id"
+     },
+     "evidence": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Evidence"
+     }
+    },
+    "additionalProperties": false,
+    "type": "object",
+    "required": [
+     "fact_type",
+     "predicate",
+     "object"
+    ],
+    "title": "MemoryFactRequest"
+   },
+   "MemoryFactResponse": {
+    "properties": {
+     "success": {
+      "type": "boolean",
+      "title": "Success",
+      "default": true
+     },
+     "fact": {
+      "additionalProperties": true,
+      "type": "object",
+      "title": "Fact"
+     }
+    },
+    "type": "object",
+    "required": [
+     "fact"
+    ],
+    "title": "MemoryFactResponse"
+   },
+   "MemoryProcessingModelRequest": {
+    "properties": {
+     "model_id": {
+      "type": "string",
+      "title": "Model Id",
+      "description": "Model ID to use for summarization; empty disables automatic summarization"
+     }
+    },
+    "additionalProperties": false,
+    "type": "object",
+    "required": [
+     "model_id"
+    ],
+    "title": "MemoryProcessingModelRequest"
+   },
+   "MemoryProcessingScheduleRequest": {
+    "properties": {
+     "nightly_start_hour": {
+      "type": "integer",
+      "maximum": 23.0,
+      "minimum": 0.0,
+      "title": "Nightly Start Hour",
+      "description": "Hour processing window starts (0-23)"
+     },
+     "nightly_start_minute": {
+      "type": "integer",
+      "maximum": 59.0,
+      "minimum": 0.0,
+      "title": "Nightly Start Minute",
+      "description": "Minute processing window starts (0-59)",
+      "default": 0
+     },
+     "nightly_end_hour": {
+      "anyOf": [
+       {
+        "type": "integer",
+        "maximum": 23.0,
+        "minimum": 0.0
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Nightly End Hour"
+     },
+     "nightly_end_minute": {
+      "anyOf": [
+       {
+        "type": "integer",
+        "maximum": 59.0,
+        "minimum": 0.0
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Nightly End Minute"
+     }
+    },
+    "additionalProperties": false,
+    "type": "object",
+    "required": [
+     "nightly_start_hour"
+    ],
+    "title": "MemoryProcessingScheduleRequest"
+   },
+   "MemoryProcessingScopeRequest": {
+    "properties": {
+     "scope": {
+      "type": "string",
+      "enum": [
+       "all",
+       "tiinyos"
+      ],
+      "title": "Scope",
+      "description": "Summary scope: 'tiinyos' summarizes TiinyOS client chats only, 'all' summarizes every LLM output"
+     }
+    },
+    "additionalProperties": false,
+    "type": "object",
+    "required": [
+     "scope"
+    ],
+    "title": "MemoryProcessingScopeRequest"
+   },
+   "MemoryProcessingTriggerResponse": {
+    "properties": {
+     "success": {
+      "type": "boolean",
+      "title": "Success",
+      "default": true
+     },
+     "message": {
+      "type": "string",
+      "title": "Message"
+     },
+     "workers": {
+      "additionalProperties": true,
+      "type": "object",
+      "title": "Workers"
+     }
+    },
+    "type": "object",
+    "required": [
+     "message",
+     "workers"
+    ],
+    "title": "MemoryProcessingTriggerResponse"
+   },
+   "MemoryProposalListResponse": {
+    "properties": {
+     "success": {
+      "type": "boolean",
+      "title": "Success",
+      "default": true
+     },
+     "items": {
+      "items": {
+       "additionalProperties": true,
+       "type": "object"
+      },
+      "type": "array",
+      "title": "Items"
+     },
+     "count": {
+      "type": "integer",
+      "title": "Count"
+     },
+     "total": {
+      "type": "integer",
+      "title": "Total"
+     }
+    },
+    "type": "object",
+    "required": [
+     "items",
+     "count",
+     "total"
+    ],
+    "title": "MemoryProposalListResponse"
+   },
+   "MemoryProposalResponse": {
+    "properties": {
+     "success": {
+      "type": "boolean",
+      "title": "Success",
+      "default": true
+     },
+     "proposal": {
+      "additionalProperties": true,
+      "type": "object",
+      "title": "Proposal"
+     }
+    },
+    "type": "object",
+    "required": [
+     "proposal"
+    ],
+    "title": "MemoryProposalResponse"
+   },
+   "QueryRequest": {
+    "properties": {
+     "question": {
+      "type": "string",
+      "minLength": 1,
+      "title": "Question"
+     },
+     "fast_mode": {
+      "type": "boolean",
+      "title": "Fast Mode",
+      "default": false
+     },
+     "include_memory_context": {
+      "type": "boolean",
+      "title": "Include Memory Context",
+      "default": true
+     },
+     "return_memory_context": {
+      "type": "boolean",
+      "title": "Return Memory Context",
+      "default": false
+     },
+     "memory_context_max_tokens": {
+      "anyOf": [
+       {
+        "type": "integer",
+        "maximum": 8000.0,
+        "minimum": 1.0
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Memory Context Max Tokens"
+     }
+    },
+    "type": "object",
+    "required": [
+     "question"
+    ],
+    "title": "QueryRequest"
+   },
+   "QueryResponse": {
+    "properties": {
+     "answer": {
+      "type": "string",
+      "title": "Answer"
+     },
+     "memory_context": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Memory Context"
+     },
+     "memory_context_token_estimate": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Memory Context Token Estimate"
+     },
+     "citations": {
+      "anyOf": [
+       {
+        "items": {
+         "additionalProperties": true,
+         "type": "object"
+        },
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Citations"
+     }
+    },
+    "type": "object",
+    "required": [
+     "answer"
+    ],
+    "title": "QueryResponse"
+   },
+   "RetrieveResponse": {
+    "properties": {
+     "success": {
+      "type": "boolean",
+      "title": "Success"
+     },
+     "query": {
+      "type": "string",
+      "title": "Query"
+     },
+     "results": {
+      "items": {
+       "additionalProperties": true,
+       "type": "object"
+      },
+      "type": "array",
+      "title": "Results"
+     },
+     "count": {
+      "type": "integer",
+      "title": "Count"
+     }
+    },
+    "type": "object",
+    "required": [
+     "success",
+     "query",
+     "results",
+     "count"
+    ],
+    "title": "RetrieveResponse"
+   },
+   "RetryConversationDayResponse": {
+    "properties": {
+     "success": {
+      "type": "boolean",
+      "title": "Success"
+     },
+     "day": {
+      "type": "string",
+      "title": "Day"
+     }
+    },
+    "type": "object",
+    "required": [
+     "success",
+     "day"
+    ],
+    "title": "RetryConversationDayResponse"
+   },
+   "UpdateSourceRequest": {
+    "properties": {
+     "filename": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Filename"
+     }
+    },
+    "additionalProperties": false,
+    "type": "object",
+    "title": "UpdateSourceRequest"
+   },
+   "UploadConversationRequest": {
+    "properties": {
+     "text": {
+      "type": "string",
+      "minLength": 1,
+      "title": "Text"
+     },
+     "time": {
+      "type": "string",
+      "maxLength": 10,
+      "minLength": 10,
+      "title": "Time"
+     }
+    },
+    "type": "object",
+    "required": [
+     "text",
+     "time"
+    ],
+    "title": "UploadConversationRequest"
+   },
+   "UploadConversationResponse": {
+    "properties": {
+     "success": {
+      "type": "boolean",
+      "title": "Success"
+     },
+     "source_id": {
+      "type": "string",
+      "title": "Source Id"
+     },
+     "time": {
+      "type": "string",
+      "title": "Time"
+     },
+     "filename": {
+      "type": "string",
+      "title": "Filename"
+     },
+     "status": {
+      "type": "string",
+      "title": "Status"
+     }
+    },
+    "type": "object",
+    "required": [
+     "success",
+     "source_id",
+     "time",
+     "filename",
+     "status"
+    ],
+    "title": "UploadConversationResponse"
+   },
+   "UploadDebugInfo": {
+    "properties": {
+     "request_read_ms": {
+      "type": "number",
+      "title": "Request Read Ms",
+      "default": 0.0
+     },
+     "text_extraction_ms": {
+      "type": "number",
+      "title": "Text Extraction Ms",
+      "default": 0.0
+     },
+     "chunking_ms": {
+      "type": "number",
+      "title": "Chunking Ms",
+      "default": 0.0
+     },
+     "ingestion_ms": {
+      "type": "number",
+      "title": "Ingestion Ms",
+      "default": 0.0
+     },
+     "total_ms": {
+      "type": "number",
+      "title": "Total Ms",
+      "default": 0.0
+     },
+     "runtime": {
+      "$ref": "#/components/schemas/UploadRuntimeDebugInfo"
+     }
+    },
+    "type": "object",
+    "title": "UploadDebugInfo"
+   },
+   "UploadResponse": {
+    "properties": {
+     "success": {
+      "type": "boolean",
+      "title": "Success"
+     },
+     "source_id": {
+      "type": "string",
+      "title": "Source Id"
+     },
+     "filename": {
+      "type": "string",
+      "title": "Filename"
+     },
+     "size_bytes": {
+      "type": "integer",
+      "title": "Size Bytes"
+     },
+     "size_human": {
+      "type": "string",
+      "title": "Size Human"
+     },
+     "chunks": {
+      "type": "integer",
+      "title": "Chunks"
+     },
+     "chars": {
+      "type": "integer",
+      "title": "Chars"
+     },
+     "vectorized": {
+      "type": "boolean",
+      "title": "Vectorized"
+     },
+     "finalized": {
+      "type": "boolean",
+      "title": "Finalized"
+     },
+     "generated_entries": {
+      "type": "integer",
+      "title": "Generated Entries"
+     },
+     "debug": {
+      "$ref": "#/components/schemas/UploadDebugInfo"
+     },
+     "vectorize_status": {
+      "type": "string",
+      "title": "Vectorize Status",
+      "default": "queued"
+     },
+     "vectorize_enqueued": {
+      "type": "boolean",
+      "title": "Vectorize Enqueued",
+      "default": false
+     },
+     "vectorize_message": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Vectorize Message"
+     },
+     "recommended_unload_model_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Recommended Unload Model Id"
+     },
+     "recommended_unload_npu_usage": {
+      "anyOf": [
+       {
+        "type": "number"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Recommended Unload Npu Usage"
+     }
+    },
+    "type": "object",
+    "required": [
+     "success",
+     "source_id",
+     "filename",
+     "size_bytes",
+     "size_human",
+     "chunks",
+     "chars",
+     "vectorized",
+     "finalized",
+     "generated_entries",
+     "debug"
+    ],
+    "title": "UploadResponse"
+   },
+   "UploadRuntimeDebugInfo": {
+    "properties": {
+     "embedding_runtime_used": {
+      "type": "boolean",
+      "title": "Embedding Runtime Used",
+      "default": false
+     },
+     "embedding_model": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Embedding Model"
+     },
+     "embedding_model_already_running": {
+      "type": "boolean",
+      "title": "Embedding Model Already Running",
+      "default": false
+     },
+     "queried_running_models_ms": {
+      "type": "number",
+      "title": "Queried Running Models Ms",
+      "default": 0.0
+     },
+     "queried_model_metadata_ms": {
+      "type": "number",
+      "title": "Queried Model Metadata Ms",
+      "default": 0.0
+     },
+     "stopped_main_models_ms": {
+      "type": "number",
+      "title": "Stopped Main Models Ms",
+      "default": 0.0
+     },
+     "started_embedding_model_ms": {
+      "type": "number",
+      "title": "Started Embedding Model Ms",
+      "default": 0.0
+     },
+     "restore_ms": {
+      "type": "number",
+      "title": "Restore Ms",
+      "default": 0.0
+     },
+     "restore_scheduled": {
+      "type": "boolean",
+      "title": "Restore Scheduled",
+      "default": false
+     },
+     "restore_deferred": {
+      "type": "boolean",
+      "title": "Restore Deferred",
+      "default": false
+     },
+     "waited_for_restore": {
+      "type": "boolean",
+      "title": "Waited For Restore",
+      "default": false
+     },
+     "stopped_main_models": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array",
+      "title": "Stopped Main Models"
+     },
+     "npu_total": {
+      "type": "number",
+      "title": "Npu Total",
+      "default": 0.0
+     },
+     "npu_used": {
+      "type": "number",
+      "title": "Npu Used",
+      "default": 0.0
+     },
+     "npu_available": {
+      "type": "number",
+      "title": "Npu Available",
+      "default": 0.0
+     },
+     "embedding_model_required_npu": {
+      "type": "number",
+      "title": "Embedding Model Required Npu",
+      "default": 5.0
+     },
+     "recommended_unload_model_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Recommended Unload Model Id"
+     },
+     "recommended_unload_npu_usage": {
+      "anyOf": [
+       {
+        "type": "number"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Recommended Unload Npu Usage"
+     },
+     "runtime_message": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Runtime Message"
+     },
+     "launch_attempted": {
+      "type": "boolean",
+      "title": "Launch Attempted",
+      "default": false
+     },
+     "launch_succeeded": {
+      "type": "boolean",
+      "title": "Launch Succeeded",
+      "default": false
+     }
+    },
+    "type": "object",
+    "title": "UploadRuntimeDebugInfo"
+   },
+   "UserContextProfile": {
+    "properties": {
+     "user_name": {
+      "type": "string",
+      "maxLength": 100,
+      "title": "User Name",
+      "default": ""
+     },
+     "occupation": {
+      "type": "string",
+      "maxLength": 50,
+      "title": "Occupation",
+      "default": ""
+     },
+     "preferences": {
+      "type": "string",
+      "maxLength": 1000,
+      "title": "Preferences",
+      "default": ""
+     },
+     "more_about_you": {
+      "type": "string",
+      "maxLength": 1000,
+      "title": "More About You",
+      "default": ""
+     }
+    },
+    "additionalProperties": false,
+    "type": "object",
+    "title": "UserContextProfile"
+   },
+   "UserContextProfileFieldUpdateRequest": {
+    "properties": {
+     "value": {
+      "type": "string",
+      "title": "Value",
+      "default": ""
+     }
+    },
+    "additionalProperties": false,
+    "type": "object",
+    "title": "UserContextProfileFieldUpdateRequest"
+   },
+   "UserContextResponse": {
+    "properties": {
+     "success": {
+      "type": "boolean",
+      "title": "Success",
+      "default": true
+     },
+     "profile": {
+      "$ref": "#/components/schemas/UserContextProfile"
+     },
+     "markdown": {
+      "type": "string",
+      "title": "Markdown"
+     },
+     "template_markdown": {
+      "type": "string",
+      "title": "Template Markdown"
+     },
+     "token_estimate": {
+      "type": "integer",
+      "title": "Token Estimate"
+     },
+     "target_tokens": {
+      "type": "integer",
+      "title": "Target Tokens"
+     },
+     "max_tokens": {
+      "type": "integer",
+      "title": "Max Tokens"
+     },
+     "size_bytes": {
+      "type": "integer",
+      "title": "Size Bytes"
+     },
+     "created_at": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Created At"
+     },
+     "updated_at": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Updated At"
+     },
+     "filename": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Filename"
+     }
+    },
+    "type": "object",
+    "required": [
+     "profile",
+     "markdown",
+     "template_markdown",
+     "token_estimate",
+     "target_tokens",
+     "max_tokens",
+     "size_bytes"
+    ],
+    "title": "UserContextResponse"
+   },
+   "UserContextUpdateRequest": {
+    "properties": {
+     "markdown": {
+      "type": "string",
+      "title": "Markdown",
+      "default": ""
+     }
+    },
+    "additionalProperties": false,
+    "type": "object",
+    "title": "UserContextUpdateRequest"
+   },
+   "UserContextVersionListResponse": {
+    "properties": {
+     "success": {
+      "type": "boolean",
+      "title": "Success",
+      "default": true
+     },
+     "items": {
+      "items": {
+       "$ref": "#/components/schemas/UserContextVersionResponse"
+      },
+      "type": "array",
+      "title": "Items"
+     },
+     "count": {
+      "type": "integer",
+      "title": "Count"
+     },
+     "total": {
+      "type": "integer",
+      "title": "Total"
+     }
+    },
+    "type": "object",
+    "required": [
+     "items",
+     "count",
+     "total"
+    ],
+    "title": "UserContextVersionListResponse"
+   },
+   "UserContextVersionResponse": {
+    "properties": {
+     "version_id": {
+      "type": "string",
+      "title": "Version Id"
+     },
+     "markdown": {
+      "type": "string",
+      "title": "Markdown"
+     },
+     "token_estimate": {
+      "type": "integer",
+      "title": "Token Estimate"
+     },
+     "size_bytes": {
+      "type": "integer",
+      "title": "Size Bytes"
+     },
+     "change_reason": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Change Reason"
+     },
+     "changed_by": {
+      "type": "string",
+      "title": "Changed By"
+     },
+     "source_proposal_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Source Proposal Id"
+     },
+     "created_at": {
+      "type": "string",
+      "title": "Created At"
+     }
+    },
+    "type": "object",
+    "required": [
+     "version_id",
+     "markdown",
+     "token_estimate",
+     "size_bytes",
+     "changed_by",
+     "created_at"
+    ],
+    "title": "UserContextVersionResponse"
+   },
+   "ValidationError": {
+    "properties": {
+     "loc": {
+      "items": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "integer"
+        }
+       ]
+      },
+      "type": "array",
+      "title": "Location"
+     },
+     "msg": {
+      "type": "string",
+      "title": "Message"
+     },
+     "type": {
+      "type": "string",
+      "title": "Error Type"
+     }
+    },
+    "type": "object",
+    "required": [
+     "loc",
+     "msg",
+     "type"
+    ],
+    "title": "ValidationError"
+   }
+  },
+  "securitySchemes": {
+   "BearerAuth": {
+    "type": "http",
+    "scheme": "bearer",
+    "bearerFormat": "token",
+    "description": "输入访问 knowledge_base 的 Bearer token。"
+   }
+  }
+ },
+ "tags": [
+  {
+   "name": "System",
+   "description": "Service health and live runtime status endpoints."
+  },
+  {
+   "name": "Dialogue Ingestion",
+   "description": "Dialogue ingestion endpoints for adding conversational content into the knowledge base."
+  },
+  {
+   "name": "Finalization",
+   "description": "Finalize buffered or queued content into indexed memory entries."
+  },
+  {
+   "name": "Query & Retrieval",
+   "description": "Question answering and direct retrieval endpoints over indexed memories."
+  },
+  {
+   "name": "Conversation Queue",
+   "description": "Conversation-day upload, queue inspection, and lifecycle management endpoints."
+  },
+  {
+   "name": "File Sources",
+   "description": "File upload, source listing, source updates, and original file download endpoints."
+  },
+  {
+   "name": "User Context",
+   "description": "Direct Markdown USER memory context endpoints for agent prompt injection without embeddings."
+  },
+  {
+   "name": "Administration",
+   "description": "Memory inspection and destructive maintenance operations."
+  },
+  {
+   "name": "On-device Model",
+   "description": "Authenticated passthrough to the first-turn title model that runs inside this container. One fixed upstream; not a general-purpose model proxy."
+  }
+ ]
+}

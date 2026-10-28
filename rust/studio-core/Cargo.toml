@@ -1,0 +1,33 @@
+[package]
+name = "studio-core"
+description = "Tiiny Studio backend: HTTP API, device client, jobs, media, chat, documents"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+axum.workspace = true
+tokio.workspace = true
+serde_json.workspace = true
+rust-embed = { workspace = true, features = ["include-exclude"] }
+serde = { version = "1", features = ["derive"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
+uuid = { version = "1", features = ["v4"] }
+base64 = "0.22"
+regex = "1"
+zip = { version = "2", default-features = false, features = ["deflate"] }
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+roxmltree = "0.20"
+fancy-regex = "0.14"
+encoding_rs = "0.8"
+arboard = { version = "3", default-features = false, features = ["image-data"], optional = true }
+png = { version = "0.17", optional = true }
+
+[dev-dependencies]
+tower = { version = "0.5", features = ["util"] }
+http-body-util = "0.1"
+
+[features]
+# the desktop app reads pictures from the system clipboard for the Paste buttons (WebView2 blocks the page from it)
+clipboard = ["dep:arboard", "dep:png"]
