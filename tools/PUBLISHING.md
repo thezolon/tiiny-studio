@@ -7,12 +7,12 @@ What `.github/workflows/release.yml` builds:
 
 | job | runs on | output |
 |---|---|---|
-| Desktop app for Windows x64 | `windows-latest` | `Tiiny Studio_<v>_x64-setup.exe`, `Tiiny Studio_<v>_x64_en-US.msi` |
-| Desktop app for Windows ARM | `windows-11-arm` | `Tiiny Studio_<v>_arm64-setup.exe`, `Tiiny Studio_<v>_arm64_en-US.msi` |
-| Desktop app for macOS Apple Silicon | `macos-latest` | `Tiiny Studio_<v>_aarch64.dmg` |
-| Desktop app for macOS Intel | `macos-15-intel` | `Tiiny Studio_<v>_x64.dmg` |
-| Desktop app for Linux x64 | `ubuntu-22.04` | `Tiiny Studio_<v>_amd64.deb`, `Tiiny Studio_<v>_amd64.AppImage` |
-| Desktop app for Linux ARM | `ubuntu-22.04-arm` | `Tiiny Studio_<v>_arm64.deb`, `Tiiny Studio_<v>_aarch64.AppImage` |
+| Desktop app for Windows x64 | `windows-latest` | `Tiiny-Studio_<v>_x64-setup.exe`, `Tiiny-Studio_<v>_x64_en-US.msi` |
+| Desktop app for Windows ARM | `windows-11-arm` | `Tiiny-Studio_<v>_arm64-setup.exe`, `Tiiny-Studio_<v>_arm64_en-US.msi` |
+| Desktop app for macOS Apple Silicon | `macos-latest` | `Tiiny-Studio_<v>_aarch64.dmg` |
+| Desktop app for macOS Intel | `macos-15-intel` | `Tiiny-Studio_<v>_x64.dmg` |
+| Desktop app for Linux x64 | `ubuntu-22.04` | `Tiiny-Studio_<v>_amd64.deb`, `Tiiny-Studio_<v>_amd64.AppImage` |
+| Desktop app for Linux ARM | `ubuntu-22.04-arm` | `Tiiny-Studio_<v>_arm64.deb`, `Tiiny-Studio_<v>_aarch64.AppImage` |
 | Docker image | `ubuntu-latest` | `ghcr.io/<owner>/tiiny-studio:<v>` and `:latest` (amd64 + arm64) |
 | GitHub release | `ubuntu-latest` | source zip (`tools/release.py`), the installers, `SHA256SUMS.txt`, notes from `CHANGELOG.md` |
 

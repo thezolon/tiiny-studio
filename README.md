@@ -55,12 +55,12 @@ From the [Releases](../../releases) page, download the installer for your comput
 
 | your computer | file |
 |---|---|
-| Windows 10/11 | `Tiiny Studio_<version>_x64-setup.exe` (or the `.msi`) |
-| Windows 11 on ARM | `Tiiny Studio_<version>_arm64-setup.exe` (or the `.msi`) |
-| Mac with Apple Silicon (M1 and later) | `Tiiny Studio_<version>_aarch64.dmg` |
-| Mac with an Intel processor | `Tiiny Studio_<version>_x64.dmg` |
-| Linux (most PCs) | `Tiiny Studio_<version>_amd64.deb` or `…_amd64.AppImage` |
-| Linux on ARM (e.g. Raspberry Pi 5) | `Tiiny Studio_<version>_arm64.deb` or `…_aarch64.AppImage` |
+| Windows 10/11 | `Tiiny-Studio_<version>_x64-setup.exe` (or the `.msi`) |
+| Windows 11 on ARM | `Tiiny-Studio_<version>_arm64-setup.exe` (or the `.msi`) |
+| Mac with Apple Silicon (M1 and later) | `Tiiny-Studio_<version>_aarch64.dmg` |
+| Mac with an Intel processor | `Tiiny-Studio_<version>_x64.dmg` |
+| Linux (most PCs) | `Tiiny-Studio_<version>_amd64.deb` or `…_amd64.AppImage` |
+| Linux on ARM (e.g. Raspberry Pi 5) | `Tiiny-Studio_<version>_arm64.deb` or `…_aarch64.AppImage` |
 
 > **Tested so far:** only the **Windows x64** app and the **Docker** image (amd64) have been tested on real
 > machines with a real Tiiny. The macOS, Linux and Windows ARM apps are built and smoke-tested automatically but
@@ -71,7 +71,7 @@ From the [Releases](../../releases) page, download the installer for your comput
   it from the Start menu. To update, run a newer setup over it.
 - **macOS:** open the `.dmg` and drag Tiiny Studio to Applications. The first time, right-click it → **Open** →
   **Open** (macOS asks because the app isn't notarized).
-- **Linux:** `sudo apt install "./Tiiny Studio_<version>_amd64.deb"`, or make the AppImage executable
+- **Linux:** `sudo apt install ./Tiiny-Studio_<version>_amd64.deb`, or make the AppImage executable
   (`chmod +x`) and run it. Needs WebKitGTK 4.1 (installed with most desktops).
 
 The studio opens in its own window and puts an icon in the tray (open, results folder, start at login,

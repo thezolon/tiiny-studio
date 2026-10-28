@@ -59,6 +59,8 @@ jobs:
         run: |
           mkdir -p dist
           find rust/target/release/bundle -maxdepth 2 -type f \( -name "*.exe" -o -name "*.msi" -o -name "*.dmg" -o -name "*.deb" -o -name "*.AppImage" \) -exec cp {} dist/ \;
+          # no spaces: GitHub would turn "Tiiny Studio_…" into "Tiiny.Studio_…" on the release page
+          for f in dist/*; do mv "$f" "${f// /-}" 2>/dev/null || true; done
           ls -la dist
       - uses: actions/upload-artifact@v7
         with:
