@@ -801,6 +801,8 @@ async function loadModels(quiet = false) {
         if (m.workspace === "image" && !(S.mode === "edit" && !canEditModel(id))) selectModel(id);  // don't kick the user out of an edit
         if (m.type === "Image-to-Text" && S.ocrPending) { const u = S.ocrPending; S.ocrPending = null; ocrImage(u, id); }  // read what was waiting
       }
+      // the device lists a load as pending while it works; if it's back to stopped, the Tiiny gave up on it
+      else if (m && m.status === "stopped" && Date.now() - S.loading[id] > 30e3) { delete S.loading[id]; toast(`The Tiiny stopped loading ${shortName(id)}. Try again, or unload something first.`, "err"); }
       else if (Date.now() - S.loading[id] > 6 * 60e3) { delete S.loading[id]; toast(`${shortName(id)} didn't finish loading`, "err"); }
     }
     const running = S.models.filter((m) => m.status === "running");
