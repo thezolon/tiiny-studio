@@ -49,9 +49,12 @@ Known limits).
   asks before the first open (right-click → Open). There's no automatic updater until the apps are signed.
 - **Only the Windows x64 app and the Docker image (amd64) have been tested hands-on.** The macOS (Apple Silicon and
   Intel), Linux (x64 and ARM) and Windows ARM apps and the arm64 Docker image are built by CI, which checks that
-  the server inside starts and serves the page, but none has been installed and used with a Tiiny yet.
+  the server inside starts and serves the page, but none has been installed and used with a Tiiny yet (one user
+  reports the Linux AppImage starts and runs).
 - **Over USB, GLM-OCR isn't available and songs come as one mix** (no separate tracks): the USB connection blocks
   the models' own ports, which both need. Over Wi-Fi/LAN both work (live-tested 2026-10-27).
+- **Power off doesn't work on the latest TiinyOS** (device services after 0.1.36): a known firmware issue that Tiiny
+  will fix in a patch release. Use the TiinyOS app or the power button until then.
 - **Docker and USB:** if the Tiiny's USB address is `172.17.x.x`, Docker can't reach it (use the desktop app or
   move Docker's network).
 - **Linux desktop needs WebKitGTK 4.1.**

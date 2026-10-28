@@ -9,6 +9,9 @@ Fixes from the first day of use, and screenshots in the README.
 - **Cancel works while a 3D model or audio is being made.** The view redrew every 1.5 s and could swallow the click.
 - **A model load the Tiiny gives up on** shows an error after about 30 s instead of spinning for 6 minutes.
 - No more stray "null" text in the 3D and Song panels.
+- **Test connection spots a relay or proxy** (an OpenAI-compatible chat gateway answers like a server but has no Tiiny
+  model controls) and says to use the Tiiny's own address, instead of reporting "Connected".
+- Known: **Power off** doesn't work on the latest TiinyOS; Tiiny says it's a firmware issue fixed in a coming patch.
 - README: screenshots, and a tip for 3D (cut the subject out first: Hunyuan3D builds the background too).
 
 ## 0.2.0 (2026-10-28)
