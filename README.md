@@ -5,6 +5,15 @@ Linux, or a small server for your home network (Docker). It drives the models on
 loops and full songs, transcribe audio, and turn pictures into textured 3D models. Nothing leaves
 your network.
 
+| | |
+|---|---|
+| ![Image: an edit made on the Tiiny, with the toolbar to edit, vary, compare or make it 3D](docs/screenshots/image.webp) | ![3D: the finished textured model in the viewer](docs/screenshots/3d-model.webp) |
+| **Image**: create and edit on the Tiiny (HiDream here) | **3D**: the same dog as a textured GLB, made in 6 minutes |
+| ![3D: a model being built, with its stages and a Cancel button](docs/screenshots/3d-building.webp) | ![Audio: a recording transcribed, with voice cloning on the left](docs/screenshots/audio.webp) |
+| **3D** while it builds: shape → simplify → texture → export | **Audio**: voices, loops, songs and transcription |
+| ![Models panel: NPU memory shared by two models, live device activity, load buttons](docs/screenshots/models.webp) | |
+| **Models**: what's loaded, NPU memory and device activity | |
+
 - **Image**: create from a prompt; edit with plain-language instructions; circle an area to change;
   up to 10 reference images; transparent PNGs; before/after compare; ×4 variations shown as a grid;
   **Text** mode reads the text in pictures and documents you drop, paste or browse, or in a gallery
@@ -28,7 +37,9 @@ your network.
   voiced in parts and joined); tempo- and key-locked loops; full songs with lyrics, instrumental,
   vocals only or separate tracks, with an 8-second preview you can continue to the full song and an
   MP3 copy; transcription in 30 languages.
-- **3D**: image → shape → simplify → PBR texture → GLB, with an interactive viewer.
+- **3D**: image → shape → simplify → PBR texture → GLB, with an interactive viewer. Cut the subject out first
+  (Image → Edit, or Qwen-Image with a transparent background): Hunyuan3D builds the background too, as the
+  floating shards around the dog above show.
 - **Helpers** (when a chat model is loaded): improve a prompt, describe an image, write lyrics,
   suggest loop tags.
 - **Gallery** (every workspace): search, smart search by meaning (the device's embedding model;
