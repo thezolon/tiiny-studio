@@ -29,6 +29,8 @@ PASSWORD = os.environ.get("STUDIO_PASSWORD", "")
 HOST = os.environ.get("HOST", "127.0.0.1")  # native runs stay on this computer unless HOST=0.0.0.0
 # Who can reach the studio: Docker publishes on STUDIO_BIND; a native run listens on HOST.
 LAN_ACCESS = os.environ.get("STUDIO_BIND", HOST) not in ("127.0.0.1", "localhost", "::1")  # optional: ask browsers for a password (any username)
+NOT_A_TIINY = ("This address answers chat requests but has no Tiiny model controls, so it looks like a relay or proxy "
+               "(for example an OpenAI-compatible gateway). Use your Tiiny's own address and API key from the TiinyOS app.")
 FROZEN = getattr(sys, "frozen", False)  # the standalone download (PyInstaller): code and static files unpack to a temp folder
 
 
@@ -741,6 +743,9 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_json(200, {"ok": False, "message": "Enter the device address."})
         code, res = device("GET", "/v1/models", timeout=8, url=url, key=key)
         if code == 200:
+            # any OpenAI-style relay answers /v1/models; only a Tiiny has its model controls
+            if device("GET", "/api/v1/models/running", timeout=8, url=url, key=key)[0] != 200:
+                return self.send_json(200, {"ok": False, "message": NOT_A_TIINY})
             names = [m.get("id", "").split("/")[-1] for m in res.get("data", [])]
             return self.send_json(200, {"ok": True, "message": f"Connected. {len(names)} model(s) loaded" + (f": {', '.join(names[:4])}" if names else "."), "loaded": names})
         if code in (401, 403):

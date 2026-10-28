@@ -40,6 +40,17 @@ class Device(ContractCase):
         self.same(self.post("/api/settings/test", {"url": self.fake_url, "key": "wrong"}), IGNORE)
         self.same(self.post("/api/settings/test", {"url": ""}), IGNORE)
 
+    def test_settings_test_spots_a_relay(self):
+        # an OpenAI-style relay answers /v1/models but has no Tiiny model controls: not "Connected"
+        request(self.fake_url, "POST", "/__flags", {"fail": {"/api/v1/models/running": [404, "Not Found"]}})
+        try:
+            py, rs = self.post("/api/settings/test", {"url": self.fake_url, "key": "fake-key"})
+        finally:
+            request(self.fake_url, "POST", "/__reset")
+        self.same((py, rs), IGNORE)
+        self.assertFalse(py.json["ok"])
+        self.assertIn("relay or proxy", py.json["message"])
+
     def test_models_catalog_plan(self):
         self.same_calls("GET", "/api/models")
         py, _ = self.same_calls("GET", "/api/catalog")
