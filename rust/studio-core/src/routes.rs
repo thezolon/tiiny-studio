@@ -290,6 +290,8 @@ async fn device_action(State(state): State<AppState>, Path(action): Path<String>
 }
 
 /// Try a device address/key (typed or saved) without saving it.
+const NOT_A_TIINY: &str = "This address answers chat requests but has no Tiiny model controls, so it looks like a relay or proxy (for example an OpenAI-compatible gateway). Use your Tiiny's own address and API key from the TiinyOS app.";
+
 async fn test_settings(State(state): State<AppState>, body: Bytes) -> Json<Value> {
     let req = read_json(&body).unwrap_or(json!({}));
     let cur = state.settings.current();
@@ -310,6 +312,11 @@ async fn test_settings(State(state): State<AppState>, body: Bytes) -> Json<Value
     }
     let (code, res) = device::call(&state, "GET", "/v1/models", None, 8, Some((&url, &key))).await;
     if code == 200 {
+        // any OpenAI-style relay answers /v1/models; only a Tiiny has its model controls
+        let (tiiny, _) = device::call(&state, "GET", "/api/v1/models/running", None, 8, Some((&url, &key))).await;
+        if tiiny != 200 {
+            return Json(json!({"ok": false, "message": NOT_A_TIINY}));
+        }
         let names: Vec<String> = res
             .get("data")
             .and_then(Value::as_array)
