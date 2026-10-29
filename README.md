@@ -248,7 +248,7 @@ phone or tablet. Browsers only paste images that way, so for audio use `Ctrl+V`,
 
 ## Status
 
-Version 0.3.1 (see [CHANGELOG.md](CHANGELOG.md)). An unofficial community project, not affiliated with
+Version 0.3.2 (see [CHANGELOG.md](CHANGELOG.md)). An unofficial community project, not affiliated with
 Tiiny. Tested against TiinyOS 0.1.35 to 0.1.37; device APIs may change with firmware updates
 (`python tools/api_snapshot.py --check` shows what changed).
 

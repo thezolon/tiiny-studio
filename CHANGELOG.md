@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## 0.3.2 (2026-10-29)
+
+3D with TRELLIS.2-4B, reported on the Tiiny Discord.
 
 - **3D works with TRELLIS.2-4B** ([#20](https://github.com/thezolon/tiiny-studio/issues/20)), not only Hunyuan3D. It failed
   with "simplify: Missing stage input 'shape_artifact'": the studio sent every model Hunyuan3D's input names. It now
