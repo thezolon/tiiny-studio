@@ -2,9 +2,9 @@
 
 ## 0.3.2 (2026-10-29)
 
-3D with TRELLIS.2-4B, reported on the Tiiny Discord.
+3D with TRELLIS.2-4B.
 
-- **3D works with TRELLIS.2-4B** ([#20](https://github.com/thezolon/tiiny-studio/issues/20)), not only Hunyuan3D. It failed
+- **3D works with TRELLIS.2-4B** ([#20](https://github.com/thezolon/tiiny-studio/issues/20), reported on the Tiiny Discord), not only Hunyuan3D. It failed
   with "simplify: Missing stage input 'shape_artifact'": the studio sent every model Hunyuan3D's input names. It now
   asks the loaded 3D model which stages, inputs and settings it takes, and fetches the results TRELLIS keeps on the
   device. A shape-only build with TRELLIS uses its preview model.
@@ -26,13 +26,13 @@ Clearer messages found while testing 0.3.0 by hand.
 
 ## 0.3.0 (2026-10-29)
 
-Three requests from the Tiiny Discord, all live-tested on TiinyOS 0.1.37.
+Two requests from the Tiiny Discord and a cleaner 3D, all live-tested on TiinyOS 0.1.37.
 
-- **Create from references** ([#8](https://github.com/thezolon/tiiny-studio/issues/8)): with an image model that can
+- **Create from references** ([#8](https://github.com/thezolon/tiiny-studio/issues/8), requested on the Tiiny Discord): with an image model that can
   edit (Qwen-Image), Create takes up to 10 reference pictures and makes a brand-new picture from them, in the shape
   you pick. Call them "image 1", "image 2" in the prompt. The gallery marks these REFS, and Reuse brings the
   references back. Create and Edit keep their own pictures.
-- **Helpers swap models for you** ([#5](https://github.com/thezolon/tiiny-studio/issues/5)): Improve prompt, Describe,
+- **Helpers swap models for you** ([#5](https://github.com/thezolon/tiiny-studio/issues/5), requested on the Tiiny Discord): Improve prompt, Describe,
   Write lyrics and loop tags no longer ask you to load a chat model first. The studio unloads what's in the way, runs
   the helper, and loads your models back (about 30 s with Qwen-Image loaded). Settings → Model swapping has a global
   switch and one each for Chat tools, Image helpers and Audio helpers, all on by default; off, nothing is loaded or
