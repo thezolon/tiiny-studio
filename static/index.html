@@ -1281,7 +1281,7 @@ async function improvePrompt() {
 }
 async function describeImage(entry, idx) {
   const file = entry.outputs[idx];
-  S.describeGate = modelGate("vision", "") ? file : null;  // renderStage shows the "load a model" card
+  S.describeGate = helperGate("describe") ? file : null;  // renderStage shows the "load a model" card
   if (S.describeGate) return renderStage();
   S.describing[file] = true; renderStage();
   const text = await assist("describe", { file }, el("div"), "Describing image");

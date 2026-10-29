@@ -288,7 +288,7 @@ const AudioWS = {
   },
   async runHelper(key, task, payload, label, apply) {
     if (A.helpBusy) return;
-    if (modelGate("chat", "chat")) { A.help = { key, gate: true }; return this.render(); }
+    if (helperGate(task)) { A.help = { key, gate: true }; return this.render(); }
     A.help = null; A.helpBusy = key; this.render();
     const model = modelForTool("chat").id;
     const text = await assist(task, payload, el("div"), label);

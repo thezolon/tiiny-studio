@@ -29,8 +29,36 @@ pub struct Probe {
     pub ms: Option<u64>,
 }
 
+/// Model swapping: may helpers and chat tools load what they need (and put the user's models back)? `on` is the
+/// global switch; each section's switch only counts while it's on. All on by default.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Swap {
+    #[serde(default = "yes")]
+    pub on: bool,
+    #[serde(default = "yes")]
+    pub chat: bool,
+    #[serde(default = "yes")]
+    pub image: bool,
+    #[serde(default = "yes")]
+    pub audio: bool,
+    #[serde(default = "yes")]
+    pub mesh: bool,
+}
+
+fn yes() -> bool {
+    true
+}
+
+impl Default for Swap {
+    fn default() -> Self {
+        Swap { on: true, chat: true, image: true, audio: true, mesh: true }
+    }
+}
+
 #[derive(Default)]
 struct State {
+    swap: Swap,
+    helper_model: String, // the text model helpers use ("" = automatic)
     devices: Vec<Device>,
     active: Option<String>,
     auto: bool,
@@ -143,6 +171,8 @@ impl Settings {
             let file = saved.as_object().is_some_and(|o| !o.is_empty());
             st.source = if file { "file" } else if !url.is_empty() { "env" } else { "none" };
         }
+        st.swap = saved.get("swap").and_then(|v| serde_json::from_value(v.clone()).ok()).unwrap_or_default();
+        st.helper_model = saved.get("helper_model").and_then(Value::as_str).unwrap_or("").to_string();
         Settings { path, lan_access, password, app, state: Mutex::new(st) }
     }
 
@@ -181,12 +211,13 @@ impl Settings {
             "key_set": !key.is_empty(), "key_hint": hint(&key), "configured": !url.is_empty() && !key.is_empty(),
             "source": st.source, "lan_access": self.lan_access, "password": self.password,
             "last_switch": st.last_switch, "version": crate::version(),
+            "swap": st.swap, "helper_model": st.helper_model,
             "app": self.app, // the desktop app: no .env to edit, so the UI words the network notes differently
         })
     }
 
     fn save(&self, st: &mut State) {
-        let body = json!({"devices": st.devices, "active": st.active, "auto": st.auto});
+        let body = json!({"devices": st.devices, "active": st.active, "auto": st.auto, "swap": st.swap, "helper_model": st.helper_model});
         let tmp = self.path.with_extension("tmp");
         if std::fs::write(&tmp, serde_json::to_string_pretty(&body).unwrap_or_default()).is_ok() {
             #[cfg(unix)]
@@ -232,6 +263,38 @@ impl Settings {
         st.status.remove(&id);
         self.save(&mut st);
         Ok(id)
+    }
+
+    pub fn set_swap(&self, req: &Value) {
+        let mut st = self.lock();
+        if let Some(sw) = req.get("swap").and_then(Value::as_object) {
+            for (k, v) in sw {
+                let on = crate::device::truthy(v);
+                match k.as_str() {
+                    "on" => st.swap.on = on,
+                    "chat" => st.swap.chat = on,
+                    "image" => st.swap.image = on,
+                    "audio" => st.swap.audio = on,
+                    "mesh" => st.swap.mesh = on,
+                    _ => {}
+                }
+            }
+        }
+        if let Some(m) = req.get("helper_model").and_then(Value::as_str) {
+            st.helper_model = m.trim().chars().take(200).collect();
+        }
+        self.save(&mut st);
+    }
+
+    pub fn swap_allowed(&self, section: &str) -> bool {
+        let sw = &self.lock().swap;
+        sw.on && match section {
+            "chat" => sw.chat,
+            "image" => sw.image,
+            "audio" => sw.audio,
+            "mesh" => sw.mesh,
+            _ => false,
+        }
     }
 
     pub fn remove(&self, did: &str) {
