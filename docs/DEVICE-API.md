@@ -50,7 +50,7 @@ too (**tested**).
 
 | method | path | what | mark |
 |---|---|---|---|
-| POST | `/api/v1/sys/shutdown/` | power off (empty body). Replies `{"status":"ok","message":"System shutdown will be initiated in seconds via host API"}`; off ~2 s later. **Broken in TiinyOS 0.1.36:** same reply, but the device stays on. Tiiny confirmed it (a file missing on the device) and will fix it in a minor update | **tested** |
+| POST | `/api/v1/sys/shutdown/` | power off (empty body). Replies `{"status":"ok","message":"System shutdown will be initiated in seconds via D-Bus"}` (0.1.36 and earlier: `…via host API`); off within ~10 s. **Broken in TiinyOS 0.1.36** (same reply, the device stays on); **fixed in 0.1.37** (tested over USB and Wi-Fi, 2026-10-29) | **tested** |
 | POST | `/api/v1/sys/reboot/` | restart | **spec** |
 | GET / POST | `/api/v1/sys/ac_power/` | power on automatically when plugged in: GET → `{"status","ac_power": bool}`; POST `{"switch": 0\|1}` | **tested** (GET), **app** (POST) |
 | GET | `/api/v1/sys/status` | live `cpu`, `memory`, `gpu`, `npus`, `disk` | **tested** |
