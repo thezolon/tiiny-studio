@@ -88,11 +88,11 @@ curl -X POST -H "Authorization: Bearer YOUR_API_KEY" http://TIINY_ADDRESS/api/v1
 ```
 
 Keep the slash at the end. The reply is `{"status":"ok","message":"System shutdown will be initiated in
-seconds via host API"}` and the device switches off a few seconds later. Press its power button to turn
-it back on.
+seconds via D-Bus"}` (older TiinyOS: `…via host API`) and the device switches off about 10 seconds later. Press its
+power button to turn it back on.
 
-**On TiinyOS 0.1.36 this doesn't work yet:** the reply is the same, but the Tiiny stays on (a file is missing on the
-device; Tiiny will fix it in a minor update). Until then, switch it off from the TiinyOS app or with its power button.
+**On TiinyOS 0.1.36 this doesn't work:** the reply is the same, but the Tiiny stays on. Fixed in 0.1.37; update TiinyOS,
+or switch it off from the TiinyOS app or with its power button.
 
 ## What your Tiiny keeps
 

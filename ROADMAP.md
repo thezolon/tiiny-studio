@@ -1,7 +1,7 @@
 # Roadmap
 
-Where Tiiny Studio stands, what's next, and what doesn't work yet. Version **0.2.0**, checked against TiinyOS
-device services 0.1.35 and 0.1.36 on a Tiiny Pocket.
+Where Tiiny Studio stands, what's next, and what doesn't work yet. Version **0.2.1**, checked against TiinyOS
+0.1.35 and 0.1.36 on a Tiiny Pocket, with the device API rechecked on 0.1.37.
 
 ## Works now
 
@@ -60,8 +60,8 @@ Ideas and requests are welcome as [feature requests](https://github.com/thezolon
   reports the Linux AppImage starts and runs).
 - **Over USB, GLM-OCR isn't available and songs come as one mix** (no separate tracks): the USB connection blocks
   the models' own ports, which both need. Over Wi-Fi/LAN both work (live-tested 2026-10-27).
-- **Power off doesn't work on the latest TiinyOS**: a known firmware issue that Tiiny
-  will fix in a patch release. Use the TiinyOS app or the power button until then.
+- **Power off needs TiinyOS 0.1.37 or later** (on 0.1.36 the Tiiny answers but stays on). Update TiinyOS, or use
+  the TiinyOS app or the power button.
 - **Docker and USB:** if the Tiiny's USB address is `172.17.x.x`, Docker can't reach it (use the desktop app or
   move Docker's network).
 - **Linux desktop needs WebKitGTK 4.1.**
