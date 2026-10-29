@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## 0.3.1 (2026-10-29)
+
+Clearer messages found while testing 0.3.0 by hand.
 
 - **A wrong API key now says so.** The Models panel, the Image notice and the model cards showed "Device offline" or
   "not installed" when the Tiiny was answering but refused the key; they now say the key was rejected, and where to
