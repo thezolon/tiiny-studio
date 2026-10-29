@@ -91,6 +91,9 @@ Keep the slash at the end. The reply is `{"status":"ok","message":"System shutdo
 seconds via host API"}` and the device switches off a few seconds later. Press its power button to turn
 it back on.
 
+**On TiinyOS 0.1.36 this doesn't work yet:** the reply is the same, but the Tiiny stays on (a file is missing on the
+device; Tiiny will fix it in a minor update). Until then, switch it off from the TiinyOS app or with its power button.
+
 ## What your Tiiny keeps
 
 The studio saves your results only on your computer, but the Tiiny keeps its own copy of the chats its models
