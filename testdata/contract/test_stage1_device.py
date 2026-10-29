@@ -51,6 +51,12 @@ class Device(ContractCase):
         self.assertFalse(py.json["ok"])
         self.assertIn("relay or proxy", py.json["message"])
 
+    def test_settings_test_wrong_key(self):
+        # the device ID sits next to the API key in TiinyOS and is easy to paste by mistake
+        py, rs = self.post("/api/settings/test", {"url": self.fake_url, "key": "not-the-key"})
+        self.same((py, rs), IGNORE)
+        self.assertIn("not the device ID", py.json["message"])
+
     def test_settings_test_explains_docker_and_usb(self):
         # in Docker, a 172.17.x.x USB address can't be reached (Docker's own network): say so, not just "unreachable"
         py, rs = self.post("/api/settings/test", {"url": "http://172.17.0.250", "key": "k"})

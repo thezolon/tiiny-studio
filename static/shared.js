@@ -157,6 +157,10 @@ function mediaBadges(m) {
 }
 /** A card that blocks a tool until its model is loaded (or explains it isn't installed). */
 function modelGate(tool, what) {
+  if (S.deviceOk === false)  // no model list to go on: say why rather than "not installed"
+    return el("div", { class: "gate" }, el("div", { class: "grow" }, el("b", {}, S.keyRejected ? "Your Tiiny rejected the API key." : "Can't reach the Tiiny."),
+      el("p", {}, S.keyRejected ? "Copy the API key (not the device ID) from TiinyOS: avatar → Settings → API Key." : "Check that it's on and the address is right.")),
+      el("button", { class: "btn-sm accent", onclick: () => openSettings(false) }, "Settings"));
   const m = modelForTool(tool);
   // Music used to need the models' own ports (blocked over USB); the gateway's /v1/music routes now cover it.
   if (m && m.status === "running") return null;
