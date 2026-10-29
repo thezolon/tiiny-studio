@@ -42,6 +42,10 @@ Ideas and requests are welcome as [feature requests](https://github.com/thezolon
 - **Faster cancel for image and audio jobs** once TiinyOS offers an interrupt for them (asked for).
 - **Hands-on checks of the macOS, Linux and Windows ARM apps and the arm64 Docker image** (built by CI, see Known
   limits).
+- **Several users on one Docker studio (being designed).** Each person signs in to their own gallery, chats
+  and voices, and the others can't see them. Chat memory would be kept per user by the studio, not on the Tiiny.
+  This only separates people inside the studio: the Tiiny's own vault still keeps a copy of every chat it receives,
+  from any user (see [Privacy](README.md#privacy)).
 - Desktop notifications when a long job finishes.
 - A clearer "Stopping…" message while a cancel is in progress.
 - Code-signed installers (Windows) and a notarized macOS app, then automatic updates.
