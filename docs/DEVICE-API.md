@@ -255,6 +255,9 @@ From Tiiny's docs (**docs**), not tested here.
   geometry/material ≈ 20 MB zips, the final GLB ≈ 7 MB). Its shape and simplify stages also offer a `*_preview` GLB.
   Timings (mug, draft/fast): shape 200 s, simplify 17 s, texture 98 s, export 43 s. TRELLIS's `background` stage
   fails like Hunyuan's (BriefNet missing).
+  With two 3D models loaded, `/v1/3d/*` without a model goes to either one: add `?model=<id>` (URL-encoded) to every
+  call (capabilities, tasks, polling, cancel, artifacts). Chained by reference, `input_refs` is a JSON form field:
+  `{"shape_artifact": {"task_id": "…", "artifact_id": "…"}}` (a bare id is refused).
 - Hunyuan3D `shape` reads the alpha channel and treats every pixel that isn't fully transparent as the subject: a
   cut-out whose background has faint alpha (1-2, typical of an image model's output) comes out as a flat card, and
   an opaque picture as a slab. The studio sets alpha < 32 to 0 before sending (tested 2026-10-29).
