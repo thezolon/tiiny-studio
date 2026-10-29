@@ -777,7 +777,7 @@ class Handler(BaseHTTPRequestHandler):
             names = [m.get("id", "").split("/")[-1] for m in res.get("data", [])]
             return self.send_json(200, {"ok": True, "message": f"Connected. {len(names)} model(s) loaded" + (f": {', '.join(names[:4])}" if names else "."), "loaded": names})
         if code in (401, 403):
-            return self.send_json(200, {"ok": False, "message": "The device rejected the API key." if key else "The device needs an API key."})
+            return self.send_json(200, {"ok": False, "message": ("The device rejected the API key. Copy the API key (not the device ID) from TiinyOS: avatar → Settings → API Key." if key else "The device needs an API key.")})
         if STUDIO_DOCKER and (urlparse(url).hostname or "").startswith("172.17."):
             return self.send_json(200, {"ok": False, "message": DOCKER_USB})
         msg = (res.get("error") or {}).get("message") if isinstance(res.get("error"), dict) else res.get("error")

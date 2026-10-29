@@ -74,7 +74,7 @@ function deviceForm(dev, firstRun) {
     firstRun ? el("p", { class: "set-intro" }, "Tiiny Studio talks to your device over your network. Enter its address and API key once; they're stored " + (SET.info?.app ? "by the app on this computer" : "on this server, and the key never goes back to the browser") + ". You can add more addresses later (home Wi-Fi, hotspot, USB) and the studio switches to whichever one answers.") : null,
     el("label", { class: "field" }, el("div", { class: "label" }, "Name", el("span", { class: "hint" }, "optional")), name),
     el("label", { class: "field" }, el("div", { class: "label" }, "Device address", el("span", { class: "hint" }, "IP or hostname")), url),
-    el("label", { class: "field" }, el("div", { class: "label" }, "API key", el("span", { class: "hint" }, "from the TiinyOS app")),
+    el("label", { class: "field" }, el("div", { class: "label" }, "API key", el("span", { class: "hint" }, "from the TiinyOS app, not the device ID")),
       el("div", { class: "seed-row" }, key, show), keyNote),
     HELP(),
     status,

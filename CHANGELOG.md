@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- **A wrong API key now says so.** The Models panel, the Image notice and the model cards showed "Device offline" or
+  "not installed" when the Tiiny was answering but refused the key; they now say the key was rejected, and where to
+  copy the right one (it's easy to grab the device ID instead), with a button to Settings.
+- **In Docker, a USB address in `172.17.x.x` is explained**: Test connection and Settings say it's Docker's own network
+  and what to do (Wi-Fi address, the desktop app, or move Docker's network).
+- **"Load a chat model" opens the Models panel at the chat models.** The panel lists the current workspace's models
+  first, but Chat and 3D never matched, so it always started with Image.
+
 ## 0.3.0 (2026-10-29)
 
 Three requests from the Tiiny Discord, all live-tested on TiinyOS 0.1.37.

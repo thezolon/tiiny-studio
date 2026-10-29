@@ -333,7 +333,7 @@ async fn test_settings(State(state): State<AppState>, body: Bytes) -> Json<Value
         return Json(json!({"ok": true, "message": format!("Connected. {} model(s) loaded{list}", names.len()), "loaded": names}));
     }
     if code == 401 || code == 403 {
-        let msg = if key.is_empty() { "The device needs an API key." } else { "The device rejected the API key." };
+        let msg = if key.is_empty() { "The device needs an API key." } else { "The device rejected the API key. Copy the API key (not the device ID) from TiinyOS: avatar → Settings → API Key." };
         return Json(json!({"ok": false, "message": msg}));
     }
     if crate::settings::in_docker() && hostname(&url).starts_with("172.17.") {

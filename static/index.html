@@ -786,6 +786,7 @@ async function api(path, opts = {}) {
   return j;
 }
 
+const KEY_REJECTED = "Your Tiiny rejected the API key. Copy the API key (not the device ID) from TiinyOS: avatar → Settings → API Key.";
 async function loadModels(quiet = false) {
   try {
     const j = await api("/api/catalog");
@@ -793,7 +794,7 @@ async function loadModels(quiet = false) {
     if (typeof noteActiveDevice === "function") noteActiveDevice(j.device, j.last_switch);
     S.models = S.allModels.filter((m) => m.workspace === "image");
     S.others = S.allModels.filter((m) => m.workspace !== "image");
-    S.deviceOk = true;
+    S.deviceOk = true; S.keyRejected = false;
     for (const id of Object.keys(S.loading)) {
       const m = modelById(id);
       if (m && m.status === "running") {
@@ -811,7 +812,8 @@ async function loadModels(quiet = false) {
     }
   } catch (e) {
     S.deviceOk = false;
-    if (!quiet && e.status !== 503) toast(e.message, "err");  // 503 = not configured; Settings opens itself
+    S.keyRejected = e.status === 401 || e.status === 403;  // the Tiiny answers, but not to this key
+    if (!quiet && e.status !== 503) toast(S.keyRejected ? KEY_REJECTED : e.message, "err");  // 503 = not configured; Settings opens itself
   }
   renderModelBtn(); renderDrawer(); renderComposer();
   if (typeof onModelsChanged === "function") onModelsChanged();
@@ -998,7 +1000,7 @@ function renderComposer() {
   const editInstalled = S.models.find((m) => canEditModel(m.id));
   const showNotice = (text, act, fn) => { notice.classList.add("show"); $("#noticeText").textContent = text; $("#noticeAct").textContent = act || ""; $("#noticeAct").onclick = fn || null; };
   notice.classList.remove("show");
-  if (S.deviceOk === false) showNotice("Can't reach the device.", "Check settings", () => openSettings(false));
+  if (S.deviceOk === false) showNotice(S.keyRejected ? "Your Tiiny rejected the API key." : "Can't reach the device.", S.keyRejected ? "Fix it in Settings" : "Check settings", () => openSettings(false));
   else if (text) { /* OCR uses its own model; ocrImage loads it if needed */ }
   else if (S.deviceOk && !S.model) showNotice(Object.keys(S.loading).length ? "Loading a model…" : "No image model is loaded on the device.", "Open models", openDrawer);
   else if (edit && S.model && !C.edit) {
@@ -1103,7 +1105,7 @@ function renderStatus() {
   const dot = $("#statusDot");
   dot.className = "dot " + (S.deviceOk === false ? "err" : S.running ? "busy" : S.deviceOk ? "ok" : "");
   const q = S.queue.length;
-  $("#queueMeta").textContent = S.running ? `Running${q ? ` · ${q} queued` : ""}` : S.deviceOk === false ? "Device offline" : "Device idle";
+  $("#queueMeta").textContent = S.running ? `Running${q ? ` · ${q} queued` : ""}` : S.deviceOk === false ? (S.keyRejected ? "API key rejected" : "Device offline") : "Device idle";
 }
 
 /* ---------- stage ---------- */
@@ -1367,19 +1369,26 @@ function renderModelBtn() {
   const m = modelById(S.model);
   $("#modelIco").src = m ? "/api/icon/" + m.id : "";
   $("#modelIco").style.visibility = m ? "visible" : "hidden";
-  $("#modelName").textContent = m ? shortName(m.id) : S.deviceOk === false ? "Device offline" : Object.keys(S.loading).length ? "Loading model…" : "No model loaded";
+  $("#modelName").textContent = m ? shortName(m.id) : S.deviceOk === false ? (S.keyRejected ? "API key rejected" : "Device offline") : Object.keys(S.loading).length ? "Loading model…" : "No model loaded";
   $("#modelCaps").textContent = m ? capsLine(m) : "Click to manage models";
 }
 
 /* ---------- models drawer ---------- */
 const NPU_COLORS = ["#ff7a45", "#60a5fa", "#a78bfa", "#34d399", "#f472b6", "#fbbf24"];
-function openDrawer() { if (typeof pollStats === "function") setTimeout(pollStats, 0); S.drawer = true; $("#drawer").classList.add("show"); $("#scrim").classList.add("show"); $("#drawer").setAttribute("aria-hidden", "false"); renderDrawer(); loadModels(true); }
+function openDrawer() { if (typeof pollStats === "function") setTimeout(pollStats, 0); S.drawer = true; $("#drawerBody").scrollTop = 0; $("#drawer").classList.add("show"); $("#scrim").classList.add("show"); $("#drawer").setAttribute("aria-hidden", "false"); renderDrawer(); loadModels(true); }
 function closeDrawer() { S.drawer = false; S.confirm = null; $("#drawer").classList.remove("show"); $("#scrim").classList.remove("show"); $("#drawer").setAttribute("aria-hidden", "true"); }
 
 function renderDrawer() {
   if (!S.drawer) return;
   const body = $("#drawerBody");
-  if (S.deviceOk === false) { body.replaceChildren(el("div", { class: "empty", style: "margin:40px auto" }, el("h2", {}, "Device offline"), el("p", {}, "Can't reach the Tiiny."))); return; }
+  if (S.deviceOk === false) {
+    body.replaceChildren(S.keyRejected
+      ? el("div", { class: "empty", style: "margin:40px auto" }, el("h2", {}, "API key rejected"),
+        el("p", {}, "Your Tiiny answers, but not to this key. Copy the API key (not the device ID) from TiinyOS: avatar → Settings → API Key."),
+        el("button", { class: "btn-sm accent", onclick: () => openSettings(false) }, "Open Settings"))
+      : el("div", { class: "empty", style: "margin:40px auto" }, el("h2", {}, "Device offline"), el("p", {}, "Can't reach the Tiiny.")));
+    return;
+  }
 
   // NPU budget: everything running, image or not
   const holders = (S.allModels || []).filter((m) => m.status === "running").map((m) => ({ id: m.id, name: shortName(m.id), pct: m.npu_usage || 0 }));
@@ -1396,9 +1405,11 @@ function renderDrawer() {
 
   const byRun = (a, b) => (b.status === "running") - (a.status === "running");
   const all = S.allModels || [];
-  const order = [S.ws || "image", ...["image", "audio", "3d", "text"].filter((w) => w !== (S.ws || "image"))];
-  const wsName = { image: "Image", audio: "Audio", "3d": "3D", mesh: "3D", text: "Chat" };
-  const sections = order.map((w) => w === "mesh" ? "3d" : w).filter((w, i, a) => a.indexOf(w) === i).map((w) => {
+  // the current workspace's models first (its workspace names differ from the models' own: mesh = 3d, chat = text)
+  const cur = { mesh: "3d", chat: "text" }[S.ws] || S.ws || "image";
+  const order = [cur, ...["image", "audio", "3d", "text"].filter((w) => w !== cur)];
+  const wsName = { image: "Image", audio: "Audio", "3d": "3D", text: "Chat" };
+  const sections = order.map((w) => {
     const list = all.filter((m) => m.workspace === w).sort(byRun);
     return list.length ? [el("div", { class: "section-title" }, `${wsName[w]} models · ${list.length}`), ...list.map(modelCard)] : [];
   }).flat();
