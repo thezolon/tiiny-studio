@@ -41,9 +41,10 @@ Showcase and discussion: [Tiiny Studio on TiinyVerse](https://tiinyverse.com/pos
   voiced in parts and joined); tempo- and key-locked loops; full songs with lyrics, instrumental,
   vocals only or separate tracks, with an 8-second preview you can continue to the full song and an
   MP3 copy; transcription in 30 languages.
-- **3D**: image → shape → simplify → PBR texture → GLB, with an interactive viewer. **Cut out the subject
-  first** (on by default): Qwen-Image puts the subject on a transparent background before the shape is built,
-  since Hunyuan3D otherwise builds the background too, as the floating shards around the dog above show.
+- **3D** with Hunyuan3D-2.1 or TRELLIS.2-4B: image → shape → simplify → PBR texture → GLB, with an interactive
+  viewer. **Cut out the subject first** (on by default): Qwen-Image puts the subject on a transparent background
+  before the shape is built, since the 3D model otherwise builds the background too, as the floating shards around
+  the dog above show.
 - **Helpers**: improve a prompt, describe an image, write lyrics, suggest loop tags. The studio loads the chat
   model they need and puts your models back afterwards (Settings → Model swapping).
 - **Gallery** (every workspace): search, smart search by meaning (the device's embedding model;

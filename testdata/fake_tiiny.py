@@ -85,6 +85,7 @@ CATALOG = [
     model("Fake/SongGeneration-v2", "SongGeneration", "Music Generation", 45, [], "text", "audio"),
     model("ACE-Step/AceStep-Fake", "AceStep", "Music Generation", 40, [], "text", "audio"),
     model("Tencent/Hunyuan3D-2.1", "Hunyuan3D", "Image-to-3D", 50, [], "image", "3d"),
+    model("microsoft/TRELLIS.2-4B", "TRELLIS.2", "Image-to-3D", 6, [], "image", "3d"),
     model("Fake/PP-OCRv6", "PP-OCRv6", "OCR", 5, [], "image", "text"),
     model("Qwen/Qwen3-Embedding-0.6B", "Qwen3 Embedding", "Embedding", 1),
 ]
@@ -400,13 +401,33 @@ class Handler(BaseHTTPRequestHandler):
 
     def tasks3d(self, method, p):
         st = self.st
+        named = (self.query.get("model") or [None])[0]  # the gateway picks the 3D model by ?model=
+        trellis = named == TRELLIS if named else TRELLIS in st.running
         if method == "GET" and p == "/v1/3d/capabilities":
-            return self.send_json(200, {"stages": ["background", "shape", "simplify", "texture", "export"]})
+            return self.send_json(200, {"status": "success", "data": TRELLIS_CAPS if trellis else HUNYUAN_CAPS})
         if method == "POST" and p in ("/v1/3d/tasks", "/v1/tasks"):
-            stage = (self.multi or {}).get("fields", {}).get("stage") or "shape"
+            multi = self.multi or {}
+            stage = multi.get("fields", {}).get("stage") or "shape"
+            if trellis:  # like the real one: refuse a missing input, and params the stage doesn't list
+                spec = TRELLIS_CAPS["stage_specs"].get(stage, {})
+                refs = json.loads(multi.get("fields", {}).get("input_refs") or "{}")
+                for name, r in refs.items():
+                    if not (isinstance(r, dict) and r.get("task_id") in st.tasks and r.get("artifact_id")):
+                        return self.send_json(400, {"error": f"Input reference {name} requires task_id and artifact_id", "error_code": "INVALID_REQUEST"})
+                for name in spec.get("required_inputs", []):
+                    if name not in refs and FORM_FIELD.get(name, name) not in multi.get("files", {}):
+                        return self.send_json(400, {"error": f"Missing stage input '{name}'", "error_code": "INVALID_REQUEST"})
+                extra = set(json.loads(multi.get("fields", {}).get("params") or "{}")) - set(spec.get("params", {})) - set(spec.get("controls", []))
+                if extra:
+                    return self.send_json(400, {"error": f"Unknown params for {stage}: {sorted(extra)}", "error_code": "INVALID_REQUEST"})
             tid = f"task-{len(st.tasks) + 1}"
-            st.tasks[tid] = {"stage": stage, "polls": 0, "cancelled": False}
+            st.tasks[tid] = {"stage": stage, "polls": 0, "cancelled": False, "trellis": trellis}
             return self.send_json(200, {"data": {"task_id": tid, "status": "queued"}})
+        m = re.fullmatch(r"/v1/(?:3d/)?tasks/([\w-]+)/artifacts/([\w:.-]+)", p)
+        if method == "GET" and m:
+            t = st.tasks.get(m.group(1))
+            art = next((a for i, a in enumerate(TRELLIS_OUT.get(t["stage"], []) if t else []) if f"{m.group(1)}-{i}" == unquote(m.group(2))), None)
+            return self.send_bytes(200, art[2], "application/octet-stream") if art else self.err(404, "artifact not found")
         m = re.fullmatch(r"/v1/(?:3d/)?tasks/([\w-]+)(/cancel)?", p)
         t = st.tasks.get(m.group(1)) if m else None
         if not t:
@@ -420,7 +441,13 @@ class Handler(BaseHTTPRequestHandler):
             if status == "completed" and st.flags.get("fail_stage") == t["stage"]:
                 return self.send_json(200, {"data": {"task_id": m.group(1), "status": "failed", "error": "out of memory"}})
             d = {"task_id": m.group(1), "status": status, "progress": 100 if status == "completed" else 40, "message": status}
-            if status == "completed" and t["stage"] == "texture" and st.flags.get("rich_texture"):
+            if status == "completed" and t.get("trellis"):  # artifacts listed by id, fetched separately
+                d["result"] = {"output": {"artifacts": [{"artifact_id": f"{m.group(1)}-{i}", "artifact_type": kind, "filename": name,
+                                                         "mime_type": "model/gltf-binary" if name.endswith(".glb") else "application/zip",
+                                                         "payload_key": "glb" if kind == "mesh_glb" else "preview_glb" if kind.endswith("_preview") else "artifact"}
+                                                        for i, (kind, name, _) in enumerate(TRELLIS_OUT[t["stage"]])],
+                                          "metadata": {"stage": t["stage"]}}}
+            elif status == "completed" and t["stage"] == "texture" and st.flags.get("rich_texture"):
                 d["result"] = {"output": {"artifacts": [{"artifact_type": "material_pbr", "filename": "mat.png", "mime_type": "image/png", "payload_key": "material"},
                                                          {"artifact_type": "mesh_glb", "filename": "textured.glb", "mime_type": "model/gltf-binary", "payload_key": "glb"}],
                                           "material": base64.b64encode(PNG).decode(), "glb": base64.b64encode(GLB + b"tex").decode(), "metadata": {"stage": "texture"}}}
@@ -429,6 +456,30 @@ class Handler(BaseHTTPRequestHandler):
                                           "glb": base64.b64encode(GLB).decode(), "metadata": {"stage": t["stage"]}}}
             return self.send_json(200, {"data": d})
         self.err(404, "endpoint not found")
+
+
+# /v1/3d/capabilities as the real models report them (TiinyOS 0.1.37), trimmed to what the studio reads.
+HUNYUAN_CAPS = {"model": "hunyuan3d", "stages": ["background", "shape", "simplify", "texture", "export"],
+                "inputs": {"background": ["image"], "shape": ["image"], "simplify": ["mesh"], "texture": ["image", "mesh"],
+                           "export": ["material_artifact", "mesh_glb"]},
+                "api_schema": "image-to-3d/v2"}
+TRELLIS = "microsoft/TRELLIS.2-4B"
+TRELLIS_CAPS = {"model": "trellis2", "stages": ["background", "shape", "simplify", "texture", "export"],
+                "inputs": {"background": ["image"], "shape": ["image"], "simplify": ["shape_artifact"], "texture": ["shape_artifact"],
+                           "export": ["geometry_artifact", "material_artifact", "mesh_glb", "shape_artifact"]},
+                "stage_specs": {"background": {"required_inputs": ["image"], "params": {"return_mask": {}}, "controls": []},
+                                "shape": {"required_inputs": ["image"], "params": {"pipeline_type": {}}, "controls": ["seed", "output_precision", "inference_quality"]},
+                                "simplify": {"required_inputs": ["shape_artifact"], "params": {"simplify": {}, "target_faces": {}}, "controls": ["asset_quality"]},
+                                "texture": {"required_inputs": ["shape_artifact"], "params": {"seed": {}, "inference_quality": {}}, "controls": ["seed", "inference_quality"]},
+                                "export": {"required_inputs": ["material_artifact", "shape_artifact"], "params": {"output_name": {}, "texture_size": {}},
+                                           "controls": ["asset_quality"]}},
+                "input_refs": True, "api_schema": "image-to-3d/v2"}
+# What each TRELLIS stage returns (artifact type, file, bytes), fetched by id: never inline.
+TRELLIS_OUT = {"shape": [("shape", "trellis2_shape.zip", b"PK\x03\x04shape"), ("shape_preview", "trellis2_shape_preview.glb", GLB + b"shape")],
+               "simplify": [("geometry", "trellis2_geometry.zip", b"PK\x03\x04geometry"), ("geometry_preview", "trellis2_geometry_preview.glb", GLB + b"geometry")],
+               "texture": [("material", "trellis2_texture.zip", b"PK\x03\x04material")],
+               "export": [("mesh_glb", "trellis2.glb", GLB + b"trellis")]}
+FORM_FIELD = {"material_artifact": "material", "mesh_glb": "mesh"}  # the task form's own names for these inputs
 
 
 def make_server(port=0, key="fake-key", launch_delay=0.2, running=(CHAT_MODEL,), host="127.0.0.1"):

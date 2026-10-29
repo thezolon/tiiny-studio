@@ -756,15 +756,37 @@ def cut_out(m, job, req):
 
 
 def run_mesh(m, job, req):
-    """Hunyuan3D: [cut-out] -> [background] -> shape -> [simplify] -> [texture -> export], chaining artifacts."""
+    """A failed or cancelled build keeps none of the files it saved (they'd have no gallery entry to delete them by)."""
+    saved = []
+    try:
+        return build_mesh(m, job, req, saved)
+    except BaseException:
+        for name in saved:
+            (m.dir / name).unlink(missing_ok=True)
+        raise
+
+
+def build_mesh(m, job, req, saved):
+    """Image to 3D (Hunyuan3D, TRELLIS.2): [cut-out] -> [background] -> shape -> [simplify] -> [texture -> export],
+    chaining artifacts. The stages, their inputs and their params come from the model's own /v1/3d/capabilities."""
     _, original = m.decode_uri(req.get("image"))
     image, cut = original, None
     if req.get("cutout"):  # the page leaves it off for a picture that's already transparent
         image, cut = cut_out(m, job, req)
+        saved.append(cut)
     m.ensure_running(job["model"])
     url, auth = f"{m.settings.url}/v1/3d", m.gateway_headers()  # gateway proxy: /v1/3d/tasks -> container /v1/tasks
+    # With two 3D models loaded the gateway sends an unnamed request to either one: name it on every call.
+    mq = f"?model={quote(job['model'], safe='')}"
+    _, caps = m.http("GET", f"{url}/capabilities{mq}", timeout=30, headers=auth)
+    caps = caps["data"] if isinstance(caps, dict) and isinstance(caps.get("data"), dict) else {}
+    inputs, specs = caps.get("inputs") or {}, caps.get("stage_specs") or {}
+    # A model with input_refs (TRELLIS.2) keeps each stage's artifacts: later stages point at them instead of the studio
+    # uploading them again (TRELLIS's shape, geometry and material together pass the device's 200 MB request limit).
+    use_refs, refs = bool(caps.get("input_refs")), {}
     plan = (["background"] if req.get("remove_bg") else []) + ["shape"] + (["simplify"] if req.get("faces") else []) \
         + (["texture", "export"] if req.get("texture") else [])
+    plan = [s for s in plan if s in (caps.get("stages") or plan)]
     weights = {"background": 5, "shape": 45, "simplify": 3, "texture": 42, "export": 5}
     total = sum(weights[s] for s in plan)
     done = 0
@@ -772,6 +794,7 @@ def run_mesh(m, job, req):
     have = {"image": ("input.png", image, "image/png")}
     stage_log = []
     src = m.save(f"{job['id']}-src.png", original)
+    saved.append(src)
 
     for stage in plan:
         if job["cancel"]:
@@ -781,17 +804,29 @@ def run_mesh(m, job, req):
             params = {"target_faces": int(req["faces"])}
         if stage == "background":
             params = {}
-        files = {k: v for k, v in have.items() if k in STAGE_INPUTS[stage]}
-        body, mp = m.multipart({"stage": stage, "params": json.dumps(params)}, files)
-        code, res = m.http("POST", f"{url}/tasks", body, mp, headers=auth)
+        spec = specs.get(stage)
+        if isinstance(spec, dict):  # a model that lists what each stage accepts (TRELLIS.2): send only that
+            allowed = set(spec.get("params") or {}) | set(spec.get("controls") or [])
+            params = {k: v for k, v in params.items() if k in allowed}
+        files, inrefs = {}, {}
+        for name in inputs.get(stage) or STAGE_INPUTS[stage]:
+            if use_refs and name in refs:
+                inrefs[name] = refs[name]
+            elif name in have:
+                files.setdefault(STAGE_FIELDS.get(name, name), have[name])
+        fields = {"stage": stage, "params": json.dumps(params)}
+        if inrefs:
+            fields["input_refs"] = json.dumps(inrefs)
+        body, mp = m.multipart(fields, files)
+        code, res = m.http("POST", f"{url}/tasks{mq}", body, mp, headers=auth)
         if code >= 300:
             raise JobError(f"{stage}: {m.err(res)}")
         tid = res["data"]["task_id"]
-        job["remote_task"] = f"{url}/tasks/{tid}/cancel"
+        job["remote_task"] = f"{url}/tasks/{tid}/cancel{mq}"
         silent = 0  # polls in a row without a status: the task is gone, don't hold the device forever
         while True:
             time.sleep(2)
-            _, st = m.http("GET", f"{url}/tasks/{tid}", timeout=30, headers=auth)
+            _, st = m.http("GET", f"{url}/tasks/{tid}{mq}", timeout=30, headers=auth)
             d = st.get("data") or {}
             p = d.get("progress") or 0
             job["progress"] = round((done + weights[stage] * p / 100) / total * 100)
@@ -813,11 +848,23 @@ def run_mesh(m, job, req):
                   "mime_type": out.get("mime_type"),
                   "payload_key": next((k for k in ("glb", "artifact", "image", "mesh") if isinstance(out.get(k), str)), "")}
         for art in out.get("artifacts") or [single]:
-            payload = out.get(art.get("payload_key") or "")
-            if not isinstance(payload, str):
-                continue
-            data = base64.b64decode(payload)
             kind = art.get("artifact_type") or ""
+            if kind.endswith("_preview") and stage != plan[-1]:
+                continue  # a preview only matters as the model when nothing comes after it
+            if art.get("artifact_id") and kind:  # kept on the device: later stages can point at it
+                refs[kind] = refs[f"{kind}_artifact"] = {"task_id": tid, "artifact_id": art["artifact_id"]}
+            payload = out.get(art.get("payload_key") or "")
+            if isinstance(payload, str):
+                data = base64.b64decode(payload)
+            elif use_refs and kind != "mesh_glb" and not kind.endswith("_preview"):
+                continue  # only the model itself comes to the studio
+            elif art.get("artifact_id"):  # not inline (TRELLIS.2): fetch it from the task
+                code, data = m.http("GET", f"{url}/tasks/{tid}/artifacts/{quote(art['artifact_id'], safe='')}{mq}", timeout=600,
+                                    headers=auth, raw=True)
+                if code != 200:
+                    raise JobError(f"{stage}: couldn't fetch its {kind}: {m.err(data)}")
+            else:
+                continue
             fname = art.get("filename") or f"{kind}.bin"
             mime = art.get("mime_type") or "application/octet-stream"
             if kind == "mesh_glb":
@@ -828,12 +875,17 @@ def run_mesh(m, job, req):
                 have["material_artifact"] = (fname, data, mime)
             elif kind.startswith("image") or mime.startswith("image/"):
                 have["image"] = (fname, data, mime)
+            elif kind.endswith("_preview"):
+                have["preview"] = (fname, data, mime)
+            elif kind:  # TRELLIS.2's shape/geometry: the next stage asks for "<type>_artifact"
+                have[kind] = have[f"{kind}_artifact"] = (fname, data, mime)
         done += weights[stage]
         job["remote_task"] = None
 
-    if "mesh" not in have:
+    mesh = have.get("mesh") or have.get("preview")  # no export (shape only): the last stage's preview GLB
+    if not mesh:
         raise JobError("The device returned no mesh")
-    out = m.save(f"{job['id']}-model.glb", have["mesh"][1])
+    out = m.save(f"{job['id']}-model.glb", mesh[1])
     return {"kind": "mesh", "params": {"model": job["model"], **quality, "texture": bool(req.get("texture")),
                                        "faces": req.get("faces"), "remove_bg": bool(req.get("remove_bg")),
                                        "cutout": req["cutout_model"] if cut else None},
@@ -867,9 +919,12 @@ def run_ocr(m, job, req):
             "lines": [{"text": l.get("text"), "score": l.get("score")} for l in item.get("lines") or []]}
 
 
-# Which multipart fields each Hunyuan3D stage takes (from /v1/capabilities).
-STAGE_INPUTS = {"background": {"image"}, "shape": {"image"}, "simplify": {"mesh"}, "texture": {"image", "mesh"},
-                "export": {"material", "mesh"}}
+# What each 3D stage takes when the model doesn't say (Hunyuan3D-2.1's /v1/3d/capabilities, TiinyOS 0.1.37). Each model
+# lists its own; TRELLIS.2 chains "shape_artifact" and "geometry_artifact" instead of "mesh".
+STAGE_INPUTS = {"background": ["image"], "shape": ["image"], "simplify": ["mesh"], "texture": ["image", "mesh"],
+                "export": ["material_artifact", "mesh_glb"]}
+# Inputs the task form takes under another field name (its fields: image, mesh, material, file, shape_artifact, ...).
+STAGE_FIELDS = {"material_artifact": "material", "mesh_glb": "mesh"}
 
 ASSIST_SYSTEM = {
     "prompt": "You improve prompts for a text-to-image model. Rewrite the user's idea as one vivid, concrete prompt: "

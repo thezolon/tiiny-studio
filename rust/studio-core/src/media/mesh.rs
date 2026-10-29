@@ -1,5 +1,6 @@
-//! Hunyuan3D image-to-3D: [background] -> shape -> [simplify] -> [texture -> export], chaining artifacts
-//! (media.py run_mesh).
+//! Image to 3D (Hunyuan3D, TRELLIS.2): [cut-out] -> [background] -> shape -> [simplify] -> [texture -> export],
+//! chaining artifacts (media.py run_mesh). The stages, their inputs and their params come from the model's own
+//! /v1/3d/capabilities.
 
 use std::time::Duration;
 
@@ -10,13 +11,23 @@ use super::{decode_uri, ensure_running, err, http, http_bytes, json_reply, make_
 use crate::device::truthy;
 use crate::jobs::{Ctx, JobError, JobResult};
 
-/// Which multipart fields each Hunyuan3D stage takes (from /v1/capabilities).
+/// What each 3D stage takes when the model doesn't say (Hunyuan3D-2.1's /v1/3d/capabilities, TiinyOS 0.1.37). Each
+/// model lists its own; TRELLIS.2 chains "shape_artifact" and "geometry_artifact" instead of "mesh".
 fn stage_inputs(stage: &str) -> &'static [&'static str] {
     match stage {
         "background" | "shape" => &["image"],
         "simplify" => &["mesh"],
         "texture" => &["image", "mesh"],
-        _ => &["material", "mesh"], // export
+        _ => &["material_artifact", "mesh_glb"], // export
+    }
+}
+
+/// Inputs the task form takes under another field name (its fields: image, mesh, material, file, shape_artifact, ...).
+fn stage_field(input: &str) -> &str {
+    match input {
+        "material_artifact" => "material",
+        "mesh_glb" => "mesh",
+        other => other,
     }
 }
 
@@ -157,12 +168,26 @@ async fn cut_out(ctx: &Ctx) -> Result<(Vec<u8>, String), JobError> {
     Ok((bytes, name))
 }
 
+/// A failed or cancelled build keeps none of the files it saved (they'd have no gallery entry to delete them by).
 pub async fn run(ctx: Ctx) -> JobResult {
+    let mut saved = vec![];
+    let result = build(&ctx, &mut saved).await;
+    if result.is_err() {
+        for name in &saved {
+            let _ = std::fs::remove_file(ctx.state.store.images.join(name));
+        }
+    }
+    result
+}
+
+async fn build(ctx: &Ctx, saved: &mut Vec<String>) -> JobResult {
+    let ctx = ctx.clone();
     let req = &ctx.req;
     let (_, original) = decode_uri(req.get("image").and_then(Value::as_str).unwrap_or(""))?;
     // the page leaves it off for a picture that's already transparent
     let (image, cut) = if req.get("cutout").is_some_and(truthy) {
         let (bytes, name) = cut_out(&ctx).await?;
+        saved.push(name.clone());
         (bytes, Some(name))
     } else {
         (original.clone(), None)
@@ -170,6 +195,10 @@ pub async fn run(ctx: Ctx) -> JobResult {
     let model = ctx.model.clone();
     ensure_running(&ctx, &model).await?;
     let url = format!("{}/v1/3d", ctx.state.settings.current().url); // gateway proxy: /v1/3d/tasks -> container /v1/tasks
+    // With two 3D models loaded the gateway sends an unnamed request to either one: name it on every call.
+    let mq = format!("?model={}", super::quote(&model));
+    let (_, caps) = http(&ctx, "GET", &format!("{url}/capabilities{mq}"), None, 30, true).await?;
+    let caps = caps.get("data").filter(|d| d.is_object()).cloned().unwrap_or(json!({}));
     let on = |k: &str| req.get(k).is_some_and(truthy);
     let mut plan = vec![];
     if on("remove_bg") {
@@ -181,6 +210,13 @@ pub async fn run(ctx: Ctx) -> JobResult {
     }
     if on("texture") {
         plan.extend(["texture", "export"]);
+    }
+    // A model with input_refs (TRELLIS.2) keeps each stage's artifacts: later stages point at them instead of the studio
+    // uploading them again (TRELLIS's shape, geometry and material together pass the device's 200 MB request limit).
+    let use_refs = caps.get("input_refs").is_some_and(truthy);
+    let mut refs: Map<String, Value> = Map::new();
+    if let Some(stages) = caps.get("stages").and_then(Value::as_array).filter(|s| !s.is_empty()) {
+        plan.retain(|s| stages.iter().any(|x| x.as_str() == Some(s)));
     }
     let total: f64 = plan.iter().map(|s| weight(s)).sum();
     let mut done = 0.0;
@@ -196,27 +232,54 @@ pub async fn run(ctx: Ctx) -> JobResult {
     have.set("image", ("input.png".into(), image.clone(), "image/png".into()));
     let mut stage_log = vec![];
     let src = save(&ctx, &format!("{}-src.png", ctx.id), &original);
+    saved.push(src.clone());
 
+    let last = plan.last().copied();
     for stage in plan {
         if ctx.cancelled() {
             return Err(JobError("Cancelled".into()));
         }
-        let params = match stage {
+        let mut params: Vec<(&str, Value)> = match stage {
             "simplify" => {
                 let faces = &req["faces"];
                 let n = match faces {
                     Value::String(s) => s.trim().parse::<i64>().map_err(|_| JobError(format!("ValueError: invalid literal for int() with base 10: '{s}'")))?,
                     other => other.as_f64().unwrap_or(1.0) as i64,
                 };
-                dumps(&[("target_faces", &json!(n))])
+                vec![("target_faces", json!(n))]
             }
-            "background" => "{}".to_string(),
-            _ => dumps(&quality.iter().map(|(k, v)| (*k, v)).collect::<Vec<_>>()),
+            "background" => vec![],
+            _ => quality.clone(),
         };
-        let files: Vec<(&str, (&str, &[u8], &str))> =
-            have.0.iter().filter(|(k, _)| stage_inputs(stage).contains(&k.as_str())).map(|(k, (n, d, m))| (k.as_str(), (n.as_str(), d.as_slice(), m.as_str()))).collect();
-        let (body, mp) = multipart(&[("stage", stage.to_string()), ("params", params)], &files);
-        let (code, res) = http_bytes(&ctx, "POST", &format!("{url}/tasks"), Some((body, mp)), 3600, true).await?;
+        if let Some(spec) = caps.pointer(&format!("/stage_specs/{stage}")).filter(|s| s.is_object()) {
+            // a model that lists what each stage accepts (TRELLIS.2): send only that
+            let listed = |k: &str| {
+                spec.get("params").and_then(Value::as_object).is_some_and(|p| p.contains_key(k))
+                    || spec.get("controls").and_then(Value::as_array).is_some_and(|c| c.iter().any(|x| x.as_str() == Some(k)))
+            };
+            params.retain(|(k, _)| listed(k));
+        }
+        let params = dumps(&params.iter().map(|(k, v)| (*k, v)).collect::<Vec<_>>());
+        let names: Vec<String> = match caps.pointer(&format!("/inputs/{stage}")).and_then(Value::as_array).filter(|a| !a.is_empty()) {
+            Some(a) => a.iter().filter_map(|x| x.as_str().map(String::from)).collect(),
+            None => stage_inputs(stage).iter().map(|s| s.to_string()).collect(),
+        };
+        let mut files: Vec<(&str, (&str, &[u8], &str))> = vec![];
+        let mut inrefs = Map::new();
+        for name in &names {
+            let field = stage_field(name);
+            if let (true, Some(r)) = (use_refs, refs.get(name.as_str())) {
+                inrefs.insert(name.clone(), r.clone());
+            } else if let (Some((n, d, m)), false) = (have.get(name), files.iter().any(|(f, _)| *f == field)) {
+                files.push((field, (n.as_str(), d.as_slice(), m.as_str())));
+            }
+        }
+        let mut fields = vec![("stage", stage.to_string()), ("params", params)];
+        if !inrefs.is_empty() {
+            fields.push(("input_refs", py_json(&Value::Object(inrefs))));
+        }
+        let (body, mp) = multipart(&fields, &files);
+        let (code, res) = http_bytes(&ctx, "POST", &format!("{url}/tasks{mq}"), Some((body, mp)), 3600, true).await?;
         let (code, res) = json_reply(code, res)?;
         if code >= 300 {
             return Err(JobError(format!("{stage}: {}", err(&res))));
@@ -226,11 +289,11 @@ pub async fn run(ctx: Ctx) -> JobResult {
             Value::String(s) => s.clone(),
             other => other.to_string(),
         };
-        ctx.set_remote_task(Some(format!("{url}/tasks/{tid}/cancel")));
+        ctx.set_remote_task(Some(format!("{url}/tasks/{tid}/cancel{mq}")));
         let mut silent = 0; // polls in a row without a status: the task is gone, don't hold the device forever
         let d = loop {
             tokio::time::sleep(Duration::from_secs(2)).await;
-            let (_, st) = http(&ctx, "GET", &format!("{url}/tasks/{tid}"), None, 30, true).await?;
+            let (_, st) = http(&ctx, "GET", &format!("{url}/tasks/{tid}{mq}"), None, 30, true).await?;
             let d = st.get("data").filter(|d| truthy(d)).cloned().unwrap_or(json!({}));
             let p = d.get("progress").and_then(Value::as_f64).unwrap_or(0.0);
             let shown = ["message", "status"].iter().filter_map(|k| d.get(*k)).find(|v| truthy(v)).or(d.get("status")).map_or("None".to_string(), |v| match v {
@@ -266,9 +329,31 @@ pub async fn run(ctx: Ctx) -> JobResult {
             None => vec![single],
         };
         for art in &arts {
-            let Some(payload) = out.get(str_of(art, "payload_key").unwrap_or("")).and_then(Value::as_str) else { continue };
-            let data = base64::engine::general_purpose::STANDARD.decode(payload).map_err(|e| JobError(format!("Error: {e}")))?;
             let kind = str_of(art, "artifact_type").unwrap_or("");
+            if kind.ends_with("_preview") && last != Some(stage) {
+                continue; // a preview only matters as the model when nothing comes after it
+            }
+            if let (Some(id), false) = (str_of(art, "artifact_id"), kind.is_empty()) {
+                // kept on the device: later stages can point at it
+                let r = json!({"task_id": tid, "artifact_id": id});
+                refs.insert(kind.to_string(), r.clone());
+                refs.insert(format!("{kind}_artifact"), r);
+            }
+            let local = !use_refs || kind == "mesh_glb" || kind.ends_with("_preview"); // only the model itself comes to the studio
+            let data = match (out.get(str_of(art, "payload_key").unwrap_or("")).and_then(Value::as_str), str_of(art, "artifact_id")) {
+                (Some(payload), _) => base64::engine::general_purpose::STANDARD.decode(payload).map_err(|e| JobError(format!("Error: {e}")))?,
+                (None, Some(_)) if !local => continue,
+                (None, Some(id)) => {
+                    // not inline (TRELLIS.2): fetch it from the task
+                    let (code, raw) = http_bytes(&ctx, "GET", &format!("{url}/tasks/{tid}/artifacts/{}{mq}", super::quote(id)), None, 600, true).await?;
+                    match raw {
+                        Ok(bytes) if code == 200 => bytes,
+                        Ok(_) => return Err(JobError(format!("{stage}: couldn't fetch its {kind}: Unexpected response (HTTP {code})."))),
+                        Err(v) => return Err(JobError(format!("{stage}: couldn't fetch its {kind}: {}", err(&v)))),
+                    }
+                }
+                (None, None) => continue,
+            };
             let fname = str_of(art, "filename").map(String::from).unwrap_or_else(|| format!("{kind}.bin"));
             let mime = str_of(art, "mime_type").unwrap_or("application/octet-stream");
             let item: Artifact = (fname, data, mime.to_string());
@@ -280,13 +365,20 @@ pub async fn run(ctx: Ctx) -> JobResult {
                 have.set("material_artifact", item);
             } else if kind.starts_with("image") || mime.starts_with("image/") {
                 have.set("image", item);
+            } else if kind.ends_with("_preview") {
+                have.set("preview", item);
+            } else if !kind.is_empty() {
+                // TRELLIS.2's shape/geometry: the next stage asks for "<type>_artifact"
+                have.set(kind, item.clone());
+                have.set(&format!("{kind}_artifact"), item);
             }
         }
         done += weight(stage);
         ctx.set_remote_task(None);
     }
 
-    let mesh = have.get("mesh").ok_or_else(|| JobError("The device returned no mesh".into()))?;
+    // no export (shape only): the last stage's preview GLB
+    let mesh = have.get("mesh").or_else(|| have.get("preview")).ok_or_else(|| JobError("The device returned no mesh".into()))?;
     let out = save(&ctx, &format!("{}-model.glb", ctx.id), &mesh.1);
     let mut params = Map::new();
     params.insert("model".into(), json!(model));

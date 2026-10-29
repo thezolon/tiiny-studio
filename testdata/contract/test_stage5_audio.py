@@ -12,6 +12,7 @@ import fake_tiiny  # noqa: E402
 AUTH = {"Authorization": "Bearer fake-key"}
 TTS, ASR, LOOP, SONG, MESH = "Qwen/Qwen3-TTS-Base", "Fake/Whisper-ASR", "Fake/Foundation-1", "Fake/SongGeneration-v2", "Tencent/Hunyuan3D-2.1"
 IMAGE = "Qwen/Qwen-Image-2.1"
+TRELLIS = "microsoft/TRELLIS.2-4B"
 PNG = "data:image/png;base64," + base64.b64encode(fake_tiiny.tiny_png()).decode()
 WAV = "data:audio/wav;base64," + base64.b64encode(fake_tiiny.tiny_wav()).decode()
 WAV_44K = "data:audio/x-wav;base64," + base64.b64encode(fake_tiiny.tiny_wav(0.05, 44100)).decode()
@@ -45,8 +46,8 @@ class Audio(ContractCase):
         load, flags = req.pop("load", None), req.pop("flags", None)
         if reset:
             request(self.h.fake_url, "POST", "/__reset")
-            if load:
-                request(self.h.fake_url, "POST", "/api/v1/models/" + load.replace("/", "%2F") + "/launch", {"model_id": load}, headers=AUTH)
+            for one in [load] if isinstance(load, str) else load or []:  # several: e.g. two 3D models at once
+                request(self.h.fake_url, "POST", "/api/v1/models/" + one.replace("/", "%2F") + "/launch", {"model_id": one}, headers=AUTH)
                 time.sleep(0.4)
         request(self.h.fake_url, "POST", "/__reset_log")
         if flags:
@@ -269,6 +270,40 @@ class Audio(ContractCase):
             self.assertFalse([c for c in self.calls() if c[0] == "POST" and ("/launch" in c[1] or "/stop" in c[1])])
         finally:
             self.set_swap(mesh=True)
+
+    def test_mesh_trellis(self):
+        # TRELLIS.2 names its inputs differently (shape_artifact, ...), lists each stage's params, and returns its
+        # artifacts by id; the stages, inputs and params come from its /v1/3d/capabilities
+        full = {"kind": "mesh", "model": TRELLIS, "image": PNG, "load": TRELLIS, "flags": {"task_polls": 1},
+                "faces": "10000", "texture": True, "output_precision": "standard", "inference_quality": "balance", "seed": 4}
+        py, rs = self.same_job(full)
+        self.assertEqual(py["status"], "done", py.get("error"))
+        self.assertEqual([s["stage"] for s in py["entry"]["stages"]], ["shape", "simplify", "texture", "export"])
+        self.files_equal(py, rs)
+        self.assertEqual(request(self.h.py_url, "GET", "/images/" + py["entry"]["outputs"][0]).body, fake_tiiny.GLB + b"trellis")
+        fetched = [c[1] for c in self.calls() if "/artifacts/" in c[1]]
+        self.assertEqual(len(fetched), 1)  # only the GLB: the rest stays on the device, passed on by reference
+        export = [c for c in self.calls() if c[0] == "POST" and c[1] == "/v1/3d/tasks"][-1]
+        self.assertEqual(sorted(json.loads(export[4]["fields"]["input_refs"])), ["geometry_artifact", "material_artifact", "shape_artifact"])
+        self.assertFalse(export[4]["files"])  # nothing uploaded again
+        self.assertTrue(all(c[2].get("model") == [TRELLIS] for c in self.calls() if c[1].startswith("/v1/3d/")))
+        # shape only: the shape's preview GLB is the model
+        py, _ = self.same_job({k: v for k, v in full.items() if k not in ("faces", "texture")})
+        self.assertEqual(request(self.h.py_url, "GET", "/images/" + py["entry"]["outputs"][0]).body, fake_tiiny.GLB + b"shape")
+
+    def test_mesh_two_models_loaded(self):
+        # with TRELLIS loaded too, a Hunyuan3D job must still reach Hunyuan3D (the gateway routes by ?model=)
+        py, rs = self.same_job({**self.mesh(faces="5000", texture=True), "load": [TRELLIS, MESH]})
+        self.assertEqual(py["status"], "done", py.get("error"))
+        self.assertEqual([s["stage"] for s in py["entry"]["stages"]], ["shape", "simplify", "texture", "export"])
+        self.assertTrue(all(c[2].get("model") == [MESH] for c in self.calls() if c[1].startswith("/v1/3d/")))
+
+    def test_mesh_failure_keeps_no_files(self):
+        # a build that fails after saving its source copy and cut-out must not leave them behind (no entry to delete)
+        dirs = [d / "images" for d in self.h.tmp[-2:]]
+        before = [len(list(d.iterdir())) for d in dirs]
+        self.failed(self.mesh(cutout=True, cutout_model=IMAGE, flags={"task_polls": 1, "fail_stage": "shape"}), "shape: out of memory")
+        self.assertEqual([len(list(d.iterdir())) for d in dirs], before)
 
     def test_mesh_errors(self):
         self.failed(self.mesh(image="nope"), "base64 data URI")
