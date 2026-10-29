@@ -283,6 +283,7 @@ async fn device_action(State(state): State<AppState>, Path(action): Path<String>
         "move" => state.settings.move_device(did, if req.get("dir").and_then(Value::as_f64).unwrap_or(-1.0) < 0.0 { -1 } else { 1 }),
         "activate" => state.settings.activate(did, None),
         "auto" => state.settings.set_auto(req.get("auto").map(device::truthy).unwrap_or(true)),
+        "swap" => state.settings.set_swap(&req),
         "check" => state.settings.check(&state.http).await,
         _ => return not_found().await,
     }

@@ -6,6 +6,11 @@
   edit (Qwen-Image), Create takes up to 10 reference pictures and makes a brand-new picture from them, in the shape
   you pick. Call them "image 1", "image 2" in the prompt. The gallery marks these REFS, and Reuse brings the
   references back. Create and Edit keep their own pictures.
+- **Helpers swap models for you** ([#5](https://github.com/thezolon/tiiny-studio/issues/5)): Improve prompt, Describe,
+  Write lyrics and loop tags no longer ask you to load a chat model first. The studio unloads what's in the way, runs
+  the helper, and loads your models back (about 30 s with Qwen-Image loaded). Settings → Model swapping has a global
+  switch and one each for Chat tools, Image helpers and Audio helpers, all on by default; off, nothing is loaded or
+  unloaded for you. You can also pick which text model the helpers use.
 
 ## 0.2.1 (2026-10-28)
 

@@ -82,6 +82,9 @@ CHATS.mkdir(parents=True, exist_ok=True)
 LOCK = threading.Lock()
 DEVICE_LOCK = threading.Lock()  # the device runs one request at a time; every job (image, audio, 3D) takes this
 
+SWAP_KEYS = ("on", "chat", "image", "audio", "mesh")
+
+
 class Settings:
     """Saved Tiiny devices (name, address and that device's own API key) in data/config.json, plus which
     one is active. TIINY_URL/TIINY_KEY seed a first device when nothing is saved.
@@ -107,6 +110,10 @@ class Settings:
             self.active = self.devices[0]["id"] if self.devices else None
             self.auto = True
             self.source = "file" if saved else "env" if url else "none"
+        # Model swapping: may helpers and chat tools load what they need (and put the user's models back)?
+        # "on" is the global switch; each section's switch only counts while it's on. All on by default.
+        self.swap = {k: bool((saved.get("swap") or {}).get(k, True)) for k in SWAP_KEYS}
+        self.helper_model = str(saved.get("helper_model") or "")  # the text model helpers use ("" = automatic)
         self.status = {}        # device id -> {"ok": bool, "ms": int}
         self.pinned = None      # a device picked by hand stays in use while it answers
         self.last_switch = None  # {"to": name, "from": name, "t": epoch}
@@ -139,11 +146,13 @@ class Settings:
                 "active": cur.get("id"), "name": cur.get("name", ""), "url": self.url, "host": self.host, "auto": self.auto,
                 "key_set": bool(self.key), "key_hint": hint(self.key), "configured": self.configured, "source": self.source,
                 "lan_access": LAN_ACCESS, "password": bool(PASSWORD), "last_switch": self.last_switch, "version": VERSION,
+                "swap": self.swap, "helper_model": self.helper_model,
                 "app": FROZEN}  # the standalone app: no .env to edit, so the UI words the network notes differently
 
     def _save(self):
         tmp = CONFIG.with_suffix(".tmp")
-        tmp.write_text(json.dumps({"devices": self.devices, "active": self.active, "auto": self.auto}, indent=1), "utf-8")
+        tmp.write_text(json.dumps({"devices": self.devices, "active": self.active, "auto": self.auto, "swap": self.swap,
+                                   "helper_model": self.helper_model}, indent=1), "utf-8")
         try:
             os.chmod(tmp, 0o600)
         except OSError:
@@ -201,6 +210,18 @@ class Settings:
                 self.last_switch = {"to": target["name"], "from": (before or {}).get("name"), "t": int(time.time()), "reason": reason}
             self._save()
         print(f"Device: {target['name']} ({target['url']}){' — ' + reason if reason else ''}", flush=True)
+
+    def set_swap(self, req):
+        with self.lock:
+            for k, v in (req.get("swap") or {}).items():
+                if k in SWAP_KEYS:
+                    self.swap[k] = bool(v)
+            if isinstance(req.get("helper_model"), str):
+                self.helper_model = req["helper_model"].strip()[:200]
+            self._save()
+
+    def swap_allowed(self, section):
+        return self.swap["on"] and self.swap.get(section, False)
 
     def set_auto(self, on):
         with self.lock:
@@ -638,7 +659,7 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_json(200, {"ok": True})
         if self.path == "/api/settings/test":
             return self.test_settings()
-        m = re.fullmatch(r"/api/settings/(delete|move|activate|auto|check)", self.path)
+        m = re.fullmatch(r"/api/settings/(delete|move|activate|auto|swap|check)", self.path)
         if m:
             return self.device_action(m.group(1))
         if self.path == "/api/model/launch":
@@ -724,6 +745,8 @@ class Handler(BaseHTTPRequestHandler):
             SETTINGS.activate(did)
         elif action == "auto":
             SETTINGS.set_auto(req.get("auto", True))
+        elif action == "swap":
+            SETTINGS.set_swap(req)
         elif action == "check":
             SETTINGS.check()
         self.send_json(200, SETTINGS.public())

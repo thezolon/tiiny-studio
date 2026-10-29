@@ -5,7 +5,7 @@ use base64::Engine;
 use regex::Regex;
 use serde_json::{json, Value};
 
-use super::{decode_uri, ensure_running, err};
+use super::{decode_uri, ensure_running, err, make_room, put_back};
 use crate::jobs::{Ctx, JobError, JobResult};
 
 fn system(task: &str) -> Option<(&'static str, u64, &'static str)> {
@@ -129,7 +129,22 @@ pub async fn run(ctx: Ctx) -> JobResult {
         }
     };
     let model = ctx.model.clone();
-    ensure_running(&ctx, &model).await?; // clear "isn't loaded" error instead of a gateway 4xx
+    // With swapping allowed for this section, load the helper's model (making room) and put things back after;
+    // otherwise just check it's loaded, for a clear "isn't loaded" error instead of a gateway 4xx.
+    let unloaded = if ctx.state.settings.swap_allowed(if matches!(task, "lyrics" | "tags") { "audio" } else { "image" }) {
+        make_room(&ctx, &model).await?
+    } else {
+        ensure_running(&ctx, &model).await?;
+        vec![]
+    };
+    let result = call(&ctx, task, &model, prompt, tokens, message, user).await;
+    let back = put_back(&ctx, &model, &unloaded).await;
+    let entry = result?;
+    back?;
+    Ok(entry)
+}
+
+async fn call(ctx: &Ctx, task: &str, model: &str, prompt: &str, tokens: u64, message: &str, user: Value) -> JobResult {
     let mut body = json!({"model": model, "messages": [{"role": "system", "content": prompt}, {"role": "user", "content": user}],
         "max_tokens": tokens, "temperature": if task == "lyrics" { 0.8 } else { 0.6 }, "stream": false});
     if model.contains("gpt-oss") {

@@ -17,7 +17,6 @@ import safety
 from media import JobError
 
 MAX_TOOL_ROUNDS = 4
-LOAD_TIMEOUT = 420  # seconds; the biggest models take ~2 minutes to load
 
 SYSTEM = ("You are the assistant in Tiiny Studio, a local media studio running on the user's own Tiiny AI device. "
           "Be direct and helpful. Use Markdown when it helps. When the user wants something made (an image, an edit "
@@ -70,65 +69,8 @@ class Sub(dict):
             self[k] = v
 
 
-# ---------- model juggling ----------
-def running_ids(m):
-    code, run = m.device("GET", "/api/v1/models/running", None, 15)
-    return [r.get("model_id") for r in (run.get("instances") or {}).get("running", [])] if code == 200 else []
-
-
-def wait_loaded(m, job, mid):
-    t0 = time.time()
-    while time.time() - t0 < LOAD_TIMEOUT:
-        if job["cancel"]:
-            raise JobError("Cancelled")
-        if mid in running_ids(m):
-            return
-        time.sleep(3)
-    raise JobError(f"{short(mid)} didn't finish loading")
-
-
-def short(mid):
-    return (mid or "").split("/")[-1]
-
-
-def make_room(m, job, target):
-    """Load target, unloading whatever the device says must go. Returns the models it unloaded."""
-    if target in running_ids(m):
-        return []
-    unloaded = []
-    for _ in range(4):  # one unload may not be enough
-        code, plan = m.device("GET", f"/api/v1/models/{urllib.parse.quote(target, safe='')}/unload_candidate", None, 30)
-        if code != 200:
-            raise JobError(m.err(plan))
-        if not plan.get("unload_required"):
-            break
-        for victim in plan.get("model_id") or []:
-            job["message"] = f"Unloading {short(victim)} to make room"
-            code, res = m.device("POST", f"/api/v1/models/{urllib.parse.quote(victim, safe='')}/stop", None, 120)
-            if code != 200:
-                raise JobError(m.err(res))
-            unloaded.append(victim)
-    job["message"] = f"Loading {short(target)}"
-    code, res = m.device("POST", f"/api/v1/models/{urllib.parse.quote(target, safe='')}/launch", {"model_id": target}, 120)
-    if code != 200:
-        raise JobError(m.err(res))
-    wait_loaded(m, job, target)
-    return unloaded
-
-
-def put_back(m, job, target, unloaded):
-    """After a tool: if the chat model (and others) had to make room, unload the tool's model and reload them."""
-    if not unloaded:
-        return  # everything fitted: leave the tool's model loaded for next time
-    job["message"] = f"Unloading {short(target)}"
-    m.device("POST", f"/api/v1/models/{urllib.parse.quote(target, safe='')}/stop", None, 120)
-    for mid in unloaded:
-        job["message"] = f"Loading {short(mid)} back"
-        code, res = m.device("POST", f"/api/v1/models/{urllib.parse.quote(mid, safe='')}/launch", {"model_id": mid}, 120)
-        if code != 200:
-            raise JobError(f"Couldn't load {short(mid)} back: {m.err(res)}")
-    for mid in unloaded:
-        wait_loaded(m, job, mid)
+# ---------- model juggling (shared with the helpers, in media.py) ----------
+running_ids, make_room, put_back, short = media.running_ids, media.make_room, media.put_back, media.short
 
 
 # ---------- tools ----------
@@ -176,6 +118,9 @@ def run_tool(m, job, req, name, args, messages):
         return None, f"Unknown tool {name}"
     if not model:
         return None, f"No model for {name.replace('_', ' ')} is installed on the device."
+    if not m.settings.swap_allowed("chat") and model not in running_ids(m):
+        return None, (f"{short(model)} isn't loaded, and the user has turned off model swapping for chat in Settings. Tell the "
+                      f"user to load {short(model)} from the Models panel (or turn swapping on), then ask again.")
     job["tool"] = {"name": name, "model": model}
     unloaded = make_room(m, job, model)
     try:

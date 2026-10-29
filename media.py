@@ -393,6 +393,70 @@ def run_transcribe(m, job, req):
             "sources": [src] if src else [], "outputs": [], "text": res["text"]}
 
 
+# ---------- model juggling: chat tools and helpers load what they need, then put the user's models back ----------
+LOAD_TIMEOUT = 420  # seconds; the biggest models take ~2 minutes to load
+
+
+def short(mid):
+    return (mid or "").split("/")[-1]
+
+
+def running_ids(m):
+    code, run = m.device("GET", "/api/v1/models/running", None, 15)
+    return [r.get("model_id") for r in (run.get("instances") or {}).get("running", [])] if code == 200 else []
+
+
+def wait_loaded(m, job, mid):
+    t0 = time.time()
+    while time.time() - t0 < LOAD_TIMEOUT:
+        if job["cancel"]:
+            raise JobError("Cancelled")
+        if mid in running_ids(m):
+            return
+        time.sleep(3)
+    raise JobError(f"{short(mid)} didn't finish loading")
+
+
+def make_room(m, job, target):
+    """Load target, unloading whatever the device says must go. Returns the models it unloaded."""
+    if target in running_ids(m):
+        return []
+    unloaded = []
+    for _ in range(4):  # one unload may not be enough
+        code, plan = m.device("GET", f"/api/v1/models/{quote(target, safe='')}/unload_candidate", None, 30)
+        if code != 200:
+            raise JobError(m.err(plan))
+        if not plan.get("unload_required"):
+            break
+        for victim in plan.get("model_id") or []:
+            job["message"] = f"Unloading {short(victim)} to make room"
+            code, res = m.device("POST", f"/api/v1/models/{quote(victim, safe='')}/stop", None, 120)
+            if code != 200:
+                raise JobError(m.err(res))
+            unloaded.append(victim)
+    job["message"] = f"Loading {short(target)}"
+    code, res = m.device("POST", f"/api/v1/models/{quote(target, safe='')}/launch", {"model_id": target}, 120)
+    if code != 200:
+        raise JobError(m.err(res))
+    wait_loaded(m, job, target)
+    return unloaded
+
+
+def put_back(m, job, target, unloaded):
+    """After a tool or helper: if other models had to make room, unload target and load them back."""
+    if not unloaded:
+        return  # everything fitted: leave the model loaded for next time
+    job["message"] = f"Unloading {short(target)}"
+    m.device("POST", f"/api/v1/models/{quote(target, safe='')}/stop", None, 120)
+    for mid in unloaded:
+        job["message"] = f"Loading {short(mid)} back"
+        code, res = m.device("POST", f"/api/v1/models/{quote(mid, safe='')}/launch", {"model_id": mid}, 120)
+        if code != 200:
+            raise JobError(f"Couldn't load {short(mid)} back: {m.err(res)}")
+    for mid in unloaded:
+        wait_loaded(m, job, mid)
+
+
 # Fields the device's /v1/images/generations validates (found by probing TiinyOS 0.1.35).
 IMAGE_FIELDS = ("model", "prompt", "negative_prompt", "n", "size", "seed", "steps", "guidance_scale")
 WARMUP_WAIT = float(os.environ.get("STUDIO_WARMUP_WAIT", "10"))  # seconds between warm-up retries (tests shorten it)
@@ -782,7 +846,20 @@ def run_assist(m, job, req):
         user = text
         if req.get("context"):
             user = f"{req['context'].strip()}\n\n{text}"
-    m.ensure_running(job["model"])  # clear "isn't loaded" error instead of a gateway 4xx
+    # With swapping allowed for this section, load the helper's model (making room) and put things back after;
+    # otherwise just check it's loaded, for a clear "isn't loaded" error instead of a gateway 4xx.
+    if m.settings.swap_allowed("audio" if task in ("lyrics", "tags") else "image"):
+        unloaded = make_room(m, job, job["model"])
+    else:
+        m.ensure_running(job["model"])
+        unloaded = []
+    try:
+        return assist_call(m, job, task, user)
+    finally:
+        put_back(m, job, job["model"], unloaded)
+
+
+def assist_call(m, job, task, user):
     body = {"model": job["model"], "messages": [{"role": "system", "content": ASSIST_SYSTEM[task]}, {"role": "user", "content": user}],
             "max_tokens": ASSIST_TOKENS[task], "temperature": 0.8 if task == "lyrics" else 0.6, "stream": False}
     if "gpt-oss" in job["model"]:  # always reasons and rejects enable_thinking; give it room to think

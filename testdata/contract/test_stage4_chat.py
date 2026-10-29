@@ -93,5 +93,77 @@ class Chat(ContractCase):
         self.same_job({"kind": "chat", "voice_id": "missing", "messages": [{"role": "user", "content": "RUST TEST hi"}]})
 
 
+    # ---------- model swapping switches (#5) ----------
+    def set_swap(self, **kw):
+        for base in (self.h.py_url, self.h.rs_url):
+            request(base, "POST", "/api/settings/swap", kw)
+
+    def tearDown(self):
+        self.set_swap(swap={k: True for k in ("on", "chat", "image", "audio", "mesh")}, helper_model="")
+
+    def test_swap_settings(self):
+        py, rs = (request(b, "POST", "/api/settings/swap", {"swap": {"on": False, "audio": 0, "bogus": True}, "helper_model": " Qwen/X "}).json
+                  for b in (self.h.py_url, self.h.rs_url))
+        self.assertEqual(py["swap"], {"on": False, "chat": True, "image": True, "audio": False, "mesh": True})
+        self.assertEqual((py["swap"], py["helper_model"]), (rs["swap"], rs["helper_model"]))
+        self.assertEqual(py["helper_model"], "Qwen/X")
+        self.same(self.get("/api/settings"), ("devices", "status", "last_switch", "active"))
+
+    def helper_with_image_model_loaded(self, base, req):
+        """A helper whose chat model isn't loaded, with the NPU too full for it: the image model has to make room."""
+        auth = {"Authorization": "Bearer fake-key"}
+        request(self.h.fake_url, "POST", "/__reset")
+        request(self.h.fake_url, "POST", "/api/v1/models/unload_all", {}, headers=auth)
+        for mid in ("Qwen%2FQwen-Image-2.1", "Fake%2FFoundation-1"):  # 60 + 25 of 100: the chat model (30) doesn't fit
+            request(self.h.fake_url, "POST", f"/api/v1/models/{mid}/launch", {}, headers=auth)
+            time.sleep(0.4)
+        request(self.h.fake_url, "POST", "/__reset_log")
+        job = request(base, "POST", "/api/jobs", req).json
+        for _ in range(600):
+            job = request(base, "GET", f"/api/jobs/{job['id']}").json
+            if job.get("finished"):
+                break
+            time.sleep(0.05)
+        log = json.loads(request(self.h.fake_url, "GET", "/__requests").body)
+        return job, [(r["method"], r["path"]) for r in log if r["path"] != "/"]
+
+    def test_helper_swaps_models(self):
+        req = {"kind": "assist", "model": fake_tiiny.CHAT_MODEL, "task": "prompt", "text": "RUST TEST a fox"}
+        py, py_calls = self.helper_with_image_model_loaded(self.h.py_url, req)
+        rs, rs_calls = self.helper_with_image_model_loaded(self.h.rs_url, req)
+        self.assertEqual(strip(py), strip(rs))
+        self.assertEqual(py_calls, rs_calls)
+        self.assertEqual(py["entry"]["text"], "Fake reply.")
+        chat = fake_tiiny.CHAT_MODEL.replace("/", "%2F")
+        posts = [p for m, p in py_calls if m == "POST"]
+        self.assertEqual(posts, ["/api/v1/models/Qwen%2FQwen-Image-2.1/stop", f"/api/v1/models/{chat}/launch", "/v1/chat/completions",
+                                 f"/api/v1/models/{chat}/stop", "/api/v1/models/Qwen%2FQwen-Image-2.1/launch"])
+
+    def test_helper_with_swapping_off(self):
+        req = {"kind": "assist", "model": fake_tiiny.CHAT_MODEL, "task": "lyrics", "text": "RUST TEST rain"}
+        for switch in ({"on": False}, {"audio": False}):  # the global switch, then only the Audio section's
+            self.set_swap(swap={"on": True, "audio": True, **switch})
+            py, py_calls = self.helper_with_image_model_loaded(self.h.py_url, req)
+            rs, rs_calls = self.helper_with_image_model_loaded(self.h.rs_url, req)
+            self.assertEqual(strip(py), strip(rs))
+            self.assertEqual(py_calls, rs_calls)
+            self.assertEqual(py["status"], "error")
+            self.assertIn("isn't loaded", py["error"])
+            self.assertFalse([p for m, p in py_calls if m == "POST"])  # nothing loaded or unloaded
+        self.set_swap(swap={"audio": True, "image": False})  # another section's switch doesn't matter
+        py, py_calls = self.helper_with_image_model_loaded(self.h.py_url, req)
+        self.assertIn(f"/api/v1/models/{fake_tiiny.CHAT_MODEL.replace('/', '%2F')}/launch", [p for _, p in py_calls])
+
+    def test_chat_tool_with_swapping_off(self):
+        self.set_swap(swap={"chat": False})
+        py, rs = self.same_job({"kind": "chat", "tools": ["create_image"], "load": "Fake/SongGeneration-v2",
+                                "tool_models": {"image": "Qwen/Qwen-Image-2.1"},
+                                "messages": [{"role": "user", "content": "RUST TEST FAKE_TOOL make a duck"}]})
+        self.assertEqual(py["status"], "done")
+        self.assertFalse([p for m, p, _ in self.calls if m == "POST" and ("/launch" in p or "/stop" in p or "/images/" in p)])
+        tool_reply = [b for m, p, b in self.calls if p == "/v1/chat/completions"][-1]
+        self.assertIn("turned off model swapping", json.dumps(tool_reply))
+
+
 if __name__ == "__main__":
     unittest.main()

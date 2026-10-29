@@ -11,7 +11,7 @@ mod ocr;
 mod speech;
 mod transcribe;
 
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
 
@@ -38,6 +38,90 @@ pub fn kind(name: &str) -> Option<KindFn> {
 
 fn short(model: &str) -> &str {
     model.rsplit('/').next().unwrap_or(model)
+}
+
+// ---------- model juggling: chat tools and helpers load what they need, then put the user's models back ----------
+const LOAD_TIMEOUT: Duration = Duration::from_secs(420); // the biggest models take ~2 minutes to load
+
+fn quote(s: &str) -> String {
+    s.bytes().map(|b| if b.is_ascii_alphanumeric() || b"_.-~".contains(&b) { (b as char).to_string() } else { format!("%{b:02X}") }).collect()
+}
+
+pub async fn running_ids(ctx: &Ctx) -> Vec<String> {
+    let (code, run) = crate::device::call(&ctx.state, "GET", "/api/v1/models/running", None, 15, None).await;
+    if code != 200 {
+        return vec![];
+    }
+    run.pointer("/instances/running").and_then(Value::as_array).into_iter().flatten().map(|r| r.get("model_id").and_then(Value::as_str).unwrap_or("").to_string()).collect()
+}
+
+async fn wait_loaded(ctx: &Ctx, mid: &str) -> Result<(), JobError> {
+    let t0 = Instant::now();
+    while t0.elapsed() < LOAD_TIMEOUT {
+        if ctx.cancelled() {
+            return Err(JobError("Cancelled".into()));
+        }
+        if running_ids(ctx).await.iter().any(|m| m == mid) {
+            return Ok(());
+        }
+        tokio::time::sleep(Duration::from_secs(3)).await;
+    }
+    Err(JobError(format!("{} didn't finish loading", short(mid))))
+}
+
+/// Load target, unloading whatever the device says must go. Returns the models it unloaded.
+pub async fn make_room(ctx: &Ctx, target: &str) -> Result<Vec<String>, JobError> {
+    if running_ids(ctx).await.iter().any(|m| m == target) {
+        return Ok(vec![]);
+    }
+    let st = &ctx.state;
+    let mut unloaded = vec![];
+    for _ in 0..4 {
+        // one unload may not be enough
+        let (code, plan) = crate::device::call(st, "GET", &format!("/api/v1/models/{}/unload_candidate", quote(target)), None, 30, None).await;
+        if code != 200 {
+            return Err(JobError(err(&plan)));
+        }
+        if !plan.get("unload_required").is_some_and(crate::device::truthy) {
+            break;
+        }
+        for victim in plan.get("model_id").and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_str) {
+            ctx.update(json!({"message": format!("Unloading {} to make room", short(victim))}));
+            let (code, res) = crate::device::call(st, "POST", &format!("/api/v1/models/{}/stop", quote(victim)), None, 120, None).await;
+            if code != 200 {
+                return Err(JobError(err(&res)));
+            }
+            unloaded.push(victim.to_string());
+        }
+    }
+    ctx.update(json!({"message": format!("Loading {}", short(target))}));
+    let (code, res) = crate::device::call(st, "POST", &format!("/api/v1/models/{}/launch", quote(target)), Some(json!({"model_id": target})), 120, None).await;
+    if code != 200 {
+        return Err(JobError(err(&res)));
+    }
+    wait_loaded(ctx, target).await?;
+    Ok(unloaded)
+}
+
+/// After a tool or helper: if other models had to make room, unload target and load them back.
+pub async fn put_back(ctx: &Ctx, target: &str, unloaded: &[String]) -> Result<(), JobError> {
+    if unloaded.is_empty() {
+        return Ok(()); // everything fitted: leave the model loaded for next time
+    }
+    let st = &ctx.state;
+    ctx.update(json!({"message": format!("Unloading {}", short(target))}));
+    crate::device::call(st, "POST", &format!("/api/v1/models/{}/stop", quote(target)), None, 120, None).await;
+    for mid in unloaded {
+        ctx.update(json!({"message": format!("Loading {} back", short(mid))}));
+        let (code, res) = crate::device::call(st, "POST", &format!("/api/v1/models/{}/launch", quote(mid)), Some(json!({"model_id": mid})), 120, None).await;
+        if code != 200 {
+            return Err(JobError(format!("Couldn't load {} back: {}", short(mid), err(&res))));
+        }
+    }
+    for mid in unloaded {
+        wait_loaded(ctx, mid).await?;
+    }
+    Ok(())
 }
 
 /// The running instance of a model (its port etc.), or the "isn't loaded" error the UI shows.

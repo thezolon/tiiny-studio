@@ -18,6 +18,9 @@ Where Tiiny Studio stands, what's next, and what doesn't work yet. Version **0.2
 - **3D:** image → shape → simplify → texture → GLB, with a viewer.
 - **Gallery, models panel and device:** search and smart search, favourites, zip export, bulk delete; load and
   unload models with the NPU memory budget shown; live device activity; power off.
+- **Model swapping:** helpers (Improve prompt, Describe, Write lyrics, loop tags) and chat tools load the model they
+  need and put yours back afterwards. A global switch and one per section in Settings (all on by default), and a
+  choice of which text model the helpers use.
 - **Jobs:** one queue on the server (the Tiiny does one thing at a time); jobs keep running if you close the
   page; **cancel** any running or queued job, and the Tiiny's work stops too. Quitting the app or stopping the
   server stops running work on the device first.
@@ -34,9 +37,6 @@ Known limits).
 
 Ideas and requests are welcome as [feature requests](https://github.com/thezolon/tiiny-studio/issues/new/choose).
 
-- **Helpers swap models automatically** (Improve prompt, Describe, Write lyrics…), with a global "let the studio swap
-  models for me" switch and one per section, all on by default
-  ([#5](https://github.com/thezolon/tiiny-studio/issues/5)).
 - **3D: cut out the subject before building**, so the background doesn't end up in the model
   ([#6](https://github.com/thezolon/tiiny-studio/issues/6)).
 - **Faster cancel for image and audio jobs** once TiinyOS offers an interrupt for them (asked for).

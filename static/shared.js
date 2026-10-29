@@ -130,8 +130,16 @@ function chatModel(vision) {
   const cmp = (a, b) => { const x = rank(a), y = rank(b); for (let i = 0; i < x.length; i++) if (x[i] !== y[i]) return x[i] - y[i]; return 0; };
   return list.sort(cmp)[0] || null;
 }
+/** The text model helpers use: the one picked in Settings (if it can do the task), else chatModel's choice. */
+function helperModel(vision) {
+  const id = SET.info?.helper_model;
+  return (id && (S.allModels || []).find((m) => m.id === id && CHAT_TYPES.includes(m.type) && (!vision || seesImages(m)))) || chatModel(vision);
+}
+/** May the studio swap models on the device for this section (Settings → Model swapping)? All on by default. */
+const swapOn = (section) => { const s = SET.info?.swap; return !s || (s.on && s[section] !== false); };
+const helperSection = (task) => (task === "lyrics" || task === "tags" ? "audio" : "image");
 function modelForTool(tool) {
-  if (tool === "chat" || tool === "vision") return chatModel(tool === "vision");
+  if (tool === "chat" || tool === "vision") return helperModel(tool === "vision");
   const list = (S.allModels || []).filter((m) => m.type === TOOL_TYPES[tool]);
   const isSong = (m) => /song|lyric/i.test(m.id + " " + (m.desc || "").slice(0, 300));
   const pick = tool === "song" ? list.filter(isSong) : tool === "loop" ? list.filter((m) => !isSong(m)) : list;
@@ -165,15 +173,28 @@ const ASSIST_WAIT = new Map();  // job id -> resolve(text | null)
 S.assistBusy = {};
 /** Run a helper on the chat model as a queued device job. Resolves to the reply text, or null if it failed or a
     model has to be loaded first (the gate card then shows in `slot` and updates itself as the model loads). */
+/** The "load this model" card for a helper, or null when it can run: its model is loaded, or the server may swap it in. */
+function helperGate(task) {
+  const tool = task === "describe" ? "vision" : "chat", m = modelForTool(tool);
+  if (m && m.status !== "running" && swapOn(helperSection(task))) return null;
+  return modelGate(tool, tool === "vision" ? "image-reading chat" : "chat");
+}
 async function assist(task, payload, slot, label) {
   const tool = task === "describe" ? "vision" : "chat";
-  const g = modelGate(tool, tool === "vision" ? "image-reading chat" : "chat");
+  const g = helperGate(task);
   if (g) { slot.replaceChildren(el("div", { class: "assist-gate", "data-tool": tool }, g)); return null; }
   slot.replaceChildren();
   if (S.assistBusy[task]) return null;
   S.assistBusy[task] = true;
   try {
-    const job = await submitJob("assist", { task, model: modelForTool(tool).id, est: { describe: 25, lyrics: 40 }[task] || 15, ...payload }, label);
+    const m = modelForTool(tool);
+    let est = { describe: 25, lyrics: 40 }[task] || 15;
+    if (m.status !== "running") {  // the server loads it (making room) and puts the user's models back afterwards
+      const load = m.load_time || 30;
+      est += 2 * load;
+      toast(`Swapping models: ${shortName(m.id)} loads first (~${fmtSec(load)}), then your models go back. Turn this off in Settings.`);
+    }
+    const job = await submitJob("assist", { task, model: m.id, est, ...payload }, label);
     return await new Promise((res) => ASSIST_WAIT.set(job.id, res));
   } catch (e) { toast(e.message, "err"); return null; }
   finally { delete S.assistBusy[task]; }

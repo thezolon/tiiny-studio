@@ -113,12 +113,32 @@ function deviceList() {
       i.devices?.length > 1 ? auto : null));
 }
 
+/** Model swapping: a global switch and one per section (only counts while the global one is on), plus the
+    text model helpers use. Stored on the server, which enforces them. */
+function swapSettings() {
+  const i = SET.info || {}, sw = i.swap || {};
+  const set = async (body) => { try { SET.info = await api("/api/settings/swap", { method: "POST", body: JSON.stringify(body) }); refreshSettings(); } catch (e) { toast(e.message, "err"); } };
+  const box = (k, label) => el("label", { class: "auto" + (sw.on ? "" : " off") },
+    el("input", { type: "checkbox", checked: sw[k] !== false, disabled: !sw.on, onchange: (e) => set({ swap: { [k]: e.target.checked } }) }), label);
+  const chats = (S.allModels || []).filter((m) => CHAT_TYPES.includes(m.type));
+  const pick = el("select", { class: "input", onchange: (e) => set({ helper_model: e.target.value }) },
+    el("option", { value: "" }, "Automatic: a loaded chat model, else the smallest"),
+    ...chats.map((m) => el("option", { value: m.id, selected: m.id === i.helper_model }, `${shortName(m.id)} · ${m.npu_usage ?? "?"}% NPU`)));
+  return el("div", { class: "set-network set-swap" },
+    el("b", {}, "Model swapping"),
+    el("p", {}, "When a helper or a chat tool needs a model that isn't loaded, the studio unloads what's in the way, loads it, and puts your models back afterwards. Each swap takes about 30–60 seconds per model. Off: nothing is loaded or unloaded for you; you're asked to load the model instead."),
+    el("label", { class: "auto" }, el("input", { type: "checkbox", checked: sw.on !== false, onchange: (e) => set({ swap: { on: e.target.checked } }) }), "Let the studio swap models for me"),
+    el("div", { class: "swap-secs" }, box("chat", "Chat tools (images, speech, loops, songs from a chat)"), box("image", "Image helpers (Improve prompt, Describe)"), box("audio", "Audio helpers (Write lyrics, loop tags)")),
+    el("label", { class: "field" }, el("div", { class: "label" }, "Helpers use", el("span", { class: "hint" }, "a text model")), pick));
+}
+
 function settingsBody(firstRun) {
   const i = SET.info || {};
   if (firstRun) return [deviceForm(null, true)];
   if (SET.editing) return [deviceForm(SET.editing === "new" ? null : i.devices.find((d) => d.id === SET.editing), false)];
   return [
     deviceList(),
+    i.configured ? swapSettings() : null,
     el("div", { class: "set-privacy" },
       el("div", {}, el("b", {}, "Privacy"),
         el("p", {}, "What you make is saved only on this computer, in the studio's data folder, and the studio sends it nowhere but your Tiiny. Deleting a result removes it and its prompt, sources and cached copies. To clear it all at once:"),

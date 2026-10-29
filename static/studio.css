@@ -166,6 +166,11 @@ textarea.lyrics:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(-
 .set-network { margin-top: 10px; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--line); font-size: 12.5px; color: var(--muted); }
 .set-network p { margin: 3px 0 0; line-height: 1.5; }
 .set-network b { color: var(--text); }
+.set-swap .auto { display: flex; margin-top: 6px; color: var(--text); }
+.set-swap .auto.off { opacity: .5; cursor: default; }
+.set-swap .swap-secs { margin: 2px 0 8px 20px; }
+.set-swap .swap-secs .auto { color: var(--muted); }
+.set-swap .field { margin: 0; }
 .set-network.warn { border-color: rgba(251,191,36,.4); background: rgba(251,191,36,.07); }
 
 /* delete button on gallery thumbnails */
