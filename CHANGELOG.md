@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## 0.3.0 (2026-10-29)
+
+Three requests from the Tiiny Discord, all live-tested on TiinyOS 0.1.37.
 
 - **Create from references** ([#8](https://github.com/thezolon/tiiny-studio/issues/8)): with an image model that can
   edit (Qwen-Image), Create takes up to 10 reference pictures and makes a brand-new picture from them, in the shape
@@ -16,6 +18,7 @@
   ends up in the model (about 1.5 min more). The studio loads Qwen-Image if needed (Settings → Model swapping → 3D)
   and skips the step for a picture that's already transparent. The 3D view shows the cut-out it was built from.
   Hunyuan3D's own background step is still broken on TiinyOS 0.1.37.
+- **Power off works again** with TiinyOS 0.1.37 (it didn't on 0.1.36); the known-limits note now says so.
 
 ## 0.2.1 (2026-10-28)
 
