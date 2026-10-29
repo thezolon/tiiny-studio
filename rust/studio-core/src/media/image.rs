@@ -1,4 +1,5 @@
-//! Create (or, with source images, edit) through the gateway's /v1/images/generations (media.py run_image).
+//! Create (or, with source images, edit) through the gateway's /v1/images/generations (media.py run_image). With
+//! mode "refs" the images are only references for a new picture (Qwen-Image composes freely from them, at any size).
 
 use base64::Engine;
 use serde_json::{json, Map, Value};
@@ -38,6 +39,7 @@ pub async fn run(ctx: Ctx) -> JobResult {
     } else if !sources.is_empty() {
         body.insert("images".into(), json!(sources)); // several references (Qwen-Image takes up to 10) go in "images", an array
     }
+    let refs = !sources.is_empty() && req.get("mode").and_then(Value::as_str) == Some("refs");
     // The device only makes one image per request ("batch_size other than 1 is not supported"), so several
     // images are separate requests with consecutive seeds, grouped into one result.
     let count = body.remove("n").as_ref().and_then(as_int).filter(|n| *n != 0).unwrap_or(1).clamp(1, 4);
@@ -48,7 +50,7 @@ pub async fn run(ctx: Ctx) -> JobResult {
         if ctx.cancelled() {
             return Err(JobError("Cancelled".into()));
         }
-        let verb = if sources.is_empty() { "Generating" } else { "Editing" };
+        let verb = if refs { "Composing" } else if sources.is_empty() { "Generating" } else { "Editing" };
         let message = if count == 1 { verb.to_string() } else { format!("{verb} image {} of {count}", i + 1) };
         let progress = if count > 1 { ((i as f64) / (count as f64) * 100.0).round() as i64 } else { 0 };
         ctx.update(json!({"message": message, "progress": progress}));
@@ -93,5 +95,5 @@ pub async fn run(ctx: Ctx) -> JobResult {
         }
     }
     let params: Map<String, Value> = body.into_iter().filter(|(k, _)| k != "image" && k != "response_format").collect();
-    Ok(json!({"kind": "image", "mode": if sources.is_empty() { "create" } else { "edit" }, "params": params, "sources": src_names, "outputs": outputs}))
+    Ok(json!({"kind": "image", "mode": if refs { "refs" } else if sources.is_empty() { "create" } else { "edit" }, "params": params, "sources": src_names, "outputs": outputs}))
 }

@@ -17,7 +17,8 @@ Showcase and discussion: [Tiiny Studio on TiinyVerse](https://tiinyverse.com/pos
 | ![Models panel: NPU memory shared by two models, live device activity, load buttons](docs/screenshots/models.webp) | ![Song: a one-minute instrumental made on the Tiiny, with save, MP3 and vary](docs/screenshots/song.webp) |
 | **Models**: what's loaded, NPU memory and device activity | **Songs**: lyrics or instrumental, saved as WAV or MP3 |
 
-- **Image**: create from a prompt; edit with plain-language instructions; circle an area to change;
+- **Image**: create from a prompt, or a new picture that uses up to 10 of yours as references
+  ("the mug from image 1 in a cafe", in any shape); edit with plain-language instructions; circle an area to change;
   up to 10 reference images; transparent PNGs; before/after compare; ×4 variations shown as a grid;
   **Text** mode reads the text in pictures and documents you drop, paste or browse, or in a gallery
   image: photos, scans and screenshots (any format the browser opens, plus multi-page TIFF), PDF, Word,

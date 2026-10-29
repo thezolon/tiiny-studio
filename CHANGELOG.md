@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- **Create from references** ([#8](https://github.com/thezolon/tiiny-studio/issues/8)): with an image model that can
+  edit (Qwen-Image), Create takes up to 10 reference pictures and makes a brand-new picture from them, in the shape
+  you pick. Call them "image 1", "image 2" in the prompt. The gallery marks these REFS, and Reuse brings the
+  references back. Create and Edit keep their own pictures.
+
 ## 0.2.1 (2026-10-28)
 
 Fixes from the first day of use, and screenshots in the README.
