@@ -243,5 +243,8 @@ From Tiiny's docs (**docs**), not tested here.
 - Over USB only port 80 (and 3588) is open: no model ports, so no GLM-OCR and no SongGeneration direct
   route (separate tracks, exact-length songs). The USB /30 is derived from the serial and can land in
   Docker's `172.17.x.x`.
-- Hunyuan3D `background` stage fails (BriefNet missing); SongGeneration style reference fails.
+- Hunyuan3D `background` stage fails (BriefNet missing; still on 0.1.37); SongGeneration style reference fails.
+- Hunyuan3D `shape` reads the alpha channel and treats every pixel that isn't fully transparent as the subject: a
+  cut-out whose background has faint alpha (1-2, typical of an image model's output) comes out as a flat card, and
+  an opaque picture as a slab. The studio sets alpha < 32 to 0 before sending (tested 2026-10-29).
 - Plain `/v1/music/generate` fails for SongGeneration ("Session not found"); `/resume` ignores `seconds_total`.

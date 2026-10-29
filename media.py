@@ -10,11 +10,13 @@ import json
 import os
 import re
 import socket
+import struct
 import threading
 import time
 import urllib.error
 import urllib.request
 import uuid
+import zlib
 from urllib.parse import quote
 
 JOBS = {}
@@ -667,9 +669,98 @@ def _song_entry(m, job, req, res, config, sources, route, url):
     return entry
 
 
+# Hunyuan3D builds the whole picture, background included, and its own background stage fails on the device (BriefNet
+# missing, TiinyOS 0.1.35-0.1.37). An image model that makes transparent pictures (Qwen-Image) cuts the subject out.
+CUTOUT_PROMPT = ("Extract the main subject from this photo onto a transparent background. Keep the subject exactly the same: "
+                 "shape, colours, details. Remove everything else. The image has an alpha channel and a transparent background.")
+
+
+PNG_SIG = b"\x89PNG\r\n\x1a\n"
+
+
+def clean_alpha(data):
+    """Hunyuan3D takes every pixel that isn't fully transparent as part of the subject, and an image model's cut-out
+    leaves faint noise (alpha 1-2) over the whole background, so the model came out as a flat card. Make every nearly
+    see-through pixel (alpha < 32) fully transparent white. Only 8-bit RGBA PNGs (what Qwen-Image returns) change;
+    the result is written uncompressed (stored deflate blocks), byte for byte the same as the Rust server's."""
+    if data[:8] != PNG_SIG or data[12:16] != b"IHDR":
+        return data
+    w, h, depth, ctype, _, _, interlace = struct.unpack(">IIBBBBB", data[16:29])
+    if depth != 8 or ctype != 6 or interlace:
+        return data
+    idat, pos = bytearray(), 8
+    while pos + 8 <= len(data):
+        n, kind = struct.unpack(">I4s", data[pos:pos + 8])
+        if kind == b"IDAT":
+            idat += data[pos + 8:pos + 8 + n]
+        pos += 12 + n
+    raw, stride = zlib.decompress(bytes(idat)), w * 4
+    px, prev = bytearray(), bytearray(stride)
+    for y in range(h):  # undo the PNG row filters
+        f, line = raw[y * (stride + 1)], bytearray(raw[y * (stride + 1) + 1:(y + 1) * (stride + 1)])
+        for i in range(stride):
+            a = line[i - 4] if i >= 4 else 0
+            b, c = prev[i], (prev[i - 4] if i >= 4 else 0)
+            if f == 1:
+                line[i] = (line[i] + a) & 255
+            elif f == 2:
+                line[i] = (line[i] + b) & 255
+            elif f == 3:
+                line[i] = (line[i] + (a + b) // 2) & 255
+            elif f == 4:
+                p = a + b - c
+                pa, pb, pc = abs(p - a), abs(p - b), abs(p - c)
+                line[i] = (line[i] + (a if pa <= pb and pa <= pc else b if pb <= pc else c)) & 255
+        px += line
+        prev = line
+    for i in range(0, len(px), 4):
+        if px[i + 3] < 32:
+            px[i:i + 4] = b"\xff\xff\xff\x00"
+    rows = b"".join(b"\x00" + bytes(px[y * stride:(y + 1) * stride]) for y in range(h))
+    z = bytearray(b"\x78\x01")
+    for i in range(0, len(rows), 65535):
+        block = rows[i:i + 65535]
+        z += bytes([1 if i + 65535 >= len(rows) else 0]) + struct.pack("<HH", len(block), len(block) ^ 0xFFFF) + block
+    z += struct.pack(">I", zlib.adler32(rows))
+
+    def chunk(kind, body):
+        return struct.pack(">I", len(body)) + kind + body + struct.pack(">I", zlib.crc32(kind + body))
+    return PNG_SIG + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 6, 0, 0, 0)) + chunk(b"IDAT", bytes(z)) + chunk(b"IEND", b"")
+
+
+def cut_out(m, job, req):
+    """The subject of req["image"] on a transparent background, by req["cutout_model"]: (png bytes, saved file name).
+    Swaps the image model in when the 3D switch allows (and puts things back), else it has to be loaded."""
+    model = req.get("cutout_model")
+    if not model:
+        raise JobError("Cutting out the subject needs an image model that makes transparent pictures (Qwen-Image).")
+    job["stage"] = "cutout"
+    if m.settings.swap_allowed("mesh"):
+        unloaded = make_room(m, job, model)
+    else:
+        m.ensure_running(model)
+        unloaded = []
+    try:
+        job["message"] = f"Cutting out the subject with {short(model)}"
+        sub = {"id": uuid.uuid4().hex[:12], "cancel": False, "message": "", "progress": 0}
+        entry = run_image(m, sub, {"model": model, "prompt": CUTOUT_PROMPT, "images": [req["image"]],
+                                   "size": req.get("cutout_size") or "512x512", "n": 1})
+    finally:
+        put_back(m, job, model, unloaded)
+    for name in entry["sources"]:
+        (m.dir / name).unlink(missing_ok=True)  # its copy of the source: the 3D entry keeps its own
+    name = entry["outputs"][0]
+    data = clean_alpha((m.dir / name).read_bytes())
+    (m.dir / name).write_bytes(data)  # the gallery shows the picture the model was built from
+    return data, name
+
+
 def run_mesh(m, job, req):
-    """Hunyuan3D: [background] -> shape -> [simplify] -> [texture -> export], chaining artifacts."""
-    _, image = m.decode_uri(req.get("image"))
+    """Hunyuan3D: [cut-out] -> [background] -> shape -> [simplify] -> [texture -> export], chaining artifacts."""
+    _, original = m.decode_uri(req.get("image"))
+    image, cut = original, None
+    if req.get("cutout"):  # the page leaves it off for a picture that's already transparent
+        image, cut = cut_out(m, job, req)
     m.ensure_running(job["model"])
     url, auth = f"{m.settings.url}/v1/3d", m.gateway_headers()  # gateway proxy: /v1/3d/tasks -> container /v1/tasks
     plan = (["background"] if req.get("remove_bg") else []) + ["shape"] + (["simplify"] if req.get("faces") else []) \
@@ -680,7 +771,7 @@ def run_mesh(m, job, req):
     quality = {k: req[k] for k in ("output_precision", "inference_quality", "asset_quality", "seed") if req.get(k) not in (None, "")}
     have = {"image": ("input.png", image, "image/png")}
     stage_log = []
-    src = m.save(f"{job['id']}-src.png", image)
+    src = m.save(f"{job['id']}-src.png", original)
 
     for stage in plan:
         if job["cancel"]:
@@ -744,8 +835,9 @@ def run_mesh(m, job, req):
         raise JobError("The device returned no mesh")
     out = m.save(f"{job['id']}-model.glb", have["mesh"][1])
     return {"kind": "mesh", "params": {"model": job["model"], **quality, "texture": bool(req.get("texture")),
-                                       "faces": req.get("faces"), "remove_bg": bool(req.get("remove_bg"))},
-            "sources": [src], "outputs": [out], "stages": stage_log}
+                                       "faces": req.get("faces"), "remove_bg": bool(req.get("remove_bg")),
+                                       "cutout": req["cutout_model"] if cut else None},
+            "sources": [src] + ([cut] if cut else []), "outputs": [out], "stages": stage_log}
 
 
 def run_ocr(m, job, req):

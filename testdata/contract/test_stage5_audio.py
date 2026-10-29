@@ -11,6 +11,7 @@ import fake_tiiny  # noqa: E402
 
 AUTH = {"Authorization": "Bearer fake-key"}
 TTS, ASR, LOOP, SONG, MESH = "Qwen/Qwen3-TTS-Base", "Fake/Whisper-ASR", "Fake/Foundation-1", "Fake/SongGeneration-v2", "Tencent/Hunyuan3D-2.1"
+IMAGE = "Qwen/Qwen-Image-2.1"
 PNG = "data:image/png;base64," + base64.b64encode(fake_tiiny.tiny_png()).decode()
 WAV = "data:audio/wav;base64," + base64.b64encode(fake_tiiny.tiny_wav()).decode()
 WAV_44K = "data:audio/x-wav;base64," + base64.b64encode(fake_tiiny.tiny_wav(0.05, 44100)).decode()
@@ -18,6 +19,20 @@ MP3 = "data:audio/mpeg;base64," + base64.b64encode(fake_tiiny.MP3).decode()
 # ids, times and file names (they contain the job id) differ per run; files are compared by files_equal
 IGNORE = ("id", "created", "started", "finished", "seconds", "t", "outputs", "sources", "downloads", "from_entry")
 LONG_TEXT = " ".join(f"Sentence number {i} is here, and it goes on a little." for i in range(14))
+
+
+def png_pixels(data):
+    """The pixels of an uncompressed-or-not 8-bit RGBA PNG whose rows all use filter 0 (what clean_alpha writes)."""
+    import struct, zlib
+    w, h = struct.unpack(">II", data[16:24])
+    pos, idat = 8, b""
+    while pos < len(data):
+        n, kind = struct.unpack(">I4s", data[pos:pos + 8])
+        idat += data[pos + 8:pos + 8 + n] if kind == b"IDAT" else b""
+        pos += 12 + n
+    raw = zlib.decompress(idat)
+    assert all(raw[y * (w * 4 + 1)] == 0 for y in range(h))
+    return [b for y in range(h) for b in raw[y * (w * 4 + 1) + 1:(y + 1) * (w * 4 + 1)]]
 
 
 class Audio(ContractCase):
@@ -218,6 +233,42 @@ class Audio(ContractCase):
         self.assertEqual([s["stage"] for s in py["entry"]["stages"]], ["background", "shape", "simplify", "texture", "export"])
         self.assertEqual(py["entry"]["params"]["faces"], "5000")
         self.files_equal(py, rs)
+
+    def set_swap(self, **sw):
+        for base in (self.h.py_url, self.h.rs_url):
+            request(base, "POST", "/api/settings/swap", {"swap": sw})
+
+    def test_mesh_cut_out(self):
+        # The fake's chat model and Hunyuan3D fill the NPU, so Qwen-Image has to make room, then both come back.
+        py, rs = self.same_job(self.mesh(cutout=True, cutout_model=IMAGE, cutout_size="512x512", flags={"task_polls": 1, "cutout_png": True}))
+        self.assertEqual(py["status"], "done")
+        self.assertEqual(py["entry"]["params"]["cutout"], IMAGE)
+        self.assertEqual(len(py["entry"]["sources"]), 2)  # the source and its cut-out
+        self.files_equal(py, rs, "sources")
+        posts = [c[1] for c in self.calls() if c[0] == "POST"]
+        img, mesh = IMAGE.replace("/", "%2F"), MESH.replace("/", "%2F")
+        for expected in (f"/api/v1/models/{mesh}/stop", f"/api/v1/models/{img}/launch", "/v1/images/generations",
+                         f"/api/v1/models/{img}/stop", f"/api/v1/models/{mesh}/launch", "/v1/3d/tasks"):
+            self.assertIn(expected, posts)
+        sent = next(c[3] for c in self.calls() if c[1] == "/v1/images/generations")
+        self.assertIn("transparent background", sent["prompt"])
+        self.assertEqual(sent["size"], "512x512")
+        # the background noise became fully transparent white; the subject and its soft edge stayed
+        cut = request(self.h.py_url, "GET", "/images/" + py["entry"]["sources"][1]).body
+        self.assertEqual(png_pixels(cut), [255, 255, 255, 0, 200, 30, 30, 255, 255, 255, 255, 0,
+                                           255, 255, 255, 0, 200, 30, 30, 128, 255, 255, 255, 0])
+
+    def test_mesh_cut_out_refused(self):
+        py, _ = self.same_job(self.mesh())  # not asked for: no cut-out
+        self.assertEqual((py["entry"]["params"]["cutout"], len(py["entry"]["sources"])), (None, 1))
+        self.assertNotIn("/v1/images/generations", [c[1] for c in self.calls()])
+        self.failed(self.mesh(cutout=True), "needs an image model")
+        try:
+            self.set_swap(mesh=False)  # 3D swapping off: the image model has to be loaded already
+            self.failed(self.mesh(cutout=True, cutout_model=IMAGE), "isn't loaded")
+            self.assertFalse([c for c in self.calls() if c[0] == "POST" and ("/launch" in c[1] or "/stop" in c[1])])
+        finally:
+            self.set_swap(mesh=True)
 
     def test_mesh_errors(self):
         self.failed(self.mesh(image="nope"), "base64 data URI")

@@ -6,7 +6,7 @@ use std::time::Duration;
 use base64::Engine;
 use serde_json::{json, Map, Value};
 
-use super::{decode_uri, ensure_running, err, http, http_bytes, json_reply, multipart, py_json, py_round, save};
+use super::{decode_uri, ensure_running, err, http, http_bytes, json_reply, make_room, multipart, put_back, py_json, py_round, save};
 use crate::device::truthy;
 use crate::jobs::{Ctx, JobError, JobResult};
 
@@ -59,9 +59,114 @@ fn str_of<'a>(v: &'a Value, k: &str) -> Option<&'a str> {
     v.get(k).filter(|x| truthy(x)).and_then(Value::as_str)
 }
 
+// Hunyuan3D builds the whole picture, background included, and its own background stage fails on the device (BriefNet
+// missing, TiinyOS 0.1.35-0.1.37). An image model that makes transparent pictures (Qwen-Image) cuts the subject out.
+const CUTOUT_PROMPT: &str = "Extract the main subject from this photo onto a transparent background. Keep the subject exactly the same: \
+shape, colours, details. Remove everything else. The image has an alpha channel and a transparent background.";
+
+/// Hunyuan3D takes every pixel that isn't fully transparent as part of the subject, and an image model's cut-out leaves
+/// faint noise (alpha 1-2) over the whole background, so the model came out as a flat card. Make every nearly see-through
+/// pixel (alpha < 32) fully transparent white. Only 8-bit RGBA PNGs (what Qwen-Image returns) change; the result is
+/// written uncompressed (stored deflate blocks), byte for byte the same as media.py clean_alpha.
+pub fn clean_alpha(data: &[u8]) -> Vec<u8> {
+    let Ok(mut reader) = png::Decoder::new(data).read_info() else {
+        return data.to_vec();
+    };
+    let info = reader.info();
+    let (w, h) = (info.width, info.height);
+    if info.bit_depth != png::BitDepth::Eight || info.color_type != png::ColorType::Rgba || info.interlaced {
+        return data.to_vec();
+    }
+    let mut px = vec![0; reader.output_buffer_size()];
+    if reader.next_frame(&mut px).is_err() {
+        return data.to_vec();
+    }
+    for p in px.chunks_exact_mut(4) {
+        if p[3] < 32 {
+            p.copy_from_slice(&[255, 255, 255, 0]);
+        }
+    }
+    let stride = w as usize * 4;
+    let mut rows = Vec::with_capacity(px.len() + h as usize);
+    for line in px.chunks_exact(stride) {
+        rows.push(0);
+        rows.extend_from_slice(line);
+    }
+    let mut z = vec![0x78, 0x01];
+    for (i, block) in rows.chunks(65535).enumerate() {
+        z.push(u8::from((i + 1) * 65535 >= rows.len()));
+        z.extend_from_slice(&(block.len() as u16).to_le_bytes());
+        z.extend_from_slice(&(!(block.len() as u16)).to_le_bytes());
+        z.extend_from_slice(block);
+    }
+    let (mut a, mut b) = (1u32, 0u32); // adler32
+    for &x in &rows {
+        a = (a + x as u32) % 65521;
+        b = (b + a) % 65521;
+    }
+    z.extend_from_slice(&((b << 16) | a).to_be_bytes());
+    let chunk = |out: &mut Vec<u8>, kind: &[u8], body: &[u8]| {
+        out.extend_from_slice(&(body.len() as u32).to_be_bytes());
+        out.extend_from_slice(kind);
+        out.extend_from_slice(body);
+        let mut crc = crc32fast::Hasher::new();
+        crc.update(kind);
+        crc.update(body);
+        out.extend_from_slice(&crc.finalize().to_be_bytes());
+    };
+    let mut out = b"\x89PNG\r\n\x1a\n".to_vec();
+    let mut ihdr = vec![];
+    ihdr.extend_from_slice(&w.to_be_bytes());
+    ihdr.extend_from_slice(&h.to_be_bytes());
+    ihdr.extend_from_slice(&[8, 6, 0, 0, 0]);
+    chunk(&mut out, b"IHDR", &ihdr);
+    chunk(&mut out, b"IDAT", &z);
+    chunk(&mut out, b"IEND", b"");
+    out
+}
+
+/// The subject of req["image"] on a transparent background, by req["cutout_model"]: (png bytes, saved file name).
+/// Swaps the image model in when the 3D switch allows (and puts things back), else it has to be loaded.
+async fn cut_out(ctx: &Ctx) -> Result<(Vec<u8>, String), JobError> {
+    let req = &ctx.req;
+    let model = str_of(req, "cutout_model")
+        .ok_or_else(|| JobError("Cutting out the subject needs an image model that makes transparent pictures (Qwen-Image).".into()))?
+        .to_string();
+    ctx.update(json!({"stage": "cutout"}));
+    let unloaded = if ctx.state.settings.swap_allowed("mesh") {
+        make_room(ctx, &model).await?
+    } else {
+        ensure_running(ctx, &model).await?;
+        vec![]
+    };
+    ctx.update(json!({"message": format!("Cutting out the subject with {}", model.rsplit('/').next().unwrap_or(&model))}));
+    let size = str_of(req, "cutout_size").unwrap_or("512x512");
+    let sub = ctx.sub(&model, json!({"model": model, "prompt": CUTOUT_PROMPT, "images": [req.get("image")], "size": size, "n": 1}));
+    let result = super::image::run(sub).await;
+    ctx.remove(&["tool_message", "tool_progress"]);
+    let back = put_back(ctx, &model, &unloaded).await;
+    let entry = result?;
+    back?;
+    let dir = &ctx.state.store.images;
+    for name in entry.get("sources").and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_str) {
+        let _ = std::fs::remove_file(dir.join(name)); // its copy of the source: the 3D entry keeps its own
+    }
+    let name = entry.pointer("/outputs/0").and_then(Value::as_str).unwrap_or("").to_string();
+    let bytes = clean_alpha(&std::fs::read(dir.join(&name)).map_err(|e| JobError(e.to_string()))?);
+    let _ = std::fs::write(dir.join(&name), &bytes); // the gallery shows the picture the model was built from
+    Ok((bytes, name))
+}
+
 pub async fn run(ctx: Ctx) -> JobResult {
     let req = &ctx.req;
-    let (_, image) = decode_uri(req.get("image").and_then(Value::as_str).unwrap_or(""))?;
+    let (_, original) = decode_uri(req.get("image").and_then(Value::as_str).unwrap_or(""))?;
+    // the page leaves it off for a picture that's already transparent
+    let (image, cut) = if req.get("cutout").is_some_and(truthy) {
+        let (bytes, name) = cut_out(&ctx).await?;
+        (bytes, Some(name))
+    } else {
+        (original.clone(), None)
+    };
     let model = ctx.model.clone();
     ensure_running(&ctx, &model).await?;
     let url = format!("{}/v1/3d", ctx.state.settings.current().url); // gateway proxy: /v1/3d/tasks -> container /v1/tasks
@@ -90,7 +195,7 @@ pub async fn run(ctx: Ctx) -> JobResult {
     let mut have = Have::default();
     have.set("image", ("input.png".into(), image.clone(), "image/png".into()));
     let mut stage_log = vec![];
-    let src = save(&ctx, &format!("{}-src.png", ctx.id), &image);
+    let src = save(&ctx, &format!("{}-src.png", ctx.id), &original);
 
     for stage in plan {
         if ctx.cancelled() {
@@ -189,5 +294,7 @@ pub async fn run(ctx: Ctx) -> JobResult {
     params.insert("texture".into(), json!(on("texture")));
     params.insert("faces".into(), req.get("faces").cloned().unwrap_or(Value::Null));
     params.insert("remove_bg".into(), json!(on("remove_bg")));
-    Ok(json!({"kind": "mesh", "params": params, "sources": [src], "outputs": [out], "stages": stage_log}))
+    params.insert("cutout".into(), if cut.is_some() { req.get("cutout_model").cloned().unwrap_or(Value::Null) } else { Value::Null });
+    let sources: Vec<String> = std::iter::once(src).chain(cut).collect();
+    Ok(json!({"kind": "mesh", "params": params, "sources": sources, "outputs": [out], "stages": stage_log}))
 }

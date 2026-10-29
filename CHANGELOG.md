@@ -11,6 +11,11 @@
   the helper, and loads your models back (about 30 s with Qwen-Image loaded). Settings → Model swapping has a global
   switch and one each for Chat tools, Image helpers and Audio helpers, all on by default; off, nothing is loaded or
   unloaded for you. You can also pick which text model the helpers use.
+- **3D: Cut out the subject first** ([#6](https://github.com/thezolon/tiiny-studio/issues/6)), on by default:
+  Qwen-Image puts the subject on a transparent background before Hunyuan3D builds it, so the background no longer
+  ends up in the model (about 1.5 min more). The studio loads Qwen-Image if needed (Settings → Model swapping → 3D)
+  and skips the step for a picture that's already transparent. The 3D view shows the cut-out it was built from.
+  Hunyuan3D's own background step is still broken on TiinyOS 0.1.37.
 
 ## 0.2.1 (2026-10-28)
 

@@ -40,7 +40,32 @@ def tiny_wav(seconds=0.25, rate=24000):
     return buf.getvalue()
 
 
+def rgba_png(w, h, pixels, filt=4):
+    """An 8-bit RGBA PNG, rows filtered with `filt` (Paeth by default, as image models write them)."""
+    stride, rows, prev = w * 4, b"", bytes(w * 4)
+    for y in range(h):
+        line = pixels[y * stride:(y + 1) * stride]
+        out = bytearray()
+        for i in range(stride):
+            a = line[i - 4] if i >= 4 else 0
+            b, c = prev[i], (prev[i - 4] if i >= 4 else 0)
+            p = a + b - c
+            pred = a if abs(p - a) <= abs(p - b) and abs(p - a) <= abs(p - c) else b if abs(p - b) <= abs(p - c) else c
+            out.append((line[i] - {0: 0, 1: a, 2: b, 3: (a + b) // 2, 4: pred}[filt]) & 255)
+        rows += bytes([filt]) + bytes(out)
+        prev = line
+
+    def chunk(t, d):
+        c = struct.pack(">I", len(d)) + t + d
+        return c + struct.pack(">I", zlib.crc32(t + d) & 0xFFFFFFFF)
+    return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 6, 0, 0, 0))
+            + chunk(b"IDAT", zlib.compress(rows)) + chunk(b"IEND", b""))
+
+
 PNG, WAV = tiny_png(), tiny_wav()
+# 3x2: a red subject (opaque, half-transparent edge) on purple background noise with alpha 1-2
+CUTOUT_PNG = rgba_png(3, 2, bytes([169, 57, 212, 1, 200, 30, 30, 255, 125, 78, 201, 2,
+                                   10, 20, 30, 0, 200, 30, 30, 128, 90, 90, 90, 31]))
 GLB = b"glTF" + struct.pack("<II", 2, 12)  # header only: enough to be recognisable, not to be loaded
 MP3 = b"ID3" + bytes(2000)
 CHAT_MODEL = "Qwen/Qwen3-4B-Instruct"
@@ -278,7 +303,8 @@ class Handler(BaseHTTPRequestHandler):
             if st.flags.get("image_warmup", 0) > 0:  # like Qwen-Image just after it reports "running"
                 st.flags["image_warmup"] -= 1
                 return self.send_json(500, {"error": {"message": "xh2a backend fail"}})
-            self.send_json(200, {"created": int(time.time()), "data": [{"b64_json": base64.b64encode(PNG).decode()}]})
+            img = CUTOUT_PNG if st.flags.get("cutout_png") else PNG  # an image model's cut-out: RGBA with faint noise
+            self.send_json(200, {"created": int(time.time()), "data": [{"b64_json": base64.b64encode(img).decode()}]})
         elif method == "POST" and p == "/v1/audio/speech":
             if st.flags.get("speech_text"):
                 self.send_bytes(200, b"not audio at all", "text/plain")
