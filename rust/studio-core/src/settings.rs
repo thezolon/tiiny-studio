@@ -113,6 +113,11 @@ pub fn hostname(url: &str) -> String {
     host.to_ascii_lowercase()
 }
 
+/// Running in the Docker image (its Dockerfile sets STUDIO_DOCKER=1).
+pub fn in_docker() -> bool {
+    std::env::var("STUDIO_DOCKER").is_ok_and(|v| v == "1")
+}
+
 pub fn default_device_name(url: &str) -> String {
     let host = hostname(url);
     if host.starts_with("172.17.") {
@@ -211,7 +216,7 @@ impl Settings {
             "key_set": !key.is_empty(), "key_hint": hint(&key), "configured": !url.is_empty() && !key.is_empty(),
             "source": st.source, "lan_access": self.lan_access, "password": self.password,
             "last_switch": st.last_switch, "version": crate::version(),
-            "swap": st.swap, "helper_model": st.helper_model,
+            "swap": st.swap, "helper_model": st.helper_model, "docker": in_docker(),
             "app": self.app, // the desktop app: no .env to edit, so the UI words the network notes differently
         })
     }

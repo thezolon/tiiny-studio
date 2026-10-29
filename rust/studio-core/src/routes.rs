@@ -293,6 +293,10 @@ async fn device_action(State(state): State<AppState>, Path(action): Path<String>
 /// Try a device address/key (typed or saved) without saving it.
 const NOT_A_TIINY: &str = "This address answers chat requests but has no Tiiny model controls, so it looks like a relay or proxy (for example an OpenAI-compatible gateway). Use your Tiiny's own address and API key from the TiinyOS app.";
 
+/// The USB cable's address is picked from the device's serial in 172.16-172.31; 172.17 is also Docker's default
+/// network, so a studio in Docker can't reach it (docs/CONNECTING.md). Said plainly instead of "unreachable".
+const DOCKER_USB: &str = "This is a USB address in Docker's own network (172.17.x.x), so the studio in Docker can't reach it. Use the Tiiny's Wi-Fi/LAN address, or the desktop app, or move Docker's network (see the connection guide).";
+
 async fn test_settings(State(state): State<AppState>, body: Bytes) -> Json<Value> {
     let req = read_json(&body).unwrap_or(json!({}));
     let cur = state.settings.current();
@@ -331,6 +335,9 @@ async fn test_settings(State(state): State<AppState>, body: Bytes) -> Json<Value
     if code == 401 || code == 403 {
         let msg = if key.is_empty() { "The device needs an API key." } else { "The device rejected the API key." };
         return Json(json!({"ok": false, "message": msg}));
+    }
+    if crate::settings::in_docker() && hostname(&url).starts_with("172.17.") {
+        return Json(json!({"ok": false, "message": DOCKER_USB}));
     }
     let msg = match res.get("error") {
         Some(Value::Object(e)) => e.get("message").and_then(Value::as_str).map(String::from),

@@ -31,6 +31,11 @@ HOST = os.environ.get("HOST", "127.0.0.1")  # native runs stay on this computer 
 LAN_ACCESS = os.environ.get("STUDIO_BIND", HOST) not in ("127.0.0.1", "localhost", "::1")  # optional: ask browsers for a password (any username)
 NOT_A_TIINY = ("This address answers chat requests but has no Tiiny model controls, so it looks like a relay or proxy "
                "(for example an OpenAI-compatible gateway). Use your Tiiny's own address and API key from the TiinyOS app.")
+STUDIO_DOCKER = os.environ.get("STUDIO_DOCKER") == "1"  # the Docker image (its Dockerfile sets it)
+# The USB cable's address is picked from the device's serial in 172.16-172.31; 172.17 is also Docker's default
+# network, so a studio in Docker can't reach it (docs/CONNECTING.md). Said plainly instead of "unreachable".
+DOCKER_USB = ("This is a USB address in Docker's own network (172.17.x.x), so the studio in Docker can't reach it. "
+              "Use the Tiiny's Wi-Fi/LAN address, or the desktop app, or move Docker's network (see the connection guide).")
 FROZEN = getattr(sys, "frozen", False)  # the standalone download (PyInstaller): code and static files unpack to a temp folder
 
 
@@ -146,7 +151,7 @@ class Settings:
                 "active": cur.get("id"), "name": cur.get("name", ""), "url": self.url, "host": self.host, "auto": self.auto,
                 "key_set": bool(self.key), "key_hint": hint(self.key), "configured": self.configured, "source": self.source,
                 "lan_access": LAN_ACCESS, "password": bool(PASSWORD), "last_switch": self.last_switch, "version": VERSION,
-                "swap": self.swap, "helper_model": self.helper_model,
+                "swap": self.swap, "helper_model": self.helper_model, "docker": STUDIO_DOCKER,
                 "app": FROZEN}  # the standalone app: no .env to edit, so the UI words the network notes differently
 
     def _save(self):
@@ -773,6 +778,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_json(200, {"ok": True, "message": f"Connected. {len(names)} model(s) loaded" + (f": {', '.join(names[:4])}" if names else "."), "loaded": names})
         if code in (401, 403):
             return self.send_json(200, {"ok": False, "message": "The device rejected the API key." if key else "The device needs an API key."})
+        if STUDIO_DOCKER and (urlparse(url).hostname or "").startswith("172.17."):
+            return self.send_json(200, {"ok": False, "message": DOCKER_USB})
         msg = (res.get("error") or {}).get("message") if isinstance(res.get("error"), dict) else res.get("error")
         return self.send_json(200, {"ok": False, "message": msg or f"Unexpected response (HTTP {code})."})
 
