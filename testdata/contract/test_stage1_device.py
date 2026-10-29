@@ -51,6 +51,13 @@ class Device(ContractCase):
         self.assertFalse(py.json["ok"])
         self.assertIn("relay or proxy", py.json["message"])
 
+    def test_settings_test_explains_docker_and_usb(self):
+        # in Docker, a 172.17.x.x USB address can't be reached (Docker's own network): say so, not just "unreachable"
+        py, rs = self.post("/api/settings/test", {"url": "http://172.17.0.250", "key": "k"})
+        self.same((py, rs), IGNORE)
+        self.assertIn("Docker's own network", py.json["message"])
+        self.assertTrue(self.get("/api/settings")[0].json["docker"])
+
     def test_models_catalog_plan(self):
         self.same_calls("GET", "/api/models")
         py, _ = self.same_calls("GET", "/api/catalog")

@@ -48,9 +48,9 @@ Two limits apply over USB:
    GLM-OCR doesn't work over the cable either (the gateway can't route it); PP-OCRv6 does.
 2. **Docker may not reach it** on Windows or macOS. The USB address is somewhere in
    `172.16.x.x`–`172.31.x.x` (picked from the device's serial). If yours is `172.17.x.x`, that's also
-   Docker's default internal network, so traffic from containers never reaches the cable. Either run
-   the studio without Docker (see the README: `python server.py`, standard library only), or move
-   Docker's default network: Docker Desktop → Settings → Docker Engine → add
+   Docker's default internal network, so traffic from containers never reaches the cable (the studio
+   says so when you test the connection). Use the Tiiny's Wi-Fi/LAN address, or the desktop app (no
+   Docker), or move Docker's default network: Docker Desktop → Settings → Docker Engine → add
    `"bip": "10.200.0.1/24"` and restart Docker (verified: after this, the studio in Docker reaches
    the Tiiny over USB). That second fix affects every container on the machine.
 

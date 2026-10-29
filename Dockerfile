@@ -14,7 +14,7 @@ COPY --from=build /src/rust/target/release/tiiny-studio-server /usr/local/bin/ti
 COPY LICENSE NOTICE /usr/share/doc/tiiny-studio/
 # Inside the container the server must listen on all interfaces; compose's port binding
 # (STUDIO_BIND, default 127.0.0.1) decides who can actually reach it. Runs as the data folder's owner on Linux.
-ENV PORT=7860 DATA_DIR=/data HOST=0.0.0.0
+ENV PORT=7860 DATA_DIR=/data HOST=0.0.0.0 STUDIO_DOCKER=1
 VOLUME /data
 EXPOSE 7860
 CMD ["tiiny-studio-server"]

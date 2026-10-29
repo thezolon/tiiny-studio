@@ -80,7 +80,7 @@ class Harness:
 
     def _spawn(self, cmd, port, data_dir):
         env = {**os.environ, "PORT": str(port), "DATA_DIR": str(data_dir), "TIINY_URL": self.fake_url, "TIINY_KEY": KEY,
-               "PYTHONUNBUFFERED": "1", "STUDIO_WARMUP_WAIT": "0.2"}
+               "PYTHONUNBUFFERED": "1", "STUDIO_WARMUP_WAIT": "0.2", "STUDIO_DOCKER": "1"}  # as the Docker image sets it
         for k in ("STUDIO_PASSWORD", "STUDIO_BIND", "HOST"):
             env.pop(k, None)
         p = subprocess.Popen(cmd, cwd=ROOT, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
