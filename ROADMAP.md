@@ -15,7 +15,7 @@ Where Tiiny Studio stands, what's next, and what doesn't work yet. Version **0.3
   together. Attached documents are delimited and screened for prompt injection; suspicious ones are flagged.
 - **Audio:** voice cloning with a saved voice library, tempo/key-locked loops, full songs with an 8-second
   preview, MP3 copies, transcription in 30 languages.
-- **3D:** image → shape → simplify → texture → GLB, with a viewer. The subject is cut out first (Qwen-Image), so the
+- **3D** (Hunyuan3D-2.1 or TRELLIS.2-4B): image → shape → simplify → texture → GLB, with a viewer. The subject is cut out first (Qwen-Image), so the
   background doesn't end up in the model.
 - **Gallery, models panel and device:** search and smart search, favourites, zip export, bulk delete; load and
   unload models with the NPU memory budget shown; live device activity; power off.

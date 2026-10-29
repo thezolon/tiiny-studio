@@ -102,7 +102,7 @@ The **device handles one request at a time**; parallel requests to different mod
 | POST | `/v1/audio/transcriptions` | multipart `model, file, language`; json/text only. Resample 48 kHz stereo to 16 kHz mono first | **tested** |
 | POST | `/v1/ocr?model=<id>` | `{"input": data URI, "response_format": "json"}` → `data[0].text` + lines. PP-OCRv6 works; GLM-OCR isn't routed (use its own port's chat API) | **tested** |
 | GET/POST | `/v1/music/info`, `/v1/music/sessions`, `/v1/music/generate[/wav\|/preview\|/resume]`, `/v1/music/sessions/{id}/download?format=mp3` | music (Foundation-1 loops via `/generate/wav` with `{model, prompt, config}`; SongGeneration via `/generate/preview` + `/resume`) | **tested** |
-| GET/POST | `/v1/3d/capabilities`, `/v1/3d/tasks`, `/v1/3d/tasks/{id}`, `/v1/3d/tasks/{id}/cancel` | Hunyuan3D stages: multipart `stage` (shape, simplify, texture, export), `params` JSON, files `image/mesh/material` | **tested** |
+| GET/POST | `/v1/3d/capabilities`, `/v1/3d/tasks`, `/v1/3d/tasks/{id}`, `/v1/3d/tasks/{id}/cancel` | 3D models' stages: multipart `stage` (background, shape, simplify, texture, export), `params` JSON, files. Each model lists its stages, inputs and params at `/v1/3d/capabilities` (`api_schema: image-to-3d/v2`); see the 3D notes below | **tested** (Hunyuan3D-2.1, TRELLIS.2-4B) |
 | — | `/v1/video/*` | reserved by the gateway; no video models yet | — |
 
 ## Inference: Anthropic- and Ollama-compatible
@@ -244,6 +244,20 @@ From Tiiny's docs (**docs**), not tested here.
   route (separate tracks, exact-length songs). The USB /30 is derived from the serial and can land in
   Docker's `172.17.x.x`.
 - Hunyuan3D `background` stage fails (BriefNet missing; still on 0.1.37); SongGeneration style reference fails.
+- **3D models differ; read `/v1/3d/capabilities`** (tested 2026-10-29, TiinyOS 0.1.37). Its `inputs` name what each
+  stage takes: Hunyuan3D-2.1 `simplify: [mesh]`, `texture: [image, mesh]`, `export: [material_artifact, mesh_glb]`;
+  TRELLIS.2-4B `simplify: [shape_artifact]`, `texture: [shape_artifact]`,
+  `export: [geometry_artifact, material_artifact, mesh_glb, shape_artifact]` (required: material, shape). The task
+  form's fields are `image, mesh, material, file, shape_artifact, geometry_artifact`, so `material_artifact` goes in
+  `material` and `mesh_glb` in `mesh`. A stage's output artifact of type `X` is the next stage's `X_artifact`.
+  TRELLIS also lists `stage_specs` (each stage's params and controls; it rejects others) and returns its artifacts
+  **by id, not inline**: fetch them from `GET /v1/3d/tasks/{task}/artifacts/{artifact_id}` (shape ≈ 40 MB zip,
+  geometry/material ≈ 20 MB zips, the final GLB ≈ 7 MB). Its shape and simplify stages also offer a `*_preview` GLB.
+  Timings (mug, draft/fast): shape 200 s, simplify 17 s, texture 98 s, export 43 s. TRELLIS's `background` stage
+  fails like Hunyuan's (BriefNet missing).
+  With two 3D models loaded, `/v1/3d/*` without a model goes to either one: add `?model=<id>` (URL-encoded) to every
+  call (capabilities, tasks, polling, cancel, artifacts). Chained by reference, `input_refs` is a JSON form field:
+  `{"shape_artifact": {"task_id": "…", "artifact_id": "…"}}` (a bare id is refused).
 - Hunyuan3D `shape` reads the alpha channel and treats every pixel that isn't fully transparent as the subject: a
   cut-out whose background has faint alpha (1-2, typical of an image model's output) comes out as a flat card, and
   an opaque picture as a slab. The studio sets alpha < 32 to 0 before sending (tested 2026-10-29).

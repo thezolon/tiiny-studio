@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- **3D works with TRELLIS.2-4B** ([#20](https://github.com/thezolon/tiiny-studio/issues/20)), not only Hunyuan3D. It failed
+  with "simplify: Missing stage input 'shape_artifact'": the studio sent every model Hunyuan3D's input names. It now
+  asks the loaded 3D model which stages, inputs and settings it takes, and fetches the results TRELLIS keeps on the
+  device. A shape-only build with TRELLIS uses its preview model.
+- **3D with two 3D models loaded** builds with the one you picked: the device sent an unnamed request to either one.
+- **A failed or cancelled 3D build leaves no files behind.** It kept its copy of the source picture (and, since 0.3.0,
+  the cut-out) without a gallery entry to delete them by.
+
 ## 0.3.1 (2026-10-29)
 
 Clearer messages found while testing 0.3.0 by hand.
