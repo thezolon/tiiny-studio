@@ -128,7 +128,7 @@ function swapSettings() {
     el("b", {}, "Model swapping"),
     el("p", {}, "When a helper or a chat tool needs a model that isn't loaded, the studio unloads what's in the way, loads it, and puts your models back afterwards. Each swap takes about 30–60 seconds per model. Off: nothing is loaded or unloaded for you; you're asked to load the model instead."),
     el("label", { class: "auto" }, el("input", { type: "checkbox", checked: sw.on !== false, onchange: (e) => set({ swap: { on: e.target.checked } }) }), "Let the studio swap models for me"),
-    el("div", { class: "swap-secs" }, box("chat", "Chat tools (images, speech, loops, songs from a chat)"), box("image", "Image helpers (Improve prompt, Describe)"), box("audio", "Audio helpers (Write lyrics, loop tags)")),
+    el("div", { class: "swap-secs" }, box("chat", "Chat tools (images, speech, loops, songs from a chat)"), box("image", "Image helpers (Improve prompt, Describe)"), box("audio", "Audio helpers (Write lyrics, loop tags)"), box("mesh", "3D (cut out the subject with an image model)")),
     el("label", { class: "field" }, el("div", { class: "label" }, "Helpers use", el("span", { class: "hint" }, "a text model")), pick));
 }
 

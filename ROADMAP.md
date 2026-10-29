@@ -15,7 +15,8 @@ Where Tiiny Studio stands, what's next, and what doesn't work yet. Version **0.2
   together. Attached documents are delimited and screened for prompt injection; suspicious ones are flagged.
 - **Audio:** voice cloning with a saved voice library, tempo/key-locked loops, full songs with an 8-second
   preview, MP3 copies, transcription in 30 languages.
-- **3D:** image → shape → simplify → texture → GLB, with a viewer.
+- **3D:** image → shape → simplify → texture → GLB, with a viewer. The subject is cut out first (Qwen-Image), so the
+  background doesn't end up in the model.
 - **Gallery, models panel and device:** search and smart search, favourites, zip export, bulk delete; load and
   unload models with the NPU memory budget shown; live device activity; power off.
 - **Model swapping:** helpers (Improve prompt, Describe, Write lyrics, loop tags) and chat tools load the model they
@@ -37,8 +38,6 @@ Known limits).
 
 Ideas and requests are welcome as [feature requests](https://github.com/thezolon/tiiny-studio/issues/new/choose).
 
-- **3D: cut out the subject before building**, so the background doesn't end up in the model
-  ([#6](https://github.com/thezolon/tiiny-studio/issues/6)).
 - **Faster cancel for image and audio jobs** once TiinyOS offers an interrupt for them (asked for).
 - **Hands-on checks of the macOS, Linux and Windows ARM apps and the arm64 Docker image** (built by CI, see Known
   limits).

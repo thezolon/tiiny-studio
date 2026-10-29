@@ -6,8 +6,30 @@ const PRECISIONS = [["draft", "Draft", 1], ["standard", "Standard", 1.75], ["hig
 const QUALITIES = [["fast", "Fast", 0.75], ["balance", "Balanced", 1], ["quality", "Best", 1.5]];
 const FACES = [[0, "Full"], [100000, "100k"], [40000, "40k"], [10000, "10k"]];
 const M = { clip: null, precision: store.get("mesh.precision", "draft"), quality: store.get("mesh.quality", "balance"),
-  texture: store.get("mesh.texture", true), faces: store.get("mesh.faces", 40000), seed: "", view: null };
+  texture: store.get("mesh.texture", true), faces: store.get("mesh.faces", 40000), cutout: store.get("mesh.cutout", true), seed: "", view: null };
 let viewerLoaded = false;
+/** An image model that can put a subject on a transparent background (Qwen-Image), loaded ones first. */
+const cutoutModel = () => (S.allModels || []).filter((m) => caps(m).edit && caps(m).transparent).sort((a, b) => (a.status === "running" ? 0 : 1) - (b.status === "running" ? 0 : 1))[0] || null;
+/** Marks a picture whose background is already transparent (some pixels see-through), so it isn't cut out again. */
+async function withTransparency(img) {
+  if (!/^data:image\/(png|webp)/.test(img.uri)) return img;
+  const pic = new Image(); pic.src = img.uri; await pic.decode();
+  const k = Math.min(1, 256 / Math.max(img.w, img.h)), w = Math.max(1, Math.round(img.w * k)), h = Math.max(1, Math.round(img.h * k));
+  const c = Object.assign(document.createElement("canvas"), { width: w, height: h }), g = c.getContext("2d");
+  g.drawImage(pic, 0, 0, w, h);
+  const a = g.getImageData(0, 0, w, h).data;
+  let clear = 0;
+  for (let i = 3; i < a.length; i += 4) if (a[i] < 16) clear++;
+  return Object.assign(img, { transparent: clear > (w * h) / 20 });  // over 5% see-through
+}
+/** The cut-out keeps the source's shape (Hunyuan3D would build a stretched subject) at about 512 px, which is all Hunyuan3D
+    uses and keeps it quick (~1.5 min; 1024 px took ~5 min): the model's closest verified size, else multiples of 64. */
+function cutoutSize(m, w, h) {
+  const list = modelSizeList(m), r = w / h, off = (s) => Math.abs(Math.log(s[0] / s[1] / r)) * 100 + Math.abs(Math.max(...s) - 512) / 1e4;
+  if (list) return list.reduce((b, s) => (off(s) < off(b) ? s : b)).join("x");
+  const k = 512 / Math.max(w, h), r64 = (v) => Math.max(256, Math.round((v * k) / 64) * 64);
+  return `${r64(w)}x${r64(h)}`;
+}
 
 const MeshWS = {
   mounted: false,
@@ -40,16 +62,19 @@ const MeshWS = {
     $("#mGate").replaceChildren(...(g ? [g] : []));
     this.renderFoot();
   },
-  plan() { return ["shape", ...(M.faces ? ["simplify"] : []), ...(M.texture ? ["texture", "export"] : [])]; },
+  cuts() { return M.cutout && !!cutoutModel() && !M.clip?.transparent; },
+  plan() { return [...(this.cuts() ? ["cutout"] : []), "shape", ...(M.faces ? ["simplify"] : []), ...(M.texture ? ["texture", "export"] : [])]; },
   estimate() {
     const pm = PRECISIONS.find((p) => p[0] === M.precision)[2], qm = QUALITIES.find((q) => q[0] === M.quality)[2];
-    return 205 * pm * qm + (M.faces ? 6 : 0) + (M.texture ? 230 * qm + 60 : 0);
+    const cm = this.cuts() && cutoutModel(), cut = cm ? 85 + (cm.status === "running" ? 0 : 2 * (cm.load_time || 30)) : 0;
+    return cut + 205 * pm * qm + (M.faces ? 6 : 0) + (M.texture ? 230 * qm + 60 : 0);
   },
   renderFoot() {
-    const m = modelForTool("mesh"), ready = m?.status === "running";
-    $("#mGo").disabled = !ready || !M.clip;
+    const m = modelForTool("mesh"), ready = m?.status === "running", cm = cutoutModel();
+    const cutBlocked = this.cuts() && cm.status !== "running" && !swapOn("mesh");  // the server would refuse
+    $("#mGo").disabled = !ready || !M.clip || cutBlocked;
     $("#mEst").textContent = M.clip ? "~" + fmtSec(this.estimate()) : "";
-    $("#mMeta").textContent = m ? shortName(m.id) + (ready ? "" : " · not loaded") : "";
+    $("#mMeta").textContent = m ? shortName(m.id) + (ready ? "" : " · not loaded") + (cutBlocked ? ` · ${shortName(cm.id)} not loaded` : "") : "";
     $("#mSteps").textContent = this.plan().join(" → ");
   },
   panel() {
@@ -66,8 +91,7 @@ const MeshWS = {
       el("div", { class: "field", style: "margin-top:0" }, el("div", { class: "label" }, "Source image"), src),
       recent.length ? el("div", { class: "field" }, el("div", { class: "label" }, "From your images"),
         el("div", { class: "pick-row" }, recent.map((e) => el("button", { class: "pick", title: e.params.prompt, onclick: () => this.fromImage("/images/" + e.outputs[0]) }, el("img", { src: "/images/" + e.outputs[0], alt: "", loading: "lazy" }))))) : null,
-      el("div", { class: "hint-line" }, "Tip: in Image, turn on “Transparent background” (Qwen-Image) to cut the object out first.",
-        el("a", { href: "#", style: "margin-left:6px;color:var(--accent-2)", onclick: (e) => { e.preventDefault(); setWs("image"); } }, "Open Image")),
+      this.cutoutSwitch(rerender),
       el("div", { class: "field" }, el("div", { class: "label" }, "Geometry detail", el("span", { class: "hint" }, "octree 192 / 288 / 384")), seg(PRECISIONS, M.precision, (v) => { M.precision = v; }, "mesh.precision")),
       el("div", { class: "field" }, el("div", { class: "label" }, "Sampling quality"), seg(QUALITIES, M.quality, (v) => { M.quality = v; }, "mesh.quality")),
       el("div", { class: "field" }, el("div", { class: "label" }, "Polygon budget", el("span", { class: "hint" }, "simplify before texturing")), seg(FACES, M.faces, (v) => { M.faces = v; }, "mesh.faces")),
@@ -78,15 +102,24 @@ const MeshWS = {
         el("div", { class: "adv-body" }, AudioWS.seedField(M))),
     ];
   },
+  cutoutSwitch(rerender) {
+    const cm = cutoutModel();
+    const why = !cm ? "Needs an image model that makes transparent pictures (Qwen-Image)."
+      : M.clip?.transparent ? "This picture already has a transparent background, so it's used as it is."
+      : `${shortName(cm.id)} puts the subject on a transparent background first, so the background doesn't end up in the model · adds ~1.5 min`
+        + (cm.status === "running" ? "" : swapOn("mesh") ? ", plus loading it (models are swapped back after)" : `. Load ${shortName(cm.id)} first, or turn on 3D in Settings → Model swapping.`);
+    return el("label", { class: "switch-row" }, el("input", { type: "checkbox", checked: M.cutout && !!cm, disabled: !cm, onchange: (e) => { M.cutout = e.target.checked; store.set("mesh.cutout", M.cutout); rerender(); } }),
+      el("span", {}, el("b", {}, "Cut out the subject first"), el("small", {}, why)));
+  },
   files(files) {
     const f = files.find((x) => x.type.startsWith("image/"));
     if (!f) return false;
-    readImage(f).then((img) => { M.clip = img; this.render(); }).catch((e) => toast(e.message, "err"));
+    readImage(f).then(withTransparency).then((img) => { M.clip = img; this.render(); }).catch((e) => toast(e.message, "err"));
     return "3D source image";
   },
   async fromImage(url) {
     const blob = await (await fetch(url)).blob();
-    M.clip = await readImage(new File([blob], url.split("/").pop(), { type: blob.type }));
+    M.clip = await withTransparency(await readImage(new File([blob], url.split("/").pop(), { type: blob.type })));
     if (S.ws !== "mesh") setWs("mesh"); else this.render();
     toast("Loaded — pick your options and hit Make 3D model");
   },
@@ -94,6 +127,7 @@ const MeshWS = {
     if ($("#mGo").disabled) return;
     const body = { image: M.clip.uri, output_precision: M.precision, inference_quality: M.quality, texture: M.texture, est: this.estimate() };
     if (M.faces) body.faces = M.faces;
+    if (this.cuts()) { const cm = cutoutModel(); Object.assign(body, { cutout: true, cutout_model: cm.id, cutout_size: cutoutSize(cm, M.clip.w, M.clip.h) }); }
     if (/^\d+$/.test(M.seed)) body.seed = Number(M.seed);
     try {
       const j = await submitJob("mesh", body, `3D: ${M.clip.name || "image"}`);
@@ -139,10 +173,11 @@ const MeshWS = {
     const stats = (e.stages || []).map((s) => s.metadata).filter(Boolean);
     const faces = stats.find((s) => s.output_faces)?.output_faces;
     stage.append(el("div", { class: "mesh-result" },
-      el("div", { class: "viewer-wrap" }, viewer, e.sources[0] ? el("img", { class: "viewer-src", src: "/images/" + e.sources[0], alt: "source", title: "Source image" }) : null),
+      el("div", { class: "viewer-wrap" }, viewer, e.sources[0] ? el("img", { class: "viewer-src", src: "/images/" + (e.sources[1] || e.sources[0]), alt: "source", title: e.sources[1] ? "The cut-out the model was built from" : "Source image" }) : null),
       el("div", { class: "meta-line" },
         el("span", {}, el("b", {}, shortName(p.model || ""))),
         el("span", {}, p.texture ? "PBR textured" : "shape only"),
+        p.cutout ? el("span", {}, `cut out by ${shortName(p.cutout)}`) : null,
         p.output_precision ? el("span", {}, p.output_precision + " detail") : null,
         faces ? el("span", {}, `${(faces / 1000).toFixed(0)}k faces`) : null,
         el("span", {}, `made in ${fmtSec(e.seconds)}`),
@@ -151,7 +186,7 @@ const MeshWS = {
   renderPending(head, stage, j) {
     const plan = M.view.plan || ["shape", "simplify", "texture", "export"];
     const t = j.started ? Date.now() / 1000 - j.started : 0;
-    const names = { background: "Background", shape: "Shape", simplify: "Simplify", texture: "Texture", export: "Export" };
+    const names = { cutout: "Cut out", background: "Background", shape: "Shape", simplify: "Simplify", texture: "Texture", export: "Export" };
     const cur = plan.indexOf(j.stage || plan[0]);
     head.replaceChildren(el("div", { class: "crumb" }, el("b", {}, j.status === "queued" ? "Queued" : "Building 3D model"), " · " + (j.label || "")));
     const box = stage.querySelector(".mesh-pending") || (() => { stage.replaceChildren(); const b = el("div", { class: "pending mesh-pending" }); stage.append(b); return b; })();

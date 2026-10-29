@@ -41,11 +41,11 @@ Showcase and discussion: [Tiiny Studio on TiinyVerse](https://tiinyverse.com/pos
   voiced in parts and joined); tempo- and key-locked loops; full songs with lyrics, instrumental,
   vocals only or separate tracks, with an 8-second preview you can continue to the full song and an
   MP3 copy; transcription in 30 languages.
-- **3D**: image → shape → simplify → PBR texture → GLB, with an interactive viewer. Cut the subject out first
-  (Image → Edit, or Qwen-Image with a transparent background): Hunyuan3D builds the background too, as the
-  floating shards around the dog above show.
-- **Helpers** (when a chat model is loaded): improve a prompt, describe an image, write lyrics,
-  suggest loop tags.
+- **3D**: image → shape → simplify → PBR texture → GLB, with an interactive viewer. **Cut out the subject
+  first** (on by default): Qwen-Image puts the subject on a transparent background before the shape is built,
+  since Hunyuan3D otherwise builds the background too, as the floating shards around the dog above show.
+- **Helpers**: improve a prompt, describe an image, write lyrics, suggest loop tags. The studio loads the chat
+  model they need and puts your models back afterwards (Settings → Model swapping).
 - **Gallery** (every workspace): search, smart search by meaning (the device's embedding model;
   vectors kept in memory only), ★ favorites, select several to delete or download as a zip.
 - **Power off** the Tiiny from Settings (the same call the TiinyOS app makes).
@@ -209,7 +209,7 @@ Gateway on port 80, `Authorization: Bearer <API key>`:
 | `POST /v1/chat/completions` | OpenAI format; images as `image_url` data URIs for models whose `input` includes `Image`. Disable thinking with `chat_template_kwargs: {"enable_thinking": false}` (gpt-oss rejects it; use `reasoning_effort`). |
 | `POST /v1/audio/speech` | Voice clone: `model`, `input`, `ref_audio` (base64 WAV), `ref_text` (both required), `language`, `instruct`, `response_format` `wav`/`pcm`/`mp3`. The Base model only clones. |
 | `POST /v1/audio/transcriptions` | Multipart `model`, `file`, `language`; `json`/`text` only. Returns nothing for 48 kHz stereo song mixes, so the studio resamples to 16 kHz mono. |
-| `/v1/3d/*` | Proxy to Hunyuan3D: `/v1/3d/tasks` → its `/v1/tasks`. Multipart `stage` (`shape`, `simplify`, `texture`, `export`), `params` (JSON), files `image`/`mesh`/`material`; poll `GET /v1/3d/tasks/{id}`; cancel `POST …/cancel`. Shape ≈ 205 s (draft), texture ≈ 230 s, export ≈ 60 s. The `background` stage fails on the device (its BriefNet model is missing). |
+| `/v1/3d/*` | Proxy to Hunyuan3D: `/v1/3d/tasks` → its `/v1/tasks`. Multipart `stage` (`shape`, `simplify`, `texture`, `export`), `params` (JSON), files `image`/`mesh`/`material`; poll `GET /v1/3d/tasks/{id}`; cancel `POST …/cancel`. Shape ≈ 205 s (draft), texture ≈ 230 s, export ≈ 60 s. The `background` stage fails on the device (its BriefNet model is missing, still on TiinyOS 0.1.37). `shape` treats every pixel that isn't fully transparent as the subject. |
 | `GET /api/v1/models/?including_downloading=false` | Installed models: `status`, `type`, `input`, `supported`, `npu_usage` (% of NPU), `load_time`, `desc`. |
 | `GET /api/v1/models/running` | Running instances with each container's `port`. |
 | `GET /api/v1/models/{id}/unload_candidate` | Whether there's room for a model, and what to unload if not. |
@@ -237,7 +237,8 @@ phone or tablet. Browsers only paste images that way, so for audio use `Ctrl+V`,
 
 ## Known device issues (TiinyOS 0.1.35)
 
-- Hunyuan3D's `background` stage fails (its BriefNet model is missing), so cut the subject out first.
+- Hunyuan3D's `background` stage fails (its BriefNet model is missing), so the studio cuts the subject out with
+  Qwen-Image first.
   The studio doesn't offer the stage.
 - SongGeneration's style reference (`reference_audio_base64`) fails with `xh2a backend fail`, so the
   control is hidden (`SONG_STYLE_REF` in `static/audio.js`).

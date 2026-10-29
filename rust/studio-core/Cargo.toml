@@ -22,7 +22,8 @@ roxmltree = "0.20"
 fancy-regex = "0.14"
 encoding_rs = "0.8"
 arboard = { version = "3", default-features = false, features = ["image-data"], optional = true }
-png = { version = "0.17", optional = true }
+png = "0.17"
+crc32fast = "1"
 
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }
@@ -30,4 +31,4 @@ http-body-util = "0.1"
 
 [features]
 # the desktop app reads pictures from the system clipboard for the Paste buttons (WebView2 blocks the page from it)
-clipboard = ["dep:arboard", "dep:png"]
+clipboard = ["dep:arboard"]

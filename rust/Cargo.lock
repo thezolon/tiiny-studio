@@ -3984,6 +3984,7 @@ dependencies = [
  "axum",
  "base64 0.22.1",
  "chrono",
+ "crc32fast",
  "encoding_rs",
  "fancy-regex",
  "http-body-util",
