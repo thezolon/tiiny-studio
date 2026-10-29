@@ -5,6 +5,8 @@ Linux, or a small server for your home network (Docker). It drives the models on
 loops and full songs, transcribe audio, and turn pictures into textured 3D models. Nothing leaves
 your network.
 
+Showcase and discussion: [Tiiny Studio on TiinyVerse](https://tiinyverse.com/posts/5abfe45c-3cf0-4f53-88ab-b397741702c3).
+
 | | |
 |---|---|
 | ![Image: an edit made on the Tiiny, with the toolbar to edit, vary, compare or make it 3D](docs/screenshots/image.webp) | ![3D: the finished textured model in the viewer](docs/screenshots/3d-model.webp) |
