@@ -130,7 +130,7 @@ jobs:
           cd dist && sha256sum * > SHA256SUMS.txt && cd ..
           v=$(cat VERSION)
           awk -v v="## $v" '$0 ~ "^## " { on = index($0, v) == 1 } on' CHANGELOG.md > notes.md
-          printf '\n---\n\nShowcase and discussion: [Tiiny Studio on TiinyVerse](https://tiinyverse.com/posts/5abfe45c-3cf0-4f53-88ab-b397741702c3)\n' >> notes.md
+          printf '\n---\n\nShowcase and discussion: [Tiiny Studio on TiinyVerse](https://tiinyverse.com/posts/5abfe45c-3cf0-4f53-88ab-b397741702c3) · [Tiiny Discord](https://discord.com/invite/R5CHUuXy4A) (#project-showcase → Tiiny Studio)\n' >> notes.md
       - uses: softprops/action-gh-release@v3
         with:
           name: Tiiny Studio ${{ github.ref_name }}

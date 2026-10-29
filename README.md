@@ -1,11 +1,12 @@
 # Tiiny Studio
 
-A local media studio for the **Tiiny Pocket** edge AI device: a desktop app for Windows, macOS and
-Linux, or a small server for your home network (Docker). It drives the models on your Tiiny over your own network: create and edit images, clone voices, make music
+A local media studio for the **[Tiiny Pocket](https://tiiny.ai)**, a pocket-sized device that runs AI models on
+its own NPU. Tiiny Studio comes as a desktop app for Windows, macOS and Linux, or a small server for your home
+network (Docker). It drives the models on your Tiiny over your own network: create and edit images, clone voices, make music
 loops and full songs, transcribe audio, and turn pictures into textured 3D models. Nothing leaves
 your network.
 
-Showcase and discussion: [Tiiny Studio on TiinyVerse](https://tiinyverse.com/posts/5abfe45c-3cf0-4f53-88ab-b397741702c3).
+Showcase and discussion: [Tiiny Studio on TiinyVerse](https://tiinyverse.com/posts/5abfe45c-3cf0-4f53-88ab-b397741702c3) · [Tiiny Discord](https://discord.com/invite/R5CHUuXy4A) (#project-showcase → Tiiny Studio).
 
 | | |
 |---|---|
