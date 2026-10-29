@@ -196,7 +196,7 @@ Everything the studio saves stays on your machine: results, prompts, sources and
 | `tools/api_snapshot.py` | snapshots the device's API specs into `docs/api/` and lists what changed after an update |
 | `tools/release.py` | builds `dist/tiiny-studio-<version>.zip` from the committed tree (`--tag` also tags it) |
 
-## Device APIs (TiinyOS 0.1.35, found by probing)
+## Device APIs (TiinyOS 0.1.35 to 0.1.37, found by probing)
 
 The full reference (every service, port and endpoint, marked tested/spec/docs) is in
 [docs/DEVICE-API.md](docs/DEVICE-API.md); `tools/api_snapshot.py` rechecks it after a TiinyOS update.
@@ -210,7 +210,7 @@ Gateway on port 80, `Authorization: Bearer <API key>`:
 | `POST /v1/chat/completions` | OpenAI format; images as `image_url` data URIs for models whose `input` includes `Image`. Disable thinking with `chat_template_kwargs: {"enable_thinking": false}` (gpt-oss rejects it; use `reasoning_effort`). |
 | `POST /v1/audio/speech` | Voice clone: `model`, `input`, `ref_audio` (base64 WAV), `ref_text` (both required), `language`, `instruct`, `response_format` `wav`/`pcm`/`mp3`. The Base model only clones. |
 | `POST /v1/audio/transcriptions` | Multipart `model`, `file`, `language`; `json`/`text` only. Returns nothing for 48 kHz stereo song mixes, so the studio resamples to 16 kHz mono. |
-| `/v1/3d/*` | Proxy to Hunyuan3D: `/v1/3d/tasks` → its `/v1/tasks`. Multipart `stage` (`shape`, `simplify`, `texture`, `export`), `params` (JSON), files `image`/`mesh`/`material`; poll `GET /v1/3d/tasks/{id}`; cancel `POST …/cancel`. Shape ≈ 205 s (draft), texture ≈ 230 s, export ≈ 60 s. The `background` stage fails on the device (its BriefNet model is missing, still on TiinyOS 0.1.37). `shape` treats every pixel that isn't fully transparent as the subject. |
+| `/v1/3d/*?model=<id>` | Proxy to the 3D model's container (`/v1/3d/tasks` → its `/v1/tasks`). Name the model on every call: with two 3D models loaded, an unnamed call goes to either. Each model lists its stages, inputs and params at `/v1/3d/capabilities`; Hunyuan3D-2.1 chains `mesh`, TRELLIS.2-4B chains `shape_artifact` and `geometry_artifact`. Multipart `stage`, `params` (JSON), files (`material_artifact` goes in `material`, `mesh_glb` in `mesh`), or `input_refs` to point at artifacts the device keeps (TRELLIS; they're too big to send back: 200 MB request limit). Poll `GET /v1/3d/tasks/{id}`; TRELLIS returns artifacts by id (`GET …/tasks/{id}/artifacts/{artifact_id}`); cancel `POST …/cancel`. Hunyuan3D (draft): shape ≈ 205 s, texture ≈ 230 s, export ≈ 60 s. TRELLIS.2 (draft, fast): shape ≈ 200 s, simplify ≈ 17 s, texture ≈ 100 s, export ≈ 45 s. |
 | `GET /api/v1/models/?including_downloading=false` | Installed models: `status`, `type`, `input`, `supported`, `npu_usage` (% of NPU), `load_time`, `desc`. |
 | `GET /api/v1/models/running` | Running instances with each container's `port`. |
 | `GET /api/v1/models/{id}/unload_candidate` | Whether there's room for a model, and what to unload if not. |
@@ -236,11 +236,12 @@ ports (from `running`; no auth; not exposed over USB):
 main slot, and a toast says where it landed. Image drop zones also have a **Paste** button, handy on a
 phone or tablet. Browsers only paste images that way, so for audio use `Ctrl+V`, drag-and-drop or Browse.
 
-## Known device issues (TiinyOS 0.1.35)
+## Known device issues (TiinyOS 0.1.35 to 0.1.37)
 
-- Hunyuan3D's `background` stage fails (its BriefNet model is missing), so the studio cuts the subject out with
-  Qwen-Image first.
-  The studio doesn't offer the stage.
+- The 3D models' `background` stage fails (BriefNet is missing; Hunyuan3D and TRELLIS.2 alike), so the studio cuts
+  the subject out with Qwen-Image first and doesn't offer the stage.
+- GLM-OCR isn't reachable through the gateway (`/v1/ocr` 404, chat 400), so the studio uses its own port, which
+  only works over Wi-Fi/LAN; PP-OCRv6 works on every link.
 - SongGeneration's style reference (`reference_audio_base64`) fails with `xh2a backend fail`, so the
   control is hidden (`SONG_STYLE_REF` in `static/audio.js`).
 - There's no video generation yet: the import system has no video toolkit (Wan2.1 and LTX-Video
