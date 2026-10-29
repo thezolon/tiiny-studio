@@ -1,0 +1,44 @@
+name: Feature request
+description: An idea for something Tiiny Studio should do
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks! Check the [roadmap](https://github.com/thezolon/tiiny-studio/blob/main/ROADMAP.md) and open issues
+        first; if it's already there, a 👍 on that issue helps more than a new one.
+  - type: textarea
+    id: idea
+    attributes:
+      label: What would you like the studio to do?
+      description: Describe it the way you'd use it.
+      placeholder: "e.g. When I press Improve prompt with only an image model loaded, swap in a text model and back."
+    validations:
+      required: true
+  - type: textarea
+    id: why
+    attributes:
+      label: Why? What does it make easier?
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Which part of the studio?
+      options:
+        - Image (create, edit, Text mode)
+        - Audio (voice, loops, songs, transcription)
+        - 3D
+        - Chat
+        - Models panel / device
+        - Gallery / library
+        - Desktop app / installers
+        - Docker / server
+        - Something else
+    validations:
+      required: true
+  - type: textarea
+    id: more
+    attributes:
+      label: Anything else?
+      description: Mock-ups, examples from other apps, or which Tiiny models it involves.

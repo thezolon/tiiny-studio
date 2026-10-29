@@ -32,6 +32,13 @@ Known limits).
 
 ## Planned
 
+Ideas and requests are welcome as [feature requests](https://github.com/thezolon/tiiny-studio/issues/new/choose).
+
+- **Helpers swap models automatically** (Improve prompt, Describe, Write lyrics…), with a global "let the studio swap
+  models for me" switch and one per section, all on by default
+  ([#5](https://github.com/thezolon/tiiny-studio/issues/5)).
+- **3D: cut out the subject before building**, so the background doesn't end up in the model
+  ([#6](https://github.com/thezolon/tiiny-studio/issues/6)).
 - **Faster cancel for image and audio jobs** once TiinyOS offers an interrupt for them (asked for).
 - **Hands-on checks of the macOS, Linux and Windows ARM apps and the arm64 Docker image** (built by CI, see Known
   limits).
