@@ -399,7 +399,8 @@ WARMUP_WAIT = float(os.environ.get("STUDIO_WARMUP_WAIT", "10"))  # seconds betwe
 
 
 def run_image(m, job, req):
-    """Create (or, with source images, edit) through the gateway's /v1/images/generations."""
+    """Create (or, with source images, edit) through the gateway's /v1/images/generations. With mode "refs" the
+    images are only references for a new picture (Qwen-Image composes freely from them, at any size)."""
     body = {k: req[k] for k in IMAGE_FIELDS if req.get(k) not in (None, "")}
     body["response_format"] = "b64_json"
     sources = [s for s in (req.get("images") or []) if isinstance(s, str)]
@@ -407,6 +408,7 @@ def run_image(m, job, req):
         body["image"] = sources[0]
     elif sources:
         body["images"] = sources  # several references (Qwen-Image takes up to 10) go in "images", an array
+    refs = bool(sources) and req.get("mode") == "refs"
     # The device only makes one image per request ("batch_size other than 1 is not supported"), so several
     # images are separate requests with consecutive seeds, grouped into one result.
     count = max(1, min(4, int(body.pop("n", 1) or 1)))
@@ -416,7 +418,7 @@ def run_image(m, job, req):
     for i in range(count):
         if job["cancel"]:
             raise JobError("Cancelled")
-        verb = "Editing" if sources else "Generating"
+        verb = "Composing" if refs else "Editing" if sources else "Generating"
         job["message"] = verb if count == 1 else f"{verb} image {i + 1} of {count}"
         job["progress"] = round(i / count * 100) if count > 1 else 0
         if seed0 is not None:
@@ -441,7 +443,7 @@ def run_image(m, job, req):
         ctype, data = m.decode_uri(uri)
         src_names.append(m.save(f"{job['id']}-src{i}.{ {'image/jpeg': 'jpg', 'image/webp': 'webp'}.get(ctype, 'png') }", data))
     outputs = [m.save(f"{job['id']}-{i}.png", base64.b64decode(d["b64_json"])) for i, d in enumerate(res["data"]) if d.get("b64_json")]
-    return {"kind": "image", "mode": "edit" if sources else "create",
+    return {"kind": "image", "mode": "refs" if refs else "edit" if sources else "create",
             "params": {k: v for k, v in body.items() if k not in ("image", "response_format")},
             "sources": src_names, "outputs": outputs}
 

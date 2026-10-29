@@ -7,7 +7,7 @@ Where Tiiny Studio stands, what's next, and what doesn't work yet. Version **0.2
 
 - **Two ways to run it, one codebase (Rust):** a desktop app for Windows, macOS and Linux (x64 and ARM), and a small server in
   Docker (amd64 + arm64) for a home server, used from any browser on your network.
-- **Image:** create and edit (plain-language instructions, circled areas, up to 10 references), transparent
+- **Image:** create (from a prompt, or a new picture from up to 10 reference pictures) and edit (plain-language instructions, circled areas, up to 10 references), transparent
   PNGs, before/after, ×4 variations; **Text** mode reads pictures, scans and documents (PDF, Office,
   OpenDocument, EPUB, RTF, HTML, plain text) with PP-OCRv6 or GLM-OCR, as plain text or Markdown.
 - **Chat:** streaming replies, thinking view, pictures and documents as attachments, speech input, and tools

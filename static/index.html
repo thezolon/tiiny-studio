@@ -521,7 +521,7 @@ details.adv summary .sum { margin-left: auto; color: var(--faint); font-weight: 
         <div class="model-hint" id="modelHint"></div>
 
         <div class="field" id="sourceField" hidden>
-          <div class="label">Source image <span class="hint" id="srcHint">drop, paste, or pick from gallery</span></div>
+          <div class="label"><span id="srcTitle">Source image</span> <span class="hint" id="srcHint">drop, paste, or pick from gallery</span></div>
           <div class="sources" id="sources"></div>
           <input type="file" id="fileInput" accept="image/png,image/jpeg,image/webp" multiple hidden>
         </div>
@@ -874,7 +874,7 @@ function readImage(file, max = 1536) {
     fr.readAsDataURL(file);
   });
 }
-async function addFiles(files) {
+async function addFiles(files, here = false) {  // here: dropped on the picture tray itself, not the page
   if (S.mode === "text" && files.length) {  // read right away: a picture (kept large so small print survives) or a document
     const f = files[0];
     if (!browserImage(f)) { S.sources = []; S.textDoc = f; renderComposer(); return readDocument(f); }
@@ -883,15 +883,17 @@ async function addFiles(files) {
   }
   const list = [...files].filter((f) => /^image\//.test(f.type));
   if (!list.length) return;
+  if (S.mode === "create" && !(here && caps(modelById(S.model)).edit)) setMode("edit");  // dropped on the page: edit it
   for (const f of list) {
     const max = Math.max(1, caps(modelById(S.model)).maxRefs);
     if (S.sources.length >= max) { toast(max === 1 ? "This model takes one source image" : `Up to ${max} images for this model`); break; }
     try { S.sources.push(await readImage(f)); } catch (e) { toast(e.message, "err"); }
   }
-  setMode("edit");
+  if (S.mode === "create") renderComposer(); else setMode("edit");
 }
 async function useAsSource(url) {
   const blob = await (await fetch(url)).blob();
+  setMode("edit");
   S.sources = [await readImage(new File([blob], url.split("/").pop(), { type: blob.type }))];
   if (S.aspect !== "src") { S.prevAspect = S.aspect; }
   S.aspect = "src";
@@ -902,6 +904,8 @@ async function useAsSource(url) {
 
 /* ---------- composer render ---------- */
 function setMode(m) {
+  // Create keeps its own pictures (references for a new image), apart from Edit's and Text's source
+  if ((m === "create") !== (S.mode === "create")) [S.sources, S.otherSources] = [S.otherSources || [], S.sources];
   S.mode = m;
   if (m === "create" && S.aspect === "src") S.aspect = S.prevAspect || "1:1";
   if (m === "edit" && S.sources.length && S.aspect !== "src" && !S.userPickedAspect) S.aspect = "src";
@@ -913,35 +917,37 @@ function renderComposer() {
   const ocrOn = typeof ocrModels === "function" && ocrModels().length > 0;
   if (S.mode === "text" && !ocrOn) S.mode = "create";
   const edit = S.mode === "edit", text = S.mode === "text";
+  const C = caps(modelById(S.model)), refs = S.mode === "create" && C.edit;  // Create takes reference pictures
   $("#modeText").hidden = !ocrOn;
   $("#modeText").setAttribute("aria-pressed", text);
   $(".composer").classList.toggle("ocr-mode", text);
   $("#modeCreate").setAttribute("aria-pressed", !edit);
   $("#modeEdit").setAttribute("aria-pressed", edit);
-  $("#sourceField").hidden = !edit && !text;
+  $("#sourceField").hidden = !edit && !text && !refs;
+  $("#srcTitle").textContent = refs ? "References" : "Source image";
   $("#promptLabel").textContent = edit ? "Describe the change" : "Describe the image";
-  $("#prompt").placeholder = edit ? "Change the background to a sunny beach, keep the subject exactly the same" : "A watercolor fox in a misty pine forest, soft morning light";
+  $("#prompt").placeholder = edit ? "Change the background to a sunny beach, keep the subject exactly the same"
+    : refs && S.sources.length ? "A new scene: the mug from image 1 on a café table, golden hour" : "A watercolor fox in a misty pine forest, soft morning light";
 
   // sources
   const box = $("#sources");
   box.replaceChildren(...S.sources.map((s, i) => el("div", { class: "src" },
     el("img", { src: s.uri, alt: "" }),
-    el("span", { class: "tag" }, text ? "TEXT" : (i === 0 ? "SOURCE" : "REF " + i) + (s.orig ? " · MARKED" : "")),
-    !text && caps(modelById(S.model)).annotate ? el("button", { class: "mark", title: "Circle or paint the area to change", onclick: () => openAnnot(i) }, s.orig ? "Re-mark" : "Mark area") : null,
+    el("span", { class: "tag" }, text ? "TEXT" : !edit ? "IMAGE " + (i + 1) : (i === 0 ? "SOURCE" : "REF " + i) + (s.orig ? " · MARKED" : "")),
+    edit && C.annotate ? el("button", { class: "mark", title: "Circle or paint the area to change", onclick: () => openAnnot(i) }, s.orig ? "Re-mark" : "Mark area") : null,
     el("button", { class: "x", title: "Remove", onclick: () => { S.sources.splice(i, 1); if (!S.sources.length && S.aspect === "src") S.aspect = S.prevAspect || "1:1"; renderComposer(); } }, "✕"))));
   if (text && S.textDoc) box.append(el("div", { class: "src doc", title: S.textDoc.name },
     el("b", {}, (S.textDoc.name.match(/\.(\w{1,5})$/)?.[1] || "file").toUpperCase()), el("small", {}, S.textDoc.name),
     el("button", { class: "x", title: "Remove", onclick: () => { S.textDoc = null; renderComposer(); } }, "✕")));
   if (!text) S.textDoc = null;
   $("#fileInput").accept = text ? DOC_ACCEPT : "image/png,image/jpeg,image/webp";
-  const drop = el("button", { class: "drop" + (S.sources.length ? " compact" : ""), onclick: () => $("#fileInput").click() },
+  const drop = el("button", { class: "drop" + (S.sources.length || refs ? " compact" : ""), onclick: () => $("#fileInput").click() },
     icon("i-upload"),
     text ? el("span", {}, el("b", {}, "Drop, paste (Ctrl+V) or browse a picture or document"), "Photos, scans, screenshots, PDF, TIFF, Word, PowerPoint, Excel, OpenDocument, EPUB, RTF, HTML or text. Read right away, never saved.")
-      : S.sources.length ? el("span", {}, "Add ref") : el("span", {}, el("b", {}, "Drop, paste (Ctrl+V) or click to browse"), "PNG · JPG · WebP — or pick one from the gallery below"));
-  fileZone(drop, { key: "img-src", accept: { test: (t) => S.mode === "text" || /^image\//.test(t) }, what: "image", label: srcLabel, take: addFiles });
-  const C = caps(modelById(S.model));
+      : refs ? el("span", {}, S.sources.length ? "Add picture" : "Add a reference (optional)") : S.sources.length ? el("span", {}, "Add ref") : el("span", {}, el("b", {}, "Drop, paste (Ctrl+V) or click to browse"), "PNG · JPG · WebP — or pick one from the gallery below"));
+  fileZone(drop, { key: "img-src", accept: { test: (t) => S.mode === "text" || /^image\//.test(t) }, what: "image", label: srcLabel, take: (f) => addFiles(f, true) });
   if (S.sources.length + (text && S.textDoc ? 1 : 0) < (text ? 1 : Math.max(1, C.maxRefs))) box.append(drop);
-  $("#srcHint").textContent = text ? "drop, paste or browse" : C.maxRefs > 1 ? `source + up to ${C.maxRefs - 1} references` : "drop, paste, or pick from gallery";
+  $("#srcHint").textContent = text ? "drop, paste or browse" : refs ? `optional, up to ${C.maxRefs} · call them "image 1", "image 2"` : C.maxRefs > 1 ? `source + up to ${C.maxRefs - 1} references` : "drop, paste, or pick from gallery";
 
   // chips
   $("#chips").replaceChildren(...(edit ? EDIT_CHIPS : CREATE_CHIPS).map((c) => el("button", { class: "chip", onclick: () => insertChip(c, edit) }, edit ? c.trim().replace(/ (the|to)$/, " …").replace(/ $/, " …") : "+ " + c)));
@@ -1032,7 +1038,7 @@ function buildParams(preview = false) {
     if (!S.seedLocked) $("#seed").value = "";
     else $("#seed").value = seed;
   }
-  if (S.mode === "edit") p.image = true;
+  if (S.mode === "edit" || (S.mode === "create" && S.sources.length && caps(modelById(S.model)).edit)) p.image = true;
   return p;
 }
 
@@ -1045,11 +1051,12 @@ async function submit() {
   if (S.mode === "text") return S.textDoc ? readDocument(S.textDoc) : ocrImage(S.sources[0].uri);
   const params = buildParams();
   saveModelSettings(S.model);
-  const images = S.mode === "edit" ? S.sources.map((s) => s.uri) : [];
+  const refs = S.mode === "create" && params.image;  // a new picture that uses the pictures as guides
+  const images = S.mode === "edit" || refs ? S.sources.map((s) => s.uri) : [];
   const { image, ...body } = params;
   try {
-    const j = await api("/api/jobs", { method: "POST", body: JSON.stringify({ kind: "image", ...body, images, est: estimate(params),
-      label: (images.length ? "Edit: " : "Image: ") + params.prompt.slice(0, 40) }) });
+    const j = await api("/api/jobs", { method: "POST", body: JSON.stringify({ kind: "image", ...body, images, ...(refs ? { mode: "refs" } : {}), est: estimate(params),
+      label: (refs ? "Compose: " : images.length ? "Edit: " : "Image: ") + params.prompt.slice(0, 40) }) });
     LOCALJ[j.id] = { params, images };
     S.jobs.push(j);
     S.view = { job: j.id };
@@ -1126,7 +1133,7 @@ function renderStage() {
   const idx = Math.min(S.view.idx || 0, entry.outputs.length - 1);
   const url = "/images/" + entry.outputs[idx];
   const p = entry.params;
-  head.append(el("div", { class: "crumb" }, el("b", {}, entry.mode === "edit" ? "Edit" : "Created"), " · " + timeAgo(entry.created)));
+  head.append(el("div", { class: "crumb" }, el("b", {}, entry.mode === "edit" ? "Edit" : entry.mode === "refs" ? "Created from references" : "Created"), " · " + timeAgo(entry.created)));
   head.append(el("div", { class: "spacer" }));
   const tb = el("div", { class: "toolbar" },
     el("button", { class: "tb primary", title: "Use this image as the source for an edit (E)", onclick: () => useAsSource(url) }, icon("i-brush"), el("span", { class: "lbl" }, "Edit this")),
@@ -1246,7 +1253,7 @@ function renderStrip() {
     const dec = tools ? decorateThumb : (_ws, t) => t;
     items.push(dec("image", el("button", { class: "thumb", "aria-current": S.view?.id === e.id, title: e.params.prompt, onclick: () => { S.view = { id: e.id, idx: 0 }; S.compare = false; S.grid = false; renderStage(); renderStrip(); } },
       el("img", { src: "/images/" + e.outputs[0], alt: "", loading: "lazy" }),
-      e.mode === "edit" ? el("span", { class: "badge" }, "EDIT") : null,
+      e.mode === "edit" ? el("span", { class: "badge" }, "EDIT") : e.mode === "refs" ? el("span", { class: "badge" }, "REFS") : null,
       e.outputs.length > 1 ? el("span", { class: "multi" }, "×" + e.outputs.length) : null,
       thumbDel(() => del(e))), e, renderStrip));
   }
@@ -1299,10 +1306,15 @@ function reuse(entry, focus = true) {
   S.res = [512, 768, 1024].reduce((b, v) => Math.abs(v * v - w * h) < Math.abs(b * b - w * h) ? v : b);
   if (modelSizeList(modelById(S.model))) S.res = Math.max(w, h);
   let ready = Promise.resolve();
+  const sources = () => Promise.all(entry.sources.map(async (f) => { const b = await (await fetch("/images/" + f)).blob(); return readImage(new File([b], f, { type: b.type })); }));
   if (entry.mode === "edit" && entry.sources.length) {
-    ready = Promise.all(entry.sources.map(async (f) => { const b = await (await fetch("/images/" + f)).blob(); return readImage(new File([b], f, { type: b.type })); }))
-      .then((srcs) => { S.sources = srcs; S.aspect = "src"; setMode("edit"); });
-  } else { S.aspect = modelSizeList(modelById(S.model)) ? aspectKey(w, h) : best.id; setMode("create"); }
+    ready = sources().then((srcs) => { setMode("edit"); S.sources = srcs; S.aspect = "src"; renderComposer(); });
+  } else {
+    S.aspect = modelSizeList(modelById(S.model)) ? aspectKey(w, h) : best.id; setMode("create");
+    S.sources = [];  // a plain create drops Create's references; "Created from references" brings its own back
+    if (entry.mode === "refs" && entry.sources.length) ready = sources().then((srcs) => { S.sources = srcs; renderComposer(); });
+    else renderComposer();
+  }
   if (focus) { $("#prompt").focus(); toast("Settings loaded"); }
   return ready;
 }
@@ -1600,11 +1612,11 @@ function pasteToZone(files) {
   const node = hover || (last && last.offsetParent !== null ? last : null);
   return node?._zone ? zoneTake(node._zone, files, true) : false;
 }
-const srcLabel = () => (S.mode === "text" ? "file to read" : S.mode === "edit" && S.sources.length ? "reference image" : "source image");
+const srcLabel = () => (S.mode === "text" ? "file to read" : S.mode === "create" ? "reference picture" : S.mode === "edit" && S.sources.length ? "reference image" : "source image");
 
 $("#modeCreate").onclick = () => setMode("create");
 $("#modeEdit").onclick = () => setMode("edit");
-$("#modeText").onclick = () => { if (S.mode !== "text") S.sources = []; setMode("text"); };
+$("#modeText").onclick = () => { if (S.mode !== "text") { setMode("text"); S.sources = []; renderComposer(); } };
 $("#modelBtn").onclick = () => (S.drawer ? closeDrawer() : openDrawer());
 $("#drawerClose").onclick = closeDrawer;
 $("#scrim").onclick = closeDrawer;
@@ -1613,7 +1625,7 @@ $("#improveBtn").onclick = improvePrompt;
 $("#prompt").addEventListener("input", () => { autoGrow(); renderComposer(); });
 $("#prompt").addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); submit(); } });
 $("#go").onclick = submit;
-$("#fileInput").onchange = (e) => { addFiles(e.target.files); e.target.value = ""; };
+$("#fileInput").onchange = (e) => { addFiles(e.target.files, true); e.target.value = ""; };
 // Resolution buttons are rebuilt per model/shape in renderComposer().
 $("#nDec").onclick = () => { S.n = Math.max(1, S.n - 1); renderComposer(); };
 $("#nInc").onclick = () => { S.n = Math.min(4, S.n + 1); renderComposer(); };

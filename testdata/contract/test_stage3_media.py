@@ -99,6 +99,15 @@ class Media(ContractCase):
         self.assertEqual(py["entry"]["mode"], "edit")
         self.files_equal(py, rs, "sources")
 
+    def test_image_from_references(self):
+        py, rs = self.same_job({"kind": "image", "model": "Qwen/Qwen-Image-2.1", "prompt": "RUST TEST image 1 in a cafe",
+                                "images": [PNG, PNG], "mode": "refs", "size": "1024x576"})
+        self.assertEqual(py["entry"]["mode"], "refs")
+        self.assertEqual(py["entry"]["params"]["size"], "1024x576")
+        self.files_equal(py, rs, "sources")
+        py, _ = self.same_job({"kind": "image", "model": "Qwen/Qwen-Image-2.1", "prompt": "RUST TEST fox", "images": [], "mode": "refs"})
+        self.assertEqual(py["entry"]["mode"], "create")  # no pictures: a plain create
+
     def test_ocr(self):
         py, _ = self.same_job({"kind": "ocr", "model": "Fake/PP-OCRv6", "image": PNG, "ephemeral": True, "load": "Fake/PP-OCRv6"})
         self.assertEqual(py["status"], "done")
