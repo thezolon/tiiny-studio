@@ -1,10 +1,12 @@
-# Rust port checks on every push and pull request that touches it: cargo tests on Windows, macOS and
+# Rust port checks on pull requests and on main when they touch it: cargo tests on Windows, macOS and
 # Linux, the contract tests (Python reference vs Rust, against the fake Tiiny) and a desktop app build.
-# Never contacts a real device.
+# Not on tags or other branch pushes: a release's commit is already tested in its PR and on main, and the
+# extra runs held up the release build's runners. Never contacts a real device.
 name: Rust
 
 on:
   push:
+    branches: [main]
     paths: ["rust/**", "static/**", "testdata/fake_tiiny.py", "testdata/contract/**", "*.py", ".github/workflows/rust.yml"]
   pull_request:
     paths: ["rust/**", "static/**", "testdata/fake_tiiny.py", "testdata/contract/**", "*.py", ".github/workflows/rust.yml"]
