@@ -21,6 +21,7 @@ pub fn routes() -> Router<AppState> {
         .route("/api/jobs/{id}", get(one_job))
         .route("/api/jobs/{id}/cancel", post(cancel_job))
         .route("/api/history", get(history))
+        .route("/api/device/recover", post(recover))
         .route("/api/history/delete", post(delete_entries))
         .route("/api/history/{id}", delete(delete_entry))
         .route("/api/history/{id}/fav", post(fav))
@@ -81,6 +82,17 @@ async fn history(State(state): State<AppState>) -> Json<Value> {
     Json(Value::Array(state.store.load_history()))
 }
 
+/// Save what the Tiiny holds that the gallery doesn't (clips and songs left by a restart or another studio).
+async fn recover(State(state): State<AppState>) -> Json<Value> {
+    Json(crate::media::recover::recover(&state).await)
+}
+
+/// The history entries with these ids, read before they are deleted (their Tiiny sessions go with them).
+fn entries_of(state: &AppState, ids: &[String]) -> Vec<Value> {
+    let _g = state.store.lock();
+    state.store.load_history().into_iter().filter(|e| ids.iter().any(|i| i == str_of(e, "id"))).collect()
+}
+
 fn forget(state: &AppState, ids: &[String]) {
     for id in ids {
         state.jobs.remove(id);
@@ -93,8 +105,10 @@ async fn delete_entries(State(state): State<AppState>, body: Bytes) -> Json<Valu
     let mut ids: Vec<String> = req.get("ids").and_then(Value::as_array).into_iter().flatten().filter_map(|v| v.as_str().map(String::from)).collect();
     ids.sort();
     ids.dedup();
+    let sessions = crate::media::recover::sessions_of(&entries_of(&state, &ids));
     state.store.delete_entries(&ids);
     forget(&state, &ids);
+    crate::media::recover::delete_device_sessions(&state, sessions); // the Tiiny's copy goes too
     Json(json!({"ok": true, "deleted": ids.len()}))
 }
 
@@ -103,8 +117,10 @@ async fn delete_entry(State(state): State<AppState>, Path(id): Path<String>) -> 
         return not_found();
     }
     let ids = vec![id];
+    let sessions = crate::media::recover::sessions_of(&entries_of(&state, &ids));
     state.store.delete_entries(&ids);
     forget(&state, &ids); // the finished job's in-memory copy (prompt, label) goes too
+    crate::media::recover::delete_device_sessions(&state, sessions);
     Json(json!({"ok": true})).into_response()
 }
 
@@ -247,7 +263,8 @@ async fn wipe(State(state): State<AppState>) -> Response {
     if state.jobs.any_active() {
         return error(StatusCode::CONFLICT, "Jobs are still running or queued; wipe after they finish.");
     }
-    let _g = state.store.lock();
+    let g = state.store.lock();
+    let sessions = crate::media::recover::sessions_of(&state.store.load_history());
     let files: Vec<_> = std::fs::read_dir(&state.store.images).into_iter().flatten().flatten().map(|e| e.path()).filter(|p| p.is_file()).collect();
     for p in &files {
         shred(p);
@@ -264,6 +281,8 @@ async fn wipe(State(state): State<AppState>) -> Response {
     state.store.save_voices(&[]);
     state.jobs.clear();
     state.search_cache.lock().unwrap_or_else(|e| e.into_inner()).clear();
+    drop(g);
+    crate::media::recover::delete_device_sessions(&state, sessions);
     Json(json!({"ok": true, "entries": entries, "voices": voices, "files": files.len()})).into_response()
 }
 

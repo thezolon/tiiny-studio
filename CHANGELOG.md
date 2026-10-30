@@ -12,6 +12,11 @@
   matching sound** (MP4). Sizes (wide or tall, 480p or 768p), steps and frame rate come from the loaded model. Any
   image has an **Animate** button that opens it here. **Video is slow on the Tiiny:** about 7 minutes for 2 seconds at
   480p with 4 steps and over 15 with the default 7 (0.1.38), longer for bigger, longer or more-step clips; the panel shows the expected time before you start. Cancel stops the render on the device, and the device's copy is deleted once the studio has it.
+- **Results left on the Tiiny are saved automatically:** if the studio restarted mid-render, or another studio made it,
+  videos and songs/loops from the last day that never reached your gallery are pulled in when you open the studio
+  (3D can't be: the device has no list). The first time only takes stock, so old results are never imported. Two studios
+  sharing one Tiiny will each pull the other's recent results. Deleting a song or loop now also deletes the Tiiny's copy.
+- **Video defaults to 4 steps** (about 7 minutes for 2 s at 480p, against 15+ at 7); "Default" is still there.
 - Videos can be scrubbed: both servers now answer byte-range requests for media files.
 - **Chat's Thinking switch follows the model** ([#23](https://github.com/thezolon/tiiny-studio/issues/23), the start of
   panels that adapt to the loaded model): models that can't reason (Qwen3-4B-Instruct) no longer show it, models that

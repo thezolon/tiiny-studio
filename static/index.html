@@ -798,6 +798,7 @@ async function loadModels(quiet = false) {
     S.models = S.allModels.filter((m) => m.workspace === "image");
     S.others = S.allModels.filter((m) => m.workspace !== "image");
     S.deviceOk = true; S.keyRejected = false;
+    if (typeof recoverFromDevice === "function") recoverFromDevice();
     for (const id of Object.keys(S.loading)) {
       const m = modelById(id);
       if (m && m.status === "running") {

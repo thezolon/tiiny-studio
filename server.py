@@ -760,6 +760,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.extract_document()
         if self.path == "/api/privacy/wipe":
             return self.wipe_everything()
+        if self.path == "/api/device/recover":
+            return self.send_json(200, MEDIA.recover())
         if self.path == "/api/history/delete":
             return self.delete_entries((self.read_json().get("ids") or []))
         m = re.fullmatch(r"/api/history/(\w+)/fav", self.path)
@@ -832,16 +834,18 @@ class Handler(BaseHTTPRequestHandler):
         return self.send_json(200, {"ok": False, "message": msg or f"Unexpected response (HTTP {code})."})
 
     def delete_entries(self, ids):
-        ids = set(ids)
+        ids, sessions = set(ids), []
         with LOCK:
             items = load_history()
             for e in items:
                 if e["id"] in ids:
+                    sessions.append((e.get("device") or {}).get("music_session"))
                     for f in e.get("outputs", []) + e.get("sources", []) + e.get("downloads", []):
                         shred(IMAGES / f)
                     JOBS.pop(e["id"], None)
                     SEARCH_CACHE.pop(e["id"], None)
             save_history([e for e in items if e["id"] not in ids])
+        MEDIA.delete_device_sessions(sessions)  # the Tiiny's copy goes too
         self.send_json(200, {"ok": True, "deleted": len(ids)})
 
     def export_zip(self, ids):
@@ -898,6 +902,7 @@ class Handler(BaseHTTPRequestHandler):
             for p in files:
                 shred(p)
             entries = len(load_history())
+            sessions = [(e.get("device") or {}).get("music_session") for e in load_history()]
             voices = len(load_voices())
             chats = [p for p in CHATS.glob("*.json")]
             for p in chats:
@@ -906,6 +911,7 @@ class Handler(BaseHTTPRequestHandler):
             save_json(VOICES, [])
             JOBS.clear()
             SEARCH_CACHE.clear()
+        MEDIA.delete_device_sessions(sessions)
         self.send_json(200, {"ok": True, "entries": entries, "voices": voices, "files": len(files)})
 
     def save_voice(self):
@@ -939,16 +945,19 @@ class Handler(BaseHTTPRequestHandler):
         m = re.fullmatch(r"/api/history/(\w+)", self.path)
         if not m:
             return self.send_json(404, {"error": {"message": "not found"}})
+        sessions = []
         with LOCK:
             items = load_history()
             keep = [e for e in items if e["id"] != m.group(1)]
             for e in items:
                 if e["id"] == m.group(1):
+                    sessions.append((e.get("device") or {}).get("music_session"))
                     for f in e.get("outputs", []) + e.get("sources", []) + e.get("downloads", []):
                         shred(IMAGES / f)
             save_history(keep)
             SEARCH_CACHE.pop(m.group(1), None)
             JOBS.pop(m.group(1), None)  # the finished job's in-memory copy (prompt, label) goes too
+        MEDIA.delete_device_sessions(sessions)
         self.send_json(200, {"ok": True})
 
 

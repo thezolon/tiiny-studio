@@ -547,7 +547,7 @@ const AudioWS = {
     head.append(tb);
 
     const card = el("div", { class: "media-card" + (A.view.fresh ? " fade-in" : "") });
-    const title = e.kind === "speech" ? e.params.text : e.kind === "loop" ? e.params.prompt : e.kind === "song" ? e.params.caption : e.params?.name || "Transcript";
+    const title = e.params?.recovered ? "Recovered from the Tiiny" : e.kind === "speech" ? e.params.text : e.kind === "loop" ? e.params.prompt : e.kind === "song" ? e.params.caption : e.params?.name || "Transcript";
     card.append(el("div", { class: "media-title" }, title));
     if (e.kind === "transcript") {
       card.append(el("div", { class: "transcript" }, e.text || "(no speech detected)"));
@@ -568,7 +568,7 @@ const AudioWS = {
       p.language ? el("span", {}, p.language) : null,
       p.instruct ? el("span", {}, `“${p.instruct}”`) : null,
       p.seed != null ? el("span", {}, `seed ${p.seed}`) : null,
-      el("span", {}, `made in ${fmtSec(e.seconds)}`)));
+      e.params?.recovered ? null : el("span", {}, `made in ${fmtSec(e.seconds)}`)));
     A.view.fresh = false;
     stage.append(card);
   },
