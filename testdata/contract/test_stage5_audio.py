@@ -440,6 +440,13 @@ class Video(Jobs):
         self.failed(self.video(size="1x1", image=PNG), "exported for")  # its saved first frame goes too
         self.assertEqual([len(list(d.iterdir())) for d in dirs], before)
 
+    def test_video_rides_out_a_dropped_link(self):
+        # a render takes many minutes: polls and the download that get no answer are retried, not the end of the job
+        for flags in ({"video_flaky": 3}, {"content_flaky": 2}):
+            py, rs = self.same_job(self.video(flags=flags))
+            self.assertEqual((py["status"], rs["status"]), ("done", "done"), (flags, py.get("error")))
+            self.files_equal(py, rs)
+
     def test_video_cancel(self):
         results = []
         for base in (self.h.py_url, self.h.rs_url):

@@ -485,12 +485,18 @@ class Handler(BaseHTTPRequestHandler):
         if method == "DELETE" and len(parts) == 3:
             del st.videos[v["id"]]
             return self.send_json(200, {"id": v["id"], "object": "video.deleted", "deleted": True})
+        if method == "GET" and st.flags.get("video_flaky", 0) > 0:  # the link drops for a few requests
+            st.flags["video_flaky"] -= 1
+            return self.send_json(502, {"error": {"message": "Bad gateway"}})
         if method == "GET" and len(parts) == 3:
             v["looks"] += 1
             if v["status"] != "cancelled" and not st.flags.get("video_hold"):  # video_hold: renders until cancelled
                 v["status"], v["progress"] = ("failed", 0) if v["error"] else ("completed", 100) if v["looks"] > 1 else ("in_progress", 50)
             return self.send_json(200, {k: x for k, x in v.items() if k != "looks"})
         if method == "GET" and parts[3:] == ["content"]:
+            if st.flags.get("content_flaky", 0) > 0:
+                st.flags["content_flaky"] -= 1
+                return self.send_json(503, {"error": {"message": "Service unavailable"}})
             if v["status"] != "completed":
                 return self.send_json(409, {"error": {"message": "video is not ready"}})
             return self.send_bytes(200, MP4, "video/mp4")

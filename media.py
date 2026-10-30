@@ -1102,25 +1102,38 @@ def run_video(m, job, req):
             raise JobError(m.err(res))
         vid = res["id"]
         job["remote_task"] = f"DELETE {url}/{vid}"  # deleting a clip stops its render (there's no /cancel)
-        silent = 0
+        lost = 0  # polls in a row with no answer: a render takes many minutes, so ride out a dropped link
         while True:
             time.sleep(3)
-            code, v = m.http("GET", f"{url}/{vid}", headers=auth, timeout=30)
+            try:
+                code, v = m.http("GET", f"{url}/{vid}", headers=auth, timeout=30)
+            except JobError:
+                code, v = 0, {}
             if job["cancel"]:
                 raise JobError("Cancelled")
-            st = v.get("status") if isinstance(v, dict) else None
+            st = v.get("status") if isinstance(v, dict) and code < 500 else None
             if st in ("completed", "failed", "cancelled"):
                 break
-            silent = 0 if st else silent + 1
-            if silent >= 20:
-                raise JobError("The device stopped reporting on this video")
+            lost = 0 if st else lost + 1
+            if lost >= VIDEO_LOST_POLLS:
+                raise JobError("Lost the Tiiny while it rendered this video. If it finished, it's kept on the device for an hour.")
+            if lost:
+                job["message"] = "Can't reach the Tiiny, still trying…"
+                continue
             job["progress"] = int(v.get("progress") or 0)
             job["message"] = "Rendering" if st == "in_progress" else "Waiting in the device queue"
         job["remote_task"] = None
         if st != "completed":
             raise JobError(m.err(v.get("error") or st))
         job["message"] = "Downloading"
-        code, data = m.http("GET", f"{url}/{vid}/content", headers=auth, timeout=600, raw=True)
+        for attempt in range(5):  # the same: a dropped link shouldn't lose a finished clip
+            try:
+                code, data = m.http("GET", f"{url}/{vid}/content", headers=auth, timeout=600, raw=True)
+            except JobError as e:
+                code, data = 0, str(e)
+            if code == 200 or 0 < code < 500 or job["cancel"]:
+                break
+            time.sleep(3)
         if code != 200 or not data:
             raise JobError(f"Couldn't fetch the video: {m.err(data)}")
         out = m.save(f"{job['id']}-video.mp4", data)
@@ -1138,6 +1151,7 @@ def run_video(m, job, req):
             "sources": sources, "outputs": [out], "duration": round(seconds, 1)}
 
 
+VIDEO_LOST_POLLS = 100  # ~5 minutes of polls without an answer before a video job gives up
 VIDEO_FRAME_FIELDS = ("image", "last_image")  # first frame tested on 0.1.38; the last-frame name is a guess (max_keyframes 2)
 
 
