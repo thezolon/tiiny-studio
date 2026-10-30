@@ -119,6 +119,23 @@ const onPress = (act) => ({
 });
 async function cancelJob(id) { try { await api(`/api/jobs/${id}/cancel`, { method: "POST", body: "{}" }); } catch (e) { toast(e.message, "err"); } pollJobs(); }
 
+/* Once per page load, when the Tiiny first answers: save what it finished but the gallery never got (the studio restarted
+ * mid-render, or another studio made it). The first call on a studio only takes stock, so old results are never imported. */
+let recoverAsked = false;
+async function recoverFromDevice() {
+  if (recoverAsked) return;
+  recoverAsked = true;
+  try {
+    const r = await api("/api/device/recover", { method: "POST", body: "{}" });
+    const got = r.recovered || [];
+    if (!got.length) return;
+    const n = (k) => got.filter((x) => x.kind === k).length;
+    const parts = [["video", "video"], ["song", "song"], ["loop", "loop"]].filter(([k]) => n(k)).map(([k, w]) => `${n(k)} ${w}${n(k) > 1 ? "s" : ""}`);
+    await loadHistory();
+    toast(`Saved ${parts.join(" and ")} from the Tiiny that wasn't in your gallery`);
+  } catch (e) { recoverAsked = false; }  // quiet: the device may just be asleep; the next page load asks again
+}
+
 /* ---------- models per tool ---------- */
 const TOOL_TYPES = { speech: "Text-to-Speech", transcribe: "ASR", loop: "Music Generation", song: "Music Generation", mesh: "Image-to-3D",
   chat: "Text Generation or Image-Text-to-Text", vision: "Image-Text-to-Text with image input" };

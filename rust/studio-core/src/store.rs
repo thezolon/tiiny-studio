@@ -11,8 +11,11 @@ pub struct Store {
     pub chats: PathBuf,
     history: PathBuf,
     voices: PathBuf,
+    /// Device ids the studio saved, deleted or skipped (device_seen.json); see media/recover.rs.
+    seen: PathBuf,
     /// Held while reading-modifying-writing history or voices (server.py LOCK).
     lock: Mutex<()>,
+    seen_lock: Mutex<()>,
 }
 
 pub fn read_json_file(path: &Path) -> Option<Value> {
@@ -74,7 +77,9 @@ impl Store {
             chats: data.join("chats"),
             history: data.join("history.json"),
             voices: data.join("voices.json"),
+            seen: data.join("device_seen.json"),
             lock: Mutex::new(()),
+            seen_lock: Mutex::new(()),
         };
         let _ = std::fs::create_dir_all(&s.images);
         let _ = std::fs::create_dir_all(&s.chats);
@@ -129,6 +134,25 @@ impl Store {
             }
         }
         self.save_history(&keep);
+    }
+
+    /// The device ids already handled; None without a (usable) file: the next look at the device is a baseline.
+    pub fn seen_ids(&self) -> Option<std::collections::BTreeSet<String>> {
+        let v = read_json_file(&self.seen)?;
+        Some(v.as_array()?.iter().filter_map(|x| x.as_str().map(String::from)).collect())
+    }
+
+    /// Add handled device ids. Only once the baseline exists (or when making it): until then everything on the device
+    /// counts as history anyway.
+    pub fn mark_seen(&self, ids: &[String], baseline: bool) {
+        let _g = self.seen_lock.lock().unwrap_or_else(|e| e.into_inner());
+        let have = self.seen_ids();
+        if have.is_none() && !baseline {
+            return;
+        }
+        let mut all = have.unwrap_or_default();
+        all.extend(ids.iter().filter(|i| !i.is_empty()).cloned());
+        save_json(&self.seen, &json!(all));
     }
 
     pub fn load_voices(&self) -> Vec<Value> {

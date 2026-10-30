@@ -4,6 +4,8 @@ Or import it: `server, url = fake_tiiny.start()`; `server.state` holds the model
 Every request is recorded (minus the Authorization header): GET /__requests, POST /__reset (no auth).
 POST /__flags {..} switches on test behaviour until the next reset: "fail" {path: [status, message]}, "delay" {path: seconds},
 "closed_port", "no_music_gateway", "speech_text", "task_polls" N, "task_hold", "fail_stage" name, "rich_texture", "song_tracks".
+POST /__seed {"videos": [{"id", "status", "age", "seconds"}], "sessions": [{"session_id", "model_id", "route", "status", "age"}]} plants results the studio never
+saw (a finished clip, music sessions made `age` seconds ago), like ones left on the device by a restart or another studio.
 Everything except GET / and /__* needs `Authorization: Bearer <key>`, like the device. stdlib only."""
 import argparse
 import base64
@@ -154,6 +156,7 @@ class State:
             self.requests, self.shutdowns = [], 0
             self.running = {mid: self._instance(mid) for mid in self.initial}
             self.pending, self.tasks, self.sessions, self.videos = set(), {}, {}, {}
+            self.session_meta = {}  # session id -> model_id, route, created_at (what GET /v1/music/sessions adds)
             self.flags = {}
 
     def _instance(self, mid):
@@ -279,10 +282,26 @@ class Handler(BaseHTTPRequestHandler):
             with self.st.lock:
                 self.st.requests = []
             return self.send_json(200, {"ok": True})
+        if method == "POST" and path == "/__seed":
+            return self.seed(body or {})
         if method == "POST" and path == "/__flags":
             self.st.flags.update(body or {})
             return self.send_json(200, {"ok": True})
         self.err(404, "not found")
+
+    def seed(self, b):
+        st, now = self.st, time.time()
+        for v in b.get("videos", []):
+            vid = v.get("id") or f"video_{len(st.videos) + 1:032x}"
+            secs = int(v.get("seconds") or 2)
+            st.videos[vid] = {"id": vid, "object": "video", "model": v.get("model") or VIDEO, "status": v.get("status") or "completed", "progress": 100,
+                              "size": "832x480", "seconds": str(secs + 0.29167), "frames": secs * 24 + 1, "fps": 24, "error": None, "looks": 0,
+                              "created_at": int(now - v.get("age", 60))}
+        for s in b.get("sessions", []):
+            sid = s.get("session_id") or f"sess-{len(st.sessions) + 1}"
+            st.sessions[sid] = s.get("status") or "completed"
+            st.session_meta[sid] = {"model_id": s.get("model_id") or "Fake/SongGeneration-v2", "route": s.get("route") or "preview", "created_at": now - s.get("age", 60)}
+        self.send_json(200, {"ok": True})
 
     do_GET = lambda self: self.handle_any("GET")
     do_POST = lambda self: self.handle_any("POST")
@@ -466,6 +485,8 @@ class Handler(BaseHTTPRequestHandler):
             if (self.query.get("model") or [None])[0] != VIDEO or VIDEO not in st.running:
                 return self.send_json(503, {"error": {"message": "No suitable model is currently running."}})
             return self.send_json(200, VIDEO_INFO)
+        if method == "GET" and p == "/v1/videos":
+            return self.send_json(200, {"object": "list", "data": [{k: x for k, x in v.items() if k != "looks"} for v in st.videos.values()]})
         if method == "POST" and p == "/v1/videos":
             b = self.body
             if not str(b.get("prompt") or "").strip():
@@ -477,7 +498,7 @@ class Handler(BaseHTTPRequestHandler):
             err = None if b.get("size") in sizes else {"code": "invalid_request", "message": f"this model was exported for [{', '.join(sizes)}], got {b.get('size')}"}
             secs = int(b.get("seconds") or 4)
             st.videos[vid] = {"id": vid, "object": "video", "model": b["model"], "status": "queued", "progress": 0, "size": b.get("size"),
-                              "seconds": str(secs), "frames": secs * 24 + 1, "fps": 24, "error": err, "looks": 0}
+                              "seconds": str(secs), "frames": secs * 24 + 1, "fps": 24, "error": err, "looks": 0, "created_at": int(time.time())}
             return self.send_json(200, {k: v for k, v in st.videos[vid].items() if k != "looks"})
         v = st.videos.get(parts[2]) if len(parts) > 2 else None
         if not v:
@@ -514,15 +535,22 @@ class Handler(BaseHTTPRequestHandler):
                 if named not in MUSIC_INFO:
                     return self.send_json(400, {"error": {"message": f"Model '{named}' does not support music."}})
                 return self.send_json(200, {**MUSIC_INFO[named], "model": named})
-            return self.send_json(200, {"sessions": [{"session_id": s, "status": v, "progress": 1.0} for s, v in st.sessions.items()]})
+            return self.send_json(200, {"sessions": [{"session_id": s, "status": v, "progress": 1.0, "metadata": {}, **{"model_id": None, "route": None, "created_at": time.time()}, **st.session_meta.get(s, {})}
+                                                     for s, v in st.sessions.items()]})
         if method == "GET" and (m := re.fullmatch(r"/v1/music/sessions/([\w-]+)/download", p)):
             return self.send_bytes(200, MP3, "audio/mpeg")
+        if method == "DELETE" and (m := re.fullmatch(r"/v1/music/sessions/([\w-]+)", p)):
+            st.sessions.pop(m.group(1), None)
+            return self.send_json(200, {"message": f"Session {m.group(1)} deleted"})
         if method == "DELETE" and (m := re.fullmatch(r"/v1/sessions/([\w-]+)", p)):
             st.sessions.pop(m.group(1), None)
             return self.send_json(200, {"success": True})
         if method == "POST" and p == "/v1/music/generate/wav" and st.flags.get("no_music_gateway"):
             return self.send_json(404, {"detail": "Not Found"})
         if method == "POST" and p in ("/v1/music/generate/wav", "/v1/generate/wav"):
+            if p == "/v1/music/generate/wav":  # the gateway keeps a session for each loop
+                sid = self.new_session("completed")
+                st.session_meta[sid] = {"model_id": self.body.get("model"), "route": "generate_wav", "created_at": time.time()}
             return self.send_bytes(200, WAV, "audio/wav")
         if method == "POST" and p.startswith("/v1/music/generate/") and self.body.get("model") == "Fake/YuE2":
             return self.send_json(400, {"error": {"code": "unsupported_feature", "message": "YuE2 preview generation is not implemented"}})  # 0.1.38
@@ -537,10 +565,18 @@ class Handler(BaseHTTPRequestHandler):
             if not isinstance((config.get("ace_step") or {}).get("bpm", 0), (int, float)):
                 return self.send_json(400, {"success": False, "audio_data": None, "error": "type must be number, but is string", "error_code": "INVALID_REQUEST"})
         if method == "POST" and p in ("/v1/music/generate", "/v1/music/generate/preview", "/v1/music/generate/resume", "/v1/generate"):
-            sid = self.body.get("session_id") or f"sess-{len(st.sessions) + 1}"
+            sid = self.body.get("session_id") or self.new_session("completed")
             st.sessions[sid] = "completed"
+            st.session_meta.setdefault(sid, {"model_id": self.body.get("model"), "route": p.rsplit("/", 1)[-1] if p != "/v1/music/generate" else "generate", "created_at": time.time()})
             return self.send_json(200, self.song(sid))
         self.err(404, "endpoint not found")
+
+    def new_session(self, status):
+        n = len(self.st.sessions) + 1
+        while f"sess-{n}" in self.st.sessions:
+            n += 1
+        self.st.sessions[f"sess-{n}"] = status
+        return f"sess-{n}"
 
     def tasks3d(self, method, p):
         st = self.st
