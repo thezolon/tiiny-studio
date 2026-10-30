@@ -892,10 +892,21 @@ def build_mesh(m, job, req, saved):
             raise JobError(f"{stage}: {m.err(res)}")
         tid = res["data"]["task_id"]
         job["remote_task"] = f"{url}/tasks/{tid}/cancel{mq}"
-        silent = 0  # polls in a row without a status: the task is gone, don't hold the device forever
+        silent = 0  # polls in a row without a status: the task is gone, or the link is down (a stage can take many minutes)
         while True:
             time.sleep(2)
-            _, st = m.http("GET", f"{url}/tasks/{tid}{mq}", timeout=30, headers=auth)
+            try:
+                code, st = m.http("GET", f"{url}/tasks/{tid}{mq}", timeout=30, headers=auth)
+            except (JobError, ValueError):
+                code, st = 0, {}
+            if code == 0 or code >= 500:  # no answer: ride out a dropped link
+                if job["cancel"]:
+                    raise JobError("Cancelled")
+                silent += 1
+                if silent >= MESH_LOST_POLLS:
+                    raise JobError(f"{stage}: lost the Tiiny while it worked on this task")
+                job["message"] = "Can't reach the Tiiny, still trying…"
+                continue
             d = st.get("data") or {}
             p = d.get("progress") or 0
             job["progress"] = round((done + weights[stage] * p / 100) / total * 100)
@@ -906,7 +917,7 @@ def build_mesh(m, job, req, saved):
             if job["cancel"]:
                 raise JobError("Cancelled")
             silent = 0 if d.get("status") else silent + 1
-            if silent >= 30:
+            if silent >= MESH_LOST_POLLS:
                 raise JobError(f"{stage}: the device stopped reporting on this task")
         if d.get("status") != "completed":
             raise JobError(f"{stage}: {m.err(d.get('error') or d.get('message') or d.get('status'))}")
@@ -928,8 +939,15 @@ def build_mesh(m, job, req, saved):
             elif use_refs and kind != "mesh_glb" and not kind.endswith("_preview"):
                 continue  # only the model itself comes to the studio
             elif art.get("artifact_id"):  # not inline (TRELLIS.2): fetch it from the task
-                code, data = m.http("GET", f"{url}/tasks/{tid}/artifacts/{quote(art['artifact_id'], safe='')}{mq}", timeout=600,
-                                    headers=auth, raw=True)
+                for attempt in range(5):  # a dropped link shouldn't lose a finished stage
+                    try:
+                        code, data = m.http("GET", f"{url}/tasks/{tid}/artifacts/{quote(art['artifact_id'], safe='')}{mq}", timeout=600,
+                                            headers=auth, raw=True)
+                    except JobError as e:
+                        code, data = 0, {"error": str(e)}
+                    if code == 200 or 0 < code < 500 or job["cancel"]:
+                        break
+                    time.sleep(3)
                 if code != 200:
                     raise JobError(f"{stage}: couldn't fetch its {kind}: {m.err(data)}")
             else:
@@ -992,6 +1010,7 @@ def run_ocr(m, job, req):
 # lists its own; TRELLIS.2 chains "shape_artifact" and "geometry_artifact" instead of "mesh".
 STAGE_INPUTS = {"background": ["image"], "shape": ["image"], "simplify": ["mesh"], "texture": ["image", "mesh"],
                 "export": ["material_artifact", "mesh_glb"]}
+MESH_LOST_POLLS = 150  # ~5 minutes of polls (2 s) without an answer before a 3D stage gives up
 # Inputs the task form takes under another field name (its fields: image, mesh, material, file, shape_artifact, ...).
 STAGE_FIELDS = {"material_artifact": "material", "mesh_glb": "mesh"}
 

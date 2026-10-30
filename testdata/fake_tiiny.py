@@ -3,7 +3,8 @@ Usage: python fake_tiiny.py [--port N] [--key KEY] [--launch-delay SECONDS]
 Or import it: `server, url = fake_tiiny.start()`; `server.state` holds the models, tasks and request log.
 Every request is recorded (minus the Authorization header): GET /__requests, POST /__reset (no auth).
 POST /__flags {..} switches on test behaviour until the next reset: "fail" {path: [status, message]}, "delay" {path: seconds},
-"closed_port", "no_music_gateway", "speech_text", "task_polls" N, "task_hold", "fail_stage" name, "rich_texture", "song_tracks".
+"closed_port", "no_music_gateway", "speech_text", "task_polls" N, "task_hold", "fail_stage" name, "rich_texture", "song_tracks",
+"task_flaky" N / "artifact_flaky" N (the next N 3D task polls / artifact fetches answer 502).
 Everything except GET / and /__* needs `Authorization: Bearer <key>`, like the device. stdlib only."""
 import argparse
 import base64
@@ -577,6 +578,9 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_json(200, {"data": {"task_id": tid, "status": "queued"}})
         m = re.fullmatch(r"/v1/(?:3d/)?tasks/([\w-]+)/artifacts/([\w:.-]+)", p)
         if method == "GET" and m:
+            if st.flags.get("artifact_flaky", 0) > 0:  # the next n artifact fetches get a 502
+                st.flags["artifact_flaky"] -= 1
+                return self.err(502, "bad gateway")
             t = st.tasks.get(m.group(1))
             art = next((a for i, a in enumerate(TRELLIS_OUT.get(t["stage"], []) if t else []) if f"{m.group(1)}-{i}" == unquote(m.group(2))), None)
             return self.send_bytes(200, art[2], "application/octet-stream") if art else self.err(404, "artifact not found")
@@ -588,6 +592,9 @@ class Handler(BaseHTTPRequestHandler):
             t["cancelled"] = not st.flags.get("ignore_cancel")  # ignore_cancel: a device that never stops the task
             return self.send_json(200, {"data": {"task_id": m.group(1), "status": "cancelled"}})
         if method == "GET" and not m.group(2):
+            if st.flags.get("task_flaky", 0) > 0:  # a dropped link: the next n polls get a 502 and don't count
+                st.flags["task_flaky"] -= 1
+                return self.err(502, "bad gateway")
             t["polls"] += 1  # queued -> running -> completed on successive polls
             status = "cancelled" if t["cancelled"] else "running" if t["polls"] < st.flags.get("task_polls", 2) or st.flags.get("task_hold") else "completed"
             if status == "completed" and st.flags.get("fail_stage") == t["stage"]:
