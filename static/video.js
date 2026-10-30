@@ -150,11 +150,11 @@ const VideoWS = {
       el("video", { class: "video-player", src: url, controls: true, autoplay: true, loop: true, playsinline: true }),
       p.prompt ? el("div", { class: "prompt-echo" }, p.prompt) : null,
       el("div", { class: "meta-line" },
-        el("span", {}, el("b", {}, shortName(p.model || ""))),
-        el("span", {}, p.size), el("span", {}, `${e.duration || p.seconds} s`), p.steps ? el("span", {}, `${p.steps} steps`) : null,
+        el("span", {}, el("b", {}, `This clip took ${fmtSec(e.seconds)} to render`)),
+        el("span", {}, shortName(p.model || "")),
+        el("span", {}, p.size), el("span", {}, `${e.duration || p.seconds} s`), el("span", {}, p.steps ? `${p.steps} steps` : "default steps"),
         e.sources?.length ? el("span", {}, e.sources.length > 1 ? "first and last frame" : "from a picture") : null,
-        p.seed != null ? el("span", {}, "seed " + p.seed) : null,
-        el("span", {}, `made in ${fmtSec(e.seconds)}`))));
+        p.seed != null ? el("span", {}, "seed " + p.seed) : null)));
   },
   renderStrip() {
     const items = [];
@@ -163,7 +163,12 @@ const VideoWS = {
     const list = this.videoHistory();
     const shown = galleryFilter("video", list), again = () => this.renderStrip();
     $("#galBar-video").replaceChildren(galleryBar("video", shown, again));
-    for (const e of shown) items.push(decorateThumb("video", mediaThumb(e, V.view?.id === e.id, () => { V.view = { id: e.id }; this.renderStage(); this.renderStrip(); }, () => this.del(e)), e, again));
+    for (const e of shown) {
+      const t = mediaThumb(e, V.view?.id === e.id, () => { V.view = { id: e.id }; this.renderStage(); this.renderStrip(); }, () => this.del(e));
+      t.title = `${e.params?.prompt || "Video"}
+Took ${fmtSec(e.seconds)} to render · ${e.params?.size || ""}, ${e.params?.steps || "default"} steps`;
+      items.push(decorateThumb("video", t, e, again));
+    }
     $("#vStrip").replaceChildren(...(items.length ? items : [el("div", { class: "strip-empty" }, "Your videos will collect here.")]));
     $("#vCount").textContent = list.length || "";
   },
