@@ -123,6 +123,18 @@ const TOOL_TYPES = { speech: "Text-to-Speech", transcribe: "ASR", loop: "Music G
   chat: "Text Generation or Image-Text-to-Text", vision: "Image-Text-to-Text with image input" };
 const CHAT_TYPES = ["Image-Text-to-Text", "Text Generation"];
 const seesImages = (m) => /\bImage\b/.test(m.input || "");
+/** What a loaded model reports about itself (/api/model/info, #23), fetched once per model and kept; null until it's
+    loaded and has answered (onLoad re-renders the asking panel then). */
+S.modelInfo = {};
+function loadedInfo(m, onLoad) {
+  if (!m || m.status !== "running") return null;
+  const got = S.modelInfo[m.id];
+  if (got === undefined) {
+    S.modelInfo[m.id] = "loading";
+    api("/api/model/info?id=" + encodeURIComponent(m.id)).then((r) => { S.modelInfo[m.id] = r.info || {}; }).catch(() => { S.modelInfo[m.id] = {}; }).then(onLoad);
+  }
+  return got && got !== "loading" && Object.keys(got).length ? got : null;
+}
 /** How a chat model reasons, from its own "thinking" info (TiinyOS 0.1.36+): "none", "switch" (on/off) or "always"
     (like gpt-oss: it reasons whatever it's sent). Without the info (older TiinyOS): gpt-oss always, others switch. */
 function thinkingMode(m) {

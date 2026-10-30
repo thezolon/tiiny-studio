@@ -17,6 +17,12 @@
   and length (AceStep up to 8 minutes). **AceStep gets its own settings:** tempo, key, time signature, the language
   it sings in, and things to avoid. Preview and separate tracks only show for SongGeneration, the model that has them.
   Which route a song takes is read from the model instead of guessed from its name.
+- **3D follows the model** ([#23](https://github.com/thezolon/tiiny-studio/issues/23)): the 3D panel shows the loaded model's
+  own detail levels (Hunyuan3D: octree 192/288/384; TRELLIS.2: 512 or 1024 px, so Draft and Standard are one choice
+  there), its sampling qualities, a new **Mesh quality** setting, and texture/simplify only when the model has those
+  steps. Time estimates use each model's own timings.
+- The 3D cut-out prefers an image model that writes a real alpha channel (Qwen-Image). FLUX.2-klein
+  Background-Remove returns the subject on white, which TRELLIS.2 handles but Hunyuan3D doesn't.
 - A voice model that fails inside TiinyOS now says so, instead of "The upstream TTS model failed" (on 0.1.38:
   Supertonic-3, and cloning with MOSS-TTS-Nano; reported to Tiiny).
 - Tested on TiinyOS 0.1.38.

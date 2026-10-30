@@ -276,6 +276,10 @@ From Tiiny's docs (**docs**), not tested here.
   geometry/material ≈ 20 MB zips, the final GLB ≈ 7 MB). Its shape and simplify stages also offer a `*_preview` GLB.
   Timings (mug, draft/fast): shape 200 s, simplify 17 s, texture 98 s, export 43 s. TRELLIS's `background` stage
   fails like Hunyuan's (BriefNet missing).
+  `output_precisions`: Hunyuan3D gives `octree_resolution` (192/288/384); TRELLIS.2 gives `pipeline_type` 512/512/1024 with
+  `effective` (its draft is `standard`). Both list `inference_qualities` and `asset_qualities` (fast/balance/quality)
+  and accept `asset_quality` (tested 2026-10-30, 0.1.38). FLUX.2-klein-4B-Background-Remove, as a cut-out, returns RGB on
+  white (no alpha): TRELLIS.2 builds the subject from it, Hunyuan3D builds the white square.
   With two 3D models loaded, `/v1/3d/*` without a model goes to either one: add `?model=<id>` (URL-encoded) to every
   call (capabilities, tasks, polling, cancel, artifacts). Chained by reference, `input_refs` is a JSON form field:
   `{"shape_artifact": {"task_id": "…", "artifact_id": "…"}}` (a bare id is refused).

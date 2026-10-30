@@ -1,15 +1,22 @@
 "use strict";
-/* 3D workspace: Hunyuan3D image-to-3D (shape -> simplify -> PBR texture -> export) with a GLB viewer. */
+/* 3D workspace: image-to-3D (Hunyuan3D, TRELLIS.2: shape -> simplify -> PBR texture -> export) with a GLB viewer. The
+   options come from the loaded model's own /v1/3d/capabilities; Hunyuan3D's are the fallback. */
 
-// Shape time: diffusion is fixed (~140 s), volume decoding grows with octree resolution³ (measured: draft 205 s, high ~690 s).
+// Hunyuan3D shape time: diffusion is fixed (~140 s), volume decoding grows with octree resolution³ (draft 205 s, high ~690 s).
 const PRECISIONS = [["draft", "Draft", 1], ["standard", "Standard", 1.75], ["high", "High", 3.35]];
+const HUNYUAN_PRECISIONS = { draft: { octree_resolution: 192 }, standard: { octree_resolution: 288 }, high: { octree_resolution: 384 } };
 const QUALITIES = [["fast", "Fast", 0.75], ["balance", "Balanced", 1], ["quality", "Best", 1.5]];
 const FACES = [[0, "Full"], [100000, "100k"], [40000, "40k"], [10000, "10k"]];
 const M = { clip: null, precision: store.get("mesh.precision", "draft"), quality: store.get("mesh.quality", "balance"),
-  texture: store.get("mesh.texture", true), faces: store.get("mesh.faces", 40000), cutout: store.get("mesh.cutout", true), seed: "", view: null };
+  texture: store.get("mesh.texture", true), faces: store.get("mesh.faces", 40000), cutout: store.get("mesh.cutout", true), asset: store.get("mesh.asset", ""),
+  seed: "", view: null };
 let viewerLoaded = false;
-/** An image model that can put a subject on a transparent background (Qwen-Image), loaded ones first. */
-const cutoutModel = () => (S.allModels || []).filter((m) => caps(m).edit && caps(m).transparent).sort((a, b) => (a.status === "running" ? 0 : 1) - (b.status === "running" ? 0 : 1))[0] || null;
+/** An image model that can put a subject on a transparent background: loaded ones first, then those that say they write
+ *  a real alpha channel (Qwen-Image). FLUX.2-klein Background-Remove returns the subject on white (no alpha, 0.1.38):
+ *  TRELLIS.2 builds fine from that, Hunyuan3D builds the white square too. */
+const realAlpha = (m) => /alpha channel|RGBA/i.test(m.desc || "");
+const cutoutModel = () => (S.allModels || []).filter((m) => caps(m).edit && caps(m).transparent)
+  .sort((a, b) => (a.status === "running" ? 0 : 1) - (b.status === "running" ? 0 : 1) || (realAlpha(a) ? 0 : 1) - (realAlpha(b) ? 0 : 1))[0] || null;
 /** Marks a picture whose background is already transparent (some pixels see-through), so it isn't cut out again. */
 async function withTransparency(img) {
   if (!/^data:image\/(png|webp)/.test(img.uri)) return img;
@@ -63,11 +70,33 @@ const MeshWS = {
     this.renderFoot();
   },
   cuts() { return M.cutout && !!cutoutModel() && !M.clip?.transparent; },
-  plan() { return [...(this.cuts() ? ["cutout"] : []), "shape", ...(M.faces ? ["simplify"] : []), ...(M.texture ? ["texture", "export"] : [])]; },
+  /** The loaded 3D model's own options (/v1/3d/capabilities): its stages, precisions and qualities. Hunyuan3D's until
+   *  a model has answered. */
+  model3d() {
+    const m = modelForTool("mesh"), c = loadedInfo(m, () => this.render()) || {};
+    const stages = c.stages || ["background", "shape", "simplify", "texture", "export"];
+    const op = c.output_precisions || HUNYUAN_PRECISIONS;
+    const precisions = PRECISIONS.filter(([v]) => op[v] && (!op[v].effective || op[v].effective === v));  // TRELLIS.2: draft is standard
+    // what each precision means: Hunyuan3D's octree size, TRELLIS.2's pipeline resolution
+    const sizes = precisions.map(([v]) => op[v].octree_resolution || op[v].pipeline_type).filter(Boolean);
+    const precisionHint = op.draft?.octree_resolution ? "octree " + sizes.join(" / ") : sizes.length ? sizes.join(" / ") + " px" : "";
+    const qualities = QUALITIES.filter(([v]) => (c.inference_qualities || QUALITIES.map((q) => q[0])).includes(v));
+    return { family: c.model || "hunyuan3d", known: !!c.model, name: shortName(m?.id || "Hunyuan3D"), simplify: stages.includes("simplify"),
+      texture: stages.includes("texture") && stages.includes("export"), precisions, precisionHint, qualities,
+      assetQualities: c.asset_qualities ? QUALITIES.filter(([v]) => c.asset_qualities.includes(v)) : [] };
+  },
+  plan() {
+    const t = this.model3d();
+    return [...(this.cuts() ? ["cutout"] : []), "shape", ...(M.faces && t.simplify ? ["simplify"] : []), ...(M.texture && t.texture ? ["texture", "export"] : [])];
+  },
   estimate() {
-    const pm = PRECISIONS.find((p) => p[0] === M.precision)[2], qm = QUALITIES.find((q) => q[0] === M.quality)[2];
+    const t = this.model3d(), plan = this.plan();
+    const pm = PRECISIONS.find((p) => p[0] === M.precision)?.[2] || 1, qm = QUALITIES.find((q) => q[0] === M.quality)?.[2] || 1;
     const cm = this.cuts() && cutoutModel(), cut = cm ? 85 + (cm.status === "running" ? 0 : 2 * (cm.load_time || 30)) : 0;
-    return cut + 205 * pm * qm + (M.faces ? 6 : 0) + (M.texture ? 230 * qm + 60 : 0);
+    const tex = plan.includes("texture"), simp = plan.includes("simplify");
+    if (t.family === "trellis2")  // measured on a mug (0.1.38): shape ~200 s (1024 px about twice that), simplify 17 s, texture ~100 s, export ~45 s
+      return cut + 200 * (M.precision === "high" ? 2 : 1) * qm + (simp ? 20 : 0) + (tex ? 100 * qm + 45 : 0);
+    return cut + 205 * pm * qm + (simp ? 6 : 0) + (tex ? 230 * qm + 60 : 0);
   },
   renderFoot() {
     const m = modelForTool("mesh"), ready = m?.status === "running", cm = cutoutModel();
@@ -78,7 +107,9 @@ const MeshWS = {
     $("#mSteps").textContent = this.plan().join(" → ");
   },
   panel() {
-    const rerender = () => this.render();
+    const rerender = () => this.render(), t = this.model3d();
+    if (!t.precisions.some(([v]) => v === M.precision)) M.precision = t.precisions[0]?.[0] || "draft";
+    if (!t.qualities.some(([v]) => v === M.quality)) M.quality = t.qualities.find(([v]) => v === "balance")?.[0] || t.qualities[0]?.[0] || "balance";
     const recent = imageHistory().slice(0, 12);
     const src = M.clip
       ? el("div", { class: "mesh-src" }, el("img", { src: M.clip.uri, alt: "" }),
@@ -92,12 +123,14 @@ const MeshWS = {
       recent.length ? el("div", { class: "field" }, el("div", { class: "label" }, "From your images"),
         el("div", { class: "pick-row" }, recent.map((e) => el("button", { class: "pick", title: e.params.prompt, onclick: () => this.fromImage("/images/" + e.outputs[0]) }, el("img", { src: "/images/" + e.outputs[0], alt: "", loading: "lazy" }))))) : null,
       this.cutoutSwitch(rerender),
-      el("div", { class: "field" }, el("div", { class: "label" }, "Geometry detail", el("span", { class: "hint" }, "octree 192 / 288 / 384")), seg(PRECISIONS, M.precision, (v) => { M.precision = v; }, "mesh.precision")),
-      el("div", { class: "field" }, el("div", { class: "label" }, "Sampling quality"), seg(QUALITIES, M.quality, (v) => { M.quality = v; }, "mesh.quality")),
-      el("div", { class: "field" }, el("div", { class: "label" }, "Polygon budget", el("span", { class: "hint" }, "simplify before texturing")), seg(FACES, M.faces, (v) => { M.faces = v; }, "mesh.faces")),
-      el("label", { class: "switch-row" }, el("input", { type: "checkbox", checked: M.texture, onchange: (e) => { M.texture = e.target.checked; store.set("mesh.texture", M.texture); rerender(); } }),
-        el("span", {}, el("b", {}, "PBR texture"), el("small", {}, "Paint color, metal and roughness maps · adds ~5 min"))),
-      M.texture && !M.faces ? el("div", { class: "hint-line warn" }, "Texturing a full-resolution mesh is slow — a 40k budget is recommended.") : null,
+      t.precisions.length ? el("div", { class: "field" }, el("div", { class: "label" }, "Geometry detail", el("span", { class: "hint" }, t.precisionHint)), seg(t.precisions, M.precision, (v) => { M.precision = v; }, "mesh.precision")) : null,
+      t.qualities.length ? el("div", { class: "field" }, el("div", { class: "label" }, "Sampling quality"), seg(t.qualities, M.quality, (v) => { M.quality = v; }, "mesh.quality")) : null,
+      t.known && t.assetQualities.length ? el("div", { class: "field" }, el("div", { class: "label" }, "Mesh quality", el("span", { class: "hint" }, "simplify and export")),
+        seg([["", "Default"], ...t.assetQualities], M.asset, (v) => { M.asset = v; }, "mesh.asset")) : null,
+      t.simplify ? el("div", { class: "field" }, el("div", { class: "label" }, "Polygon budget", el("span", { class: "hint" }, "simplify before texturing")), seg(FACES, M.faces, (v) => { M.faces = v; }, "mesh.faces")) : null,
+      t.texture ? el("label", { class: "switch-row" }, el("input", { type: "checkbox", checked: M.texture, onchange: (e) => { M.texture = e.target.checked; store.set("mesh.texture", M.texture); rerender(); } }),
+        el("span", {}, el("b", {}, "PBR texture"), el("small", {}, `Paint color, metal and roughness maps · adds ~${t.family === "trellis2" ? "2.5" : "5"} min`))) : null,
+      t.texture && M.texture && !M.faces ? el("div", { class: "hint-line warn" }, "Texturing a full-resolution mesh is slow — a 40k budget is recommended.") : null,
       el("details", { class: "adv" }, el("summary", {}, icon("i-chev"), "Advanced", el("span", { class: "sum" }, M.seed ? "seed " + M.seed : "auto")),
         el("div", { class: "adv-body" }, AudioWS.seedField(M))),
     ];
@@ -125,8 +158,10 @@ const MeshWS = {
   },
   async submit() {
     if ($("#mGo").disabled) return;
-    const body = { image: M.clip.uri, output_precision: M.precision, inference_quality: M.quality, texture: M.texture, est: this.estimate() };
-    if (M.faces) body.faces = M.faces;
+    const t = this.model3d();
+    const body = { image: M.clip.uri, output_precision: M.precision, inference_quality: M.quality, texture: M.texture && t.texture, est: this.estimate() };
+    if (M.faces && t.simplify) body.faces = M.faces;
+    if (M.asset && t.known && t.assetQualities.length) body.asset_quality = M.asset;
     if (this.cuts()) { const cm = cutoutModel(); Object.assign(body, { cutout: true, cutout_model: cm.id, cutout_size: cutoutSize(cm, M.clip.w, M.clip.h) }); }
     if (/^\d+$/.test(M.seed)) body.seed = Number(M.seed);
     try {
@@ -154,7 +189,7 @@ const MeshWS = {
     const e = (M.view && list.find((x) => x.id === M.view.id)) || (!M.view && list[0]);
     if (!e) {
       stage.append(el("div", { class: "empty" }, el("div", { class: "art" }, icon("i-cube")), el("h2", {}, "Turn a picture into a 3D model"),
-        el("p", {}, "Hunyuan3D builds the shape from one image, then paints physically based textures you can drop into Blender, Unity or Unreal."),
+        el("p", {}, `${this.model3d().name} builds the shape from one image, then paints physically based textures you can drop into Blender, Unity or Unreal.`),
         el("div", { class: "steps" }, el("span", {}, el("b", {}, "1"), "Pick an image"), el("span", {}, el("b", {}, "2"), "Shape"), el("span", {}, el("b", {}, "3"), "Texture"), el("span", {}, el("b", {}, "4"), "Download GLB"))));
       return;
     }
