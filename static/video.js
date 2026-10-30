@@ -73,6 +73,8 @@ const VideoWS = {
       oninput: (e) => { V.prompt = e.target.value; store.set("video.prompt", V.prompt); this.renderFoot(); },
       onkeydown: (e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) this.submit(); } }, V.prompt);
     return [
+      el("div", { class: "hint-line warn", style: "margin-top:0" }, `Video is slow on the Tiiny: about ${fmtSec(this.estimate())} for these settings `
+        + "(2 s at 480p with 4 steps took 7 minutes). The device does nothing else meanwhile; start small."),
       el("div", { class: "field", style: "margin-top:0" }, el("div", { class: "label" }, "Prompt"), el("div", { class: "prompt-wrap" }, prompt)),
       t.keyframes ? el("div", { class: "field" }, el("div", { class: "label" }, "Start from a picture", el("span", { class: "hint" }, "optional")),
         el("div", { class: "video-frames" }, frame("first", "First frame"), t.keyframes > 1 && V.first ? frame("last", "Last frame") : null)) : null,
@@ -132,7 +134,8 @@ const VideoWS = {
     const e = (V.view && list.find((x) => x.id === V.view.id)) || (!V.view && list[0]);
     if (!e) {
       stage.append(el("div", { class: "empty" }, el("div", { class: "art" }, icon("i-film")), el("h2", {}, "Make a short video"),
-        el("p", {}, `${this.info().name} turns a prompt, or a picture to start from, into a clip with matching sound.`),
+        el("p", {}, `${this.info().name} turns a prompt, or a picture to start from, into a clip with matching sound. `
+          + "It's slow on the Tiiny: minutes per second of video, so try 2 s at 480p first."),
         el("div", { class: "steps" }, el("span", {}, el("b", {}, "1"), "Describe it"), el("span", {}, el("b", {}, "2"), "Add a first frame (optional)"), el("span", {}, el("b", {}, "3"), "Download MP4"))));
       return;
     }

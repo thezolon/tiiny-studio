@@ -4,8 +4,8 @@
 
 - **New Video tab** for **MiniMax-H3-Turbo**: write a prompt, or start from a picture, and get a short clip **with
   matching sound** (MP4). Sizes (wide or tall, 480p or 768p), steps and frame rate come from the loaded model. Any
-  image has an **Animate** button that opens it here. Clips take a while: about 7 minutes for 2 seconds at 480p on
-  0.1.38. Cancel stops the render on the device, and the device's copy is deleted once the studio has it.
+  image has an **Animate** button that opens it here. **Video is slow on the Tiiny:** about 7 minutes for 2 seconds at
+  480p (4 steps, 0.1.38), longer for bigger, longer or more-step clips; the panel shows the expected time before you start. Cancel stops the render on the device, and the device's copy is deleted once the studio has it.
 - Videos can be scrubbed: both servers now answer byte-range requests for media files.
 - **Chat's Thinking switch follows the model** ([#23](https://github.com/thezolon/tiiny-studio/issues/23), the start of
   panels that adapt to the loaded model): models that can't reason (Qwen3-4B-Instruct) no longer show it, models that
