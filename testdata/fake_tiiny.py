@@ -254,7 +254,8 @@ class Handler(BaseHTTPRequestHandler):
         open_paths = method == "GET" and (path == "/" or path.endswith("/icon"))  # the device serves model icons without a key
         # a model container's own port (what Studio reaches directly over Wi-Fi/LAN) takes no key
         open_paths = open_paths or path in ("/v1/generate", "/v1/generate/wav") or path.startswith("/v1/sessions")
-        tts_port = path in ("/v1/models", "/v1/audio/speech") and not self.headers.get("Authorization")  # a voice model's own port
+        # a voice model's own port (no key): only while Broken-TTS is loaded, so the gateway still refuses keyless calls
+        tts_port = path in ("/v1/models", "/v1/audio/speech") and not self.headers.get("Authorization") and "Fake/Broken-TTS" in self.st.running
         open_paths = open_paths or tts_port
         if not open_paths:
             if self.headers.get("Authorization") != f"Bearer {self.st.key}":
