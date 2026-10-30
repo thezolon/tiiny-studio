@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **Supertonic-3 speaks over Wi-Fi/LAN.** TiinyOS's gateway fails it ("The upstream TTS model failed", 0.1.38: it sends
+  the model a name it doesn't know); the studio now asks the model's own port directly when the gateway fails, where
+  the connection allows it. Over USB it still can't work, and the Voice panel says so.
+- **A "needs Wi-Fi" banner** where a model only works over Wi-Fi/LAN and you're on USB (Supertonic-3, GLM-OCR). Text
+  mode reads with PP-OCRv6 instead of failing when GLM-OCR is picked over USB.
 - **New Video tab** for **MiniMax-H3-Turbo**: write a prompt, or start from a picture, and get a short clip **with
   matching sound** (MP4). Sizes (wide or tall, 480p or 768p), steps and frame rate come from the loaded model. Any
   image has an **Animate** button that opens it here. **Video is slow on the Tiiny:** about 7 minutes for 2 seconds at

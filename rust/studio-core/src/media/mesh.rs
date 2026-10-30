@@ -11,6 +11,9 @@ use super::{decode_uri, ensure_running, err, http, http_bytes, json_reply, make_
 use crate::device::truthy;
 use crate::jobs::{Ctx, JobError, JobResult};
 
+/// Polls in a row without an answer (~5 minutes at 2 s) before a 3D stage gives up (media.py MESH_LOST_POLLS).
+const LOST_POLLS: u32 = 150;
+
 /// What each 3D stage takes when the model doesn't say (Hunyuan3D-2.1's /v1/3d/capabilities, TiinyOS 0.1.37). Each
 /// model lists its own; TRELLIS.2 chains "shape_artifact" and "geometry_artifact" instead of "mesh".
 fn stage_inputs(stage: &str) -> &'static [&'static str] {
@@ -290,10 +293,22 @@ async fn build(ctx: &Ctx, saved: &mut Vec<String>) -> JobResult {
             other => other.to_string(),
         };
         ctx.set_remote_task(Some(format!("{url}/tasks/{tid}/cancel{mq}")));
-        let mut silent = 0; // polls in a row without a status: the task is gone, don't hold the device forever
+        let mut silent = 0; // polls in a row without a status: the task is gone, or the link is down (a stage can take many minutes)
         let d = loop {
             tokio::time::sleep(Duration::from_secs(2)).await;
-            let (_, st) = http(&ctx, "GET", &format!("{url}/tasks/{tid}{mq}"), None, 30, true).await?;
+            let (code, st) = http(&ctx, "GET", &format!("{url}/tasks/{tid}{mq}"), None, 30, true).await.unwrap_or((0, json!({})));
+            if code == 0 || code >= 500 {
+                // no answer: ride out a dropped link
+                if ctx.cancelled() {
+                    return Err(JobError("Cancelled".into()));
+                }
+                silent += 1;
+                if silent >= LOST_POLLS {
+                    return Err(JobError(format!("{stage}: lost the Tiiny while it worked on this task")));
+                }
+                ctx.update(json!({"message": "Can't reach the Tiiny, still trying…"}));
+                continue;
+            }
             let d = st.get("data").filter(|d| truthy(d)).cloned().unwrap_or(json!({}));
             let p = d.get("progress").and_then(Value::as_f64).unwrap_or(0.0);
             let shown = ["message", "status"].iter().filter_map(|k| d.get(*k)).find(|v| truthy(v)).or(d.get("status")).map_or("None".to_string(), |v| match v {
@@ -310,7 +325,7 @@ async fn build(ctx: &Ctx, saved: &mut Vec<String>) -> JobResult {
                 return Err(JobError("Cancelled".into()));
             }
             silent = if d.get("status").is_some_and(truthy) { 0 } else { silent + 1 };
-            if silent >= 30 {
+            if silent >= LOST_POLLS {
                 return Err(JobError(format!("{stage}: the device stopped reporting on this task")));
             }
         };
@@ -345,7 +360,19 @@ async fn build(ctx: &Ctx, saved: &mut Vec<String>) -> JobResult {
                 (None, Some(_)) if !local => continue,
                 (None, Some(id)) => {
                     // not inline (TRELLIS.2): fetch it from the task
-                    let (code, raw) = http_bytes(&ctx, "GET", &format!("{url}/tasks/{tid}/artifacts/{}{mq}", super::quote(id)), None, 600, true).await?;
+                    let mut got = (0, Err(json!("Device unreachable")));
+                    for _ in 0..5 {
+                        // a dropped link shouldn't lose a finished stage
+                        got = match http_bytes(&ctx, "GET", &format!("{url}/tasks/{tid}/artifacts/{}{mq}", super::quote(id)), None, 600, true).await {
+                            Ok(r) => r,
+                            Err(e) => (0, Err(json!({"error": e.0}))),
+                        };
+                        if got.0 == 200 || (got.0 > 0 && got.0 < 500) || ctx.cancelled() {
+                            break;
+                        }
+                        tokio::time::sleep(Duration::from_secs(3)).await;
+                    }
+                    let (code, raw) = got;
                     match raw {
                         Ok(bytes) if code == 200 => bytes,
                         Ok(_) => return Err(JobError(format!("{stage}: couldn't fetch its {kind}: Unexpected response (HTTP {code})."))),

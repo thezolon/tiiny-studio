@@ -3,7 +3,8 @@ Usage: python fake_tiiny.py [--port N] [--key KEY] [--launch-delay SECONDS]
 Or import it: `server, url = fake_tiiny.start()`; `server.state` holds the models, tasks and request log.
 Every request is recorded (minus the Authorization header): GET /__requests, POST /__reset (no auth).
 POST /__flags {..} switches on test behaviour until the next reset: "fail" {path: [status, message]}, "delay" {path: seconds},
-"closed_port", "no_music_gateway", "speech_text", "task_polls" N, "task_hold", "fail_stage" name, "rich_texture", "song_tracks".
+"closed_port", "no_music_gateway", "speech_text", "task_polls" N, "task_hold", "fail_stage" name, "rich_texture", "song_tracks",
+"task_flaky" N / "artifact_flaky" N (the next N 3D task polls / artifact fetches answer 502).
 POST /__seed {"videos": [{"id", "status", "age", "seconds"}], "sessions": [{"session_id", "model_id", "route", "status", "age"}]} plants results the studio never
 saw (a finished clip, music sessions made `age` seconds ago), like ones left on the device by a restart or another studio.
 Everything except GET / and /__* needs `Authorization: Bearer <key>`, like the device. stdlib only."""
@@ -257,6 +258,9 @@ class Handler(BaseHTTPRequestHandler):
         open_paths = method == "GET" and (path == "/" or path.endswith("/icon"))  # the device serves model icons without a key
         # a model container's own port (what Studio reaches directly over Wi-Fi/LAN) takes no key
         open_paths = open_paths or path in ("/v1/generate", "/v1/generate/wav") or path.startswith("/v1/sessions")
+        # a voice model's own port (no key): only while Broken-TTS is loaded, so the gateway still refuses keyless calls
+        tts_port = path in ("/v1/models", "/v1/audio/speech") and not self.headers.get("Authorization") and "Fake/Broken-TTS" in self.st.running
+        open_paths = open_paths or tts_port
         if not open_paths:
             if self.headers.get("Authorization") != f"Bearer {self.st.key}":
                 return self.err(401, "Unauthorized")
@@ -268,6 +272,12 @@ class Handler(BaseHTTPRequestHandler):
             self.st.sessions.pop("live", None)
         if path in flags.get("fail", {}):
             return self.err(*flags["fail"][path])
+        if tts_port:  # Broken-TTS's container, like Supertonic-3's on 0.1.38: it works under its own name only
+            if method == "GET":
+                return self.send_json(200, {"model_config": {"id": "Broken-TTS"}})
+            if self.body.get("model") != "Broken-TTS":
+                return self.send_json(400, {"error": {"message": f"Model '{self.body.get('model')}' not found"}})
+            return self.send_bytes(200, WAV, "audio/wav")
         if not self.route(method, unquote(path)):
             self.err(404, "endpoint not found")
 
@@ -604,6 +614,9 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_json(200, {"data": {"task_id": tid, "status": "queued"}})
         m = re.fullmatch(r"/v1/(?:3d/)?tasks/([\w-]+)/artifacts/([\w:.-]+)", p)
         if method == "GET" and m:
+            if st.flags.get("artifact_flaky", 0) > 0:  # the next n artifact fetches get a 502
+                st.flags["artifact_flaky"] -= 1
+                return self.err(502, "bad gateway")
             t = st.tasks.get(m.group(1))
             art = next((a for i, a in enumerate(TRELLIS_OUT.get(t["stage"], []) if t else []) if f"{m.group(1)}-{i}" == unquote(m.group(2))), None)
             return self.send_bytes(200, art[2], "application/octet-stream") if art else self.err(404, "artifact not found")
@@ -615,6 +628,9 @@ class Handler(BaseHTTPRequestHandler):
             t["cancelled"] = not st.flags.get("ignore_cancel")  # ignore_cancel: a device that never stops the task
             return self.send_json(200, {"data": {"task_id": m.group(1), "status": "cancelled"}})
         if method == "GET" and not m.group(2):
+            if st.flags.get("task_flaky", 0) > 0:  # a dropped link: the next n polls get a 502 and don't count
+                st.flags["task_flaky"] -= 1
+                return self.err(502, "bad gateway")
             t["polls"] += 1  # queued -> running -> completed on successive polls
             status = "cancelled" if t["cancelled"] else "running" if t["polls"] < st.flags.get("task_polls", 2) or st.flags.get("task_hold") else "completed"
             if status == "completed" and st.flags.get("fail_stage") == t["stage"]:
