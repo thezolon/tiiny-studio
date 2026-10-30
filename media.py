@@ -245,20 +245,32 @@ class Media:
 
 
 # ---------- kinds ----------
+UPSTREAM_FAILED = ("{model} failed on the device (\"The upstream TTS model failed\"). Some voice models and modes don't work "
+                   "through TiinyOS's gateway yet (on 0.1.38: Supertonic-3, and cloning with MOSS-TTS-Nano). Try another voice model.")
+
+
 def run_speech(m, job, req):
+    """Speech in one of three voices, as the model offers (its /v1/capabilities): a built-in speaker ("speaker", sent
+    as "voice"), a voice described in words ("design", sent as "instruct"), or a cloned voice (ref_audio + ref_text).
+    The gateway's /v1/audio/speech takes them at the top level and works on every link."""
     text = (req.get("text") or "").strip()
     if not text:
         raise JobError("Nothing to say")
-    if not req.get("ref_audio"):
-        raise JobError("This model only speaks in a cloned voice: add a reference clip")
-    if not (req.get("ref_text") or "").strip():
-        raise JobError("Add what's said in the reference clip (its transcript) — voice cloning needs both")
-    _, ref = m.decode_uri(req["ref_audio"])
-    # The gateway's OpenAI-style /v1/audio/speech takes the clone fields at the top level and works on
-    # every link (the USB cable blocks the TTS container's own port).
-    body = {"model": job["model"], "input": text, "ref_audio": base64.b64encode(ref).decode(), "response_format": "wav"}
+    speaker, design, ref = (req.get("speaker") or "").strip(), (req.get("design") or "").strip(), None
+    body = {"model": job["model"], "input": text, "response_format": "wav"}
     config = {}
-    for k in ("ref_text", "language", "instruct"):
+    if speaker:
+        body["voice"] = speaker
+    elif design:
+        body["instruct"] = design
+    else:
+        if not req.get("ref_audio"):
+            raise JobError("This model only speaks in a cloned voice: add a reference clip")
+        if not (req.get("ref_text") or "").strip():
+            raise JobError("Add what's said in the reference clip (its transcript) — voice cloning needs both")
+        _, ref = m.decode_uri(req["ref_audio"])
+        body["ref_audio"] = base64.b64encode(ref).decode()
+    for k in ("ref_text", "language", "instruct") if ref is not None else ("language",):
         if (req.get(k) or "").strip():
             body[k] = config[k] = req[k].strip()
     m.ensure_running(job["model"])
@@ -272,16 +284,17 @@ def run_speech(m, job, req):
         job["progress"] = round(i / len(chunks) * 100) if len(chunks) > 1 else 0
         code, res = m.http("POST", f"{m.settings.url}/v1/audio/speech", {**body, "input": chunk}, headers=m.gateway_headers(), raw=True)
         if code != 200 or not isinstance(res, bytes) or res[:4] != b"RIFF":
-            raise JobError(m.err(res if not isinstance(res, bytes) else res.decode("utf-8", "replace")))
+            why = m.err(res if not isinstance(res, bytes) else res.decode("utf-8", "replace"))
+            raise JobError(UPSTREAM_FAILED.format(model=job["model"].split("/")[-1]) if "upstream TTS model failed" in why else why)
         parts.append(res)
     res = join_wavs(parts)
     out = m.save(f"{job['id']}-speech.wav", res)
-    src = m.save(f"{job['id']}-ref.wav", ref)
+    src = m.save(f"{job['id']}-ref.wav", ref) if ref is not None else None
     res = {"duration": wav_seconds(res)}
     return {"kind": "speech", "params": {"model": job["model"], "text": text, "language": config.get("language"), "parts": len(chunks),
-                                         "instruct": config.get("instruct"), "voice": req.get("voice_name"),
-                                         "ref_text": config.get("ref_text")},
-            "sources": [src], "outputs": [out], "duration": res.get("duration")}
+                                         "instruct": config.get("instruct"), "voice": req.get("voice_name") or speaker or None,
+                                         "ref_text": config.get("ref_text"), "speaker": speaker or None, "design": design or None},
+            "sources": [src] if src else [], "outputs": [out], "duration": res.get("duration")}
 
 
 def split_for_speech(text, limit=320):

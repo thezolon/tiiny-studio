@@ -244,6 +244,14 @@ From Tiiny's docs (**docs**), not tested here.
   route (separate tracks, exact-length songs). The USB /30 is derived from the serial and can land in
   Docker's `172.17.x.x`.
 - Hunyuan3D `background` stage fails (BriefNet missing; still on 0.1.37); SongGeneration style reference fails.
+- **Voice models** (tested 2026-10-30, 0.1.38, `POST /v1/audio/speech`): a built-in speaker goes in `voice` (Qwen3-TTS
+  CustomVoice: aiden, dylan, eric, ono_anna, ryan, serena, sohee, uncle_fu, vivian; an unknown name: `Unsupported
+  speaker`), a voice description in `instruct` (VoiceDesign; required), a clone in `ref_audio` + `ref_text` (Base);
+  `language` works for all. CustomVoice reports `support_instruct` but rejects `instruct` ("voice_design is not
+  supported"). Supertonic-3 fails through the gateway whatever it's sent ("The upstream TTS model failed"), though its
+  container answers directly over Wi-Fi when called by its own name `Supertonic-3`; it also refuses `speed` other than
+  1.0 despite `support_speed`. MOSS-TTS-Nano speaks with `voice: default`; cloning fails (the gateway demands
+  `ref_text`, the container refuses it).
 - **Thinking** (tested 2026-10-30, 0.1.38): follow the model's `thinking` object, not its name. `toggleable` models
   (Qwen3.5/3.6) switch with `chat_template_kwargs.enable_thinking` (off: no reasoning, ~10x faster); `reasoning_effort`
   changes nothing for them. gpt-oss (`toggleable: false`, levels low/medium/high) reasons whatever it's sent and no longer

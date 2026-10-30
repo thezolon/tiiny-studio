@@ -8,6 +8,15 @@ const ASR_LANGS = [["", "Auto-detect"], ["en", "English"], ["zh", "Chinese"], ["
   ["fr", "French"], ["es", "Spanish"], ["it", "Italian"], ["pt", "Portuguese"], ["ru", "Russian"], ["ar", "Arabic"], ["hi", "Hindi"],
   ["vi", "Vietnamese"], ["th", "Thai"], ["id", "Indonesian"]];
 const STYLE_CHIPS = ["Calm and warm", "Excited and upbeat", "Whispering", "Like a news anchor", "Slow and clear", "Sad, quiet"];
+const DESIGN_CHIPS = ["A calm, warm narrator", "A bright, fast young woman", "A deep, slow old man", "A cheerful child", "A gravelly movie-trailer voice"];
+// Language names for the codes voice models report ("en", "german", "beijing_dialect"…); "auto"/"na" mean let the model decide.
+const LANG_WORDS = { beijing_dialect: "Beijing dialect", sichuan_dialect: "Sichuan dialect" };
+function langName(code) {
+  if (LANG_WORDS[code]) return LANG_WORDS[code];
+  if (/^[a-z]{2,3}$/.test(code)) { try { const n = new Intl.DisplayNames(["en"], { type: "language" }).of(code); if (n && n !== code) return n; } catch {} }
+  return code.replace(/_/g, " ").replace(/^\w/, (c) => c.toUpperCase());
+}
+const speakerName = (s) => s.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 const FAMILIES = {
   Synth: ["Wavetable Synth", "Supersaw", "FM Synth", "Analog Pad", "Pluck Synth", "Lead Synth"],
   Keys: ["Grand Piano", "Electric Piano", "Rhodes", "Church Organ", "Harpsichord"],
@@ -41,7 +50,9 @@ const TOOLS = [
 
 const A = {
   tool: store.get("audio.tool", "speech"), view: null, voices: [],
-  speech: { voiceId: store.get("audio.voice", null), clip: null, clipText: "", clipName: "", text: "", language: store.get("audio.lang", ""), instruct: "" },
+  speech: { voiceId: store.get("audio.voice", null), clip: null, clipText: "", clipName: "", text: "", language: store.get("audio.lang", ""), instruct: "",
+    speaker: store.get("audio.speaker", null), design: "" },
+  voiceInfo: {},  // model id -> what the loaded voice model offers (/api/model/info), or "loading"
   loop: { family: "Synth", role: "Wavetable Synth", desc: "", character: new Set(["warm"]), fx: new Set(), phrase: new Set(["chord progression"]), bpm: 120, bars: 4, key: "A minor", custom: null, steps: 64, cfg: 6, seed: "" },
   song: { type: "mixed", caption: "", lyrics: "", seconds: 60, ref: null, seed: "", steps: "", temperature: "", top_k: "" },
   transcribe: { clip: null, language: "" },
@@ -98,25 +109,65 @@ const AudioWS = {
   },
 
   /* ---------- Voice ---------- */
+  /** What the loaded voice model offers: cloning, built-in speakers, a voice from a description, style instructions,
+   *  languages (its /v1/capabilities via /api/model/info). Null until it's loaded: then the panel is the cloning one. */
+  voiceCaps() {
+    const m = modelForTool("speech");
+    if (!m || m.status !== "running") return null;
+    const got = A.voiceInfo[m.id];
+    if (got === undefined) {
+      A.voiceInfo[m.id] = "loading";
+      api("/api/model/info?id=" + encodeURIComponent(m.id)).then((r) => { A.voiceInfo[m.id] = r.info || {}; }).catch(() => { A.voiceInfo[m.id] = {}; })
+        .then(() => this.render());
+    }
+    return got && got !== "loading" && Object.keys(got).length ? got : null;
+  },
+  /** The voice modes the model has: { clone, speakers[], design, instruct, languages[] }. */
+  voiceModes() {
+    const c = this.voiceCaps();
+    if (!c) return { clone: true, speakers: [], design: false, instruct: true, languages: null };
+    return { clone: !!c.support_voice_clone, speakers: c.support_custom_voice ? c.supported_speakers || [] : [], design: !!c.support_voice_design,
+      instruct: !!c.support_instruct, languages: c.supported_languages || null };
+  },
   speechPanel() {
-    const sp = A.speech;
-    const voices = el("div", { class: "voice-list" },
-      ...A.voices.map((v) => el("div", { class: "voice-card", "aria-pressed": sp.voiceId === v.id && !sp.clip, onclick: () => { sp.voiceId = v.id; sp.clip = null; store.set("audio.voice", v.id); this.render(); } },
-        el("button", { class: "vplay", title: "Preview", onclick: (e) => { e.stopPropagation(); const a = new Audio("/images/" + v.file); if (currentAudio) currentAudio.pause(); currentAudio = a; a.play(); } }, icon("i-play")),
-        el("span", { class: "vname" }, v.name),
-        el("button", { class: "vdel", title: "Delete voice", onclick: async (e) => { e.stopPropagation(); if (!confirm(`Delete voice “${v.name}”?`)) return; await api("/api/voices/" + v.id, { method: "DELETE" }); this.loadVoices(); } }, "✕"))),
-      el("button", { class: "voice-card add", "aria-pressed": !!sp.clip || !A.voices.length, onclick: () => { sp.clip = sp.clip || { pending: true }; this.render(); } }, "+ New voice"));
-    const out = [el("div", { class: "field" }, el("div", { class: "label" }, "Voice", el("span", { class: "hint" }, "cloned from a 3–20 s clip")), voices)];
-    if (sp.clip || !A.voices.length) out.push(this.clipEditor());
+    const sp = A.speech, vm = this.voiceModes();
+    if (vm.speakers.length && !vm.speakers.includes(sp.speaker)) sp.speaker = !vm.clone || !A.voices.length ? vm.speakers[0] : null;
+    const useSpeaker = vm.speakers.includes(sp.speaker) && !sp.clip;
+    const out = [];
+    if (vm.design) {  // a voice described in words (Qwen3-TTS VoiceDesign)
+      const box = el("textarea", { rows: "3", placeholder: "e.g. a calm, warm narrator with a slight British accent", oninput: (e) => { sp.design = e.target.value; this.renderFoot(); } }, sp.design);
+      out.push(el("div", { class: "field" }, el("div", { class: "label" }, "Voice", el("span", { class: "hint" }, "describe how it should sound")),
+        el("div", { class: "prompt-wrap" }, box),
+        el("div", { class: "chips" }, DESIGN_CHIPS.map((c) => el("button", { class: "chip", onclick: () => { sp.design = c; box.value = c; this.renderFoot(); } }, c)))));
+    } else {
+      const speakerCards = vm.speakers.map((s) => el("div", { class: "voice-card", "aria-pressed": sp.speaker === s && !sp.clip,
+        onclick: () => { sp.speaker = s; sp.clip = null; store.set("audio.speaker", s); this.render(); } }, el("span", { class: "vname" }, speakerName(s))));
+      const voices = el("div", { class: "voice-list" }, ...speakerCards, ...(vm.clone ? this.cloneCards() : []));
+      const hint = vm.speakers.length && vm.clone ? "built-in, or cloned from a 3–20 s clip" : vm.speakers.length ? "built into this model" : "cloned from a 3–20 s clip";
+      out.push(el("div", { class: "field" }, el("div", { class: "label" }, "Voice", el("span", { class: "hint" }, hint)), voices));
+      if (vm.clone && (sp.clip || (!A.voices.length && !vm.speakers.length))) out.push(this.clipEditor());
+    }
     out.push(el("div", { class: "field" },
       el("div", { class: "label" }, "What to say", el("span", { class: "hint" }, `${sp.text.length} chars`)),
       el("div", { class: "prompt-wrap" }, el("textarea", { rows: "6", placeholder: "Type what the voice should say…", oninput: (e) => { sp.text = e.target.value; e.target.closest(".field").querySelector(".hint").textContent = `${sp.text.length} chars`; this.renderFoot(); } }, sp.text))));
-    const style = el("input", { class: "input", placeholder: "e.g. calm and warm, a little slower", value: sp.instruct, oninput: (e) => { sp.instruct = e.target.value; } });
-    out.push(el("div", { class: "field" }, el("div", { class: "label" }, "Delivery", el("span", { class: "hint" }, "optional style instruction")), style,
-      el("div", { class: "chips" }, STYLE_CHIPS.map((c) => el("button", { class: "chip", onclick: () => { sp.instruct = c; style.value = c; } }, c)))));
+    if (vm.clone && vm.instruct && !useSpeaker && !vm.design) {  // style instructions only work with a cloned voice
+      const style = el("input", { class: "input", placeholder: "e.g. calm and warm, a little slower", value: sp.instruct, oninput: (e) => { sp.instruct = e.target.value; } });
+      out.push(el("div", { class: "field" }, el("div", { class: "label" }, "Delivery", el("span", { class: "hint" }, "optional style instruction")), style,
+        el("div", { class: "chips" }, STYLE_CHIPS.map((c) => el("button", { class: "chip", onclick: () => { sp.instruct = c; style.value = c; } }, c)))));
+    }
+    const langs = vm.languages ? [["", "Auto"], ...vm.languages.filter((l) => !["auto", "na"].includes(l)).map((l) => [l, langName(l)])] : LANGS;
+    if (!langs.some(([v]) => v === sp.language)) sp.language = "";
     out.push(el("div", { class: "field" }, el("div", { class: "label" }, "Language"),
-      el("select", { class: "input", onchange: (e) => { sp.language = e.target.value; store.set("audio.lang", sp.language); } }, LANGS.map(([v, n]) => el("option", { value: v, selected: v === sp.language }, n)))));
+      el("select", { class: "input", onchange: (e) => { sp.language = e.target.value; store.set("audio.lang", sp.language); } }, langs.map(([v, n]) => el("option", { value: v, selected: v === sp.language }, n)))));
     return out;
+  },
+  cloneCards() {
+    const sp = A.speech;
+    return [...A.voices.map((v) => el("div", { class: "voice-card", "aria-pressed": sp.voiceId === v.id && !sp.clip && !sp.speaker, onclick: () => { sp.voiceId = v.id; sp.clip = null; sp.speaker = null; store.set("audio.voice", v.id); store.set("audio.speaker", null); this.render(); } },
+        el("button", { class: "vplay", title: "Preview", onclick: (e) => { e.stopPropagation(); const a = new Audio("/images/" + v.file); if (currentAudio) currentAudio.pause(); currentAudio = a; a.play(); } }, icon("i-play")),
+        el("span", { class: "vname" }, v.name),
+        el("button", { class: "vdel", title: "Delete voice", onclick: async (e) => { e.stopPropagation(); if (!confirm(`Delete voice “${v.name}”?`)) return; await api("/api/voices/" + v.id, { method: "DELETE" }); this.loadVoices(); } }, "✕"))),
+      el("button", { class: "voice-card add", "aria-pressed": !!sp.clip || (!A.voices.length && !sp.speaker), onclick: () => { sp.clip = sp.clip || { pending: true }; sp.speaker = null; this.render(); } }, "+ New voice")];
   },
   clipEditor() {
     const sp = A.speech, c = sp.clip && !sp.clip.pending ? sp.clip : null;
@@ -360,9 +411,15 @@ const AudioWS = {
   payload(preview = false) {
     const seed = (o) => (/^\d+$/.test(o.seed) ? Number(o.seed) : preview ? undefined : Math.floor(Math.random() * 2 ** 31));
     if (A.tool === "speech") {
-      const sp = A.speech, v = A.voices.find((x) => x.id === sp.voiceId);
+      const sp = A.speech, v = A.voices.find((x) => x.id === sp.voiceId), vm = this.voiceModes();
       const useClip = sp.clip?.uri;
       if (!sp.text.trim()) return { ok: false, why: "Type something to say" };
+      const est = 2 + sp.text.length / 16, label = "Voice: " + sp.text.slice(0, 40);
+      if (vm.design) {
+        if (!sp.design.trim()) return { ok: false, why: "Describe the voice" };
+        return { ok: true, est, kind: "speech", label, body: { text: sp.text, design: sp.design.trim(), voice_name: "designed voice", language: sp.language } };
+      }
+      if (vm.speakers.includes(sp.speaker) && !useClip) return { ok: true, est, kind: "speech", label, body: { text: sp.text, speaker: sp.speaker, language: sp.language } };
       if (!useClip && !v) return { ok: false, why: "Pick or record a voice" };
       if (!(useClip ? sp.clipText : v.text)?.trim()) return { ok: false, why: "Add what's said in the voice clip — cloning needs its transcript" };
       return { ok: true, est: 2 + sp.text.length / 16, kind: "speech", label: "Voice: " + sp.text.slice(0, 40),
