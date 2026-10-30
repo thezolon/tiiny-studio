@@ -239,6 +239,25 @@ class Audio(ContractCase):
         self.assertEqual(infos[0], infos[1])
         self.assertEqual(infos[0]["info"]["supported_speakers"], ["ryan", "ono_anna"])
 
+    def test_song_follows_the_model(self):
+        # the music service (/v1/music/info) decides the route: YuE2 and AceStep take the plain /generate (no preview),
+        # SongGeneration keeps its preview; AceStep's own settings go nested in config.ace_step
+        base = {"kind": "song", "caption": "RUST TEST pop", "lyrics": "[verse]\nla la", "generation_type": "mixed", "seconds_total": 20}
+        py, _ = self.same_job({**base, "model": "Fake/YuE2", "load": "Fake/YuE2", "preview": True})
+        self.assertEqual((py["status"], py["entry"]["params"]["route"]), ("done", "gateway"), py.get("error"))
+        self.assertEqual([c[1] for c in self.calls() if c[0] == "POST"], ["/v1/music/generate"])
+        ace = {"bpm": 92, "key_scale": "C major", "time_signature": "4", "vocal_language": "en", "negative_prompt": "drums", "nope": 1}
+        py, _ = self.same_job({**base, "model": "ACE-Step/AceStep-Fake", "load": "ACE-Step/AceStep-Fake", "ace_step": ace})
+        self.assertEqual(py["status"], "done", py.get("error"))
+        sent = next(c[3] for c in self.calls() if c[1] == "/v1/music/generate")
+        self.assertEqual(sent["config"]["ace_step"], {k: v for k, v in ace.items() if k != "nope"})
+        self.failed({**base, "model": "ACE-Step/AceStep-Fake", "load": "ACE-Step/AceStep-Fake", "ace_step": {"bpm": "fast"}}, "must be number")
+        py, _ = self.same_job({**base, "model": SONG, "load": SONG, "preview": True})
+        self.assertEqual(py["entry"]["params"]["route"], "preview")
+        infos = [request(b, "GET", "/api/model/info?id=Fake%2FSongGeneration-v2").json for b in (self.h.py_url, self.h.rs_url)]
+        self.assertEqual(infos[0], infos[1])
+        self.assertEqual(infos[0]["info"]["service_name"], "SongGenerationTTMService")
+
     # ---------- 3D ----------
     def mesh(self, **kw):
         return {"kind": "mesh", "model": MESH, "image": PNG, "load": MESH, "flags": {"task_polls": 1}, **kw}

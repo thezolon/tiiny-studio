@@ -244,6 +244,14 @@ From Tiiny's docs (**docs**), not tested here.
   route (separate tracks, exact-length songs). The USB /30 is derived from the serial and can land in
   Docker's `172.17.x.x`.
 - Hunyuan3D `background` stage fails (BriefNet missing; still on 0.1.37); SongGeneration style reference fails.
+- **Song models** (tested 2026-10-30, 0.1.38): `/v1/music/info?model=` gives `service_name` (`SongGenerationTTMService`,
+  `AceStepTTMService`, `YuE2TTMService`, `FoundationTTMService`), `default_config` (steps, temperature, top_k, top_p),
+  per-task `defaults`, and `model_info.model` (`codec_llm_duration` = longest song in seconds: AceStep 480,
+  SongGeneration 270, YuE2 0; `max_decoder_steps`: AceStep 20). The `config_schema` groups (`common`, `ace_step`, `yue2`)
+  aren't model-specific: SongGeneration lists the `ace_step` group too. AceStep and YuE2 take only the plain
+  `/v1/music/generate` ("… preview generation is not implemented"; YuE2: a 15 s request gave 23 s in 93 s). AceStep's own
+  settings go **nested** in `config.ace_step` (`bpm` number, `key_scale` "G major", `time_signature` "4",
+  `vocal_language`, `negative_prompt`); at the top of `config` they're refused ("Extra inputs are not permitted").
 - **Voice models** (tested 2026-10-30, 0.1.38, `POST /v1/audio/speech`): a built-in speaker goes in `voice` (Qwen3-TTS
   CustomVoice: aiden, dylan, eric, ono_anna, ryan, serena, sohee, uncle_fu, vivian; an unknown name: `Unsupported
   speaker`), a voice description in `instruct` (VoiceDesign; required), a clone in `ref_audio` + `ref_text` (Base);
