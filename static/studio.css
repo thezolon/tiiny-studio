@@ -167,6 +167,9 @@ textarea.lyrics:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(-
 .set-network p { margin: 3px 0 0; line-height: 1.5; }
 .set-network b { color: var(--text); }
 .dev-row .dev-warn { display: block; margin-top: 3px; color: #fbbf24; }
+.ace-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 8px; }
+.ace-grid label { display: flex; flex-direction: column; gap: 2px; }
+.ace-grid small { color: var(--muted); }
 .set-swap .auto { display: flex; margin-top: 6px; color: var(--text); }
 .set-swap .auto.off { opacity: .5; cursor: default; }
 .set-swap .swap-secs { margin: 2px 0 8px 20px; }

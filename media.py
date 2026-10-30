@@ -575,8 +575,18 @@ SONG_CONFIG = ("caption", "lyrics", "generation_type", "seconds_total", "seed", 
 FULL_SONG_SECONDS = 240  # at or above this, the gateway path renders the model's full-length arrangement
 
 
-def is_ace_step(model):
-    """AceStep songs go through the gateway's plain /generate (no preview/resume, no SongGeneration port API)."""
+# AceStep's own settings, sent nested as config.ace_step (at the top level it answers "Extra inputs are not permitted").
+ACE_STEP_KEYS = ("bpm", "key_scale", "time_signature", "vocal_language", "negative_prompt")
+
+
+def plain_song_model(m, model):
+    """True for song models that only take the gateway's plain /generate, with no preview, resume or own-port API
+    (AceStep, YuE2: "... preview generation is not implemented"); False for SongGeneration. Read from the model's music
+    service (/v1/music/info, 0.1.38); by its id when the device doesn't say."""
+    code, info = m.device("GET", f"/v1/music/info?model={quote(model, safe='')}", None, 15)
+    service = info.get("service_name") if code == 200 and isinstance(info, dict) else None
+    if service:
+        return not service.startswith("SongGeneration")
     return model.startswith("ACE-Step/")
 
 
@@ -589,13 +599,18 @@ def run_song(m, job, req):
         _, ref = m.decode_uri(req["reference_audio"])
         config["reference_audio_base64"] = base64.b64encode(ref).decode()
         sources.append(m.save(f"{job['id']}-styleref.wav", ref))
+    ace = req.get("ace_step") if isinstance(req.get("ace_step"), dict) else {}
+    ace = {k: ace[k] for k in ACE_STEP_KEYS if ace.get(k) not in (None, "")}
+    if ace:
+        config["ace_step"] = ace
     inst = m.running_instance(job["model"])
+    plain = plain_song_model(m, job["model"])
     gw, auth = f"{m.settings.url}/v1/music/generate", m.gateway_headers()
     stop = threading.Event()
-    direct = not is_ace_step(job["model"]) and m.port_open(m.settings.host, inst.get("port")) and not req.get("preview") and not req.get("resume_session")
+    direct = not plain and m.port_open(m.settings.host, inst.get("port")) and not req.get("preview") and not req.get("resume_session")
     threading.Thread(target=song_progress, args=(m, job, f"http://{m.settings.host}:{inst.get('port')}" if direct else None, stop), daemon=True).start()
     try:
-        code, res, route, url = _compose(m, job, req, config, inst, direct, gw, auth)
+        code, res, route, url = _compose(m, job, req, config, inst, direct, gw, auth, plain)
     finally:
         stop.set()
     if code != 200 or not res.get("success") or not res.get("audio_data"):
@@ -603,13 +618,12 @@ def run_song(m, job, req):
     return _song_entry(m, job, req, res, config, sources, route, url)
 
 
-def _compose(m, job, req, config, inst, direct, gw, auth):
+def _compose(m, job, req, config, inst, direct, gw, auth, plain):
     route, url = "direct", None
     body = {"model": job["model"], "config": config}
-    if is_ace_step(job["model"]):
-        # AceStep (TiinyOS 0.1.36): the gateway's plain /generate composes the whole song at seconds_total on every
-        # link; it has no preview or resume ("AceStep preview generation is not implemented"). A preview request
-        # becomes an 8-second song.
+    if plain:
+        # AceStep (0.1.36+) and YuE2 (0.1.38): the gateway's plain /generate composes the whole song at seconds_total on
+        # every link; they have no preview or resume. A preview request becomes an 8-second song.
         if req.get("preview") and not config.get("seconds_total"):
             config["seconds_total"] = 8
         job["message"] = "Composing"

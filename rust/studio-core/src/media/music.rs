@@ -14,9 +14,18 @@ const LOOP_CONFIG: [&str; 4] = ["seconds_total", "steps", "cfg_scale", "seed"];
 const SONG_CONFIG: [&str; 9] = ["caption", "lyrics", "generation_type", "seconds_total", "seed", "steps", "temperature", "top_k", "top_p"];
 const FULL_SONG_SECONDS: f64 = 240.0; // at or above this, the gateway path renders the model's full-length arrangement
 
-/// AceStep songs go through the gateway's plain /generate (no preview/resume, no SongGeneration port API).
-fn is_ace_step(model: &str) -> bool {
-    model.starts_with("ACE-Step/")
+/// AceStep's own settings, sent nested as config.ace_step (at the top level it answers "Extra inputs are not permitted").
+const ACE_STEP_KEYS: [&str; 5] = ["bpm", "key_scale", "time_signature", "vocal_language", "negative_prompt"];
+
+/// True for song models that only take the gateway's plain /generate, with no preview, resume or own-port API (AceStep,
+/// YuE2: "... preview generation is not implemented"); false for SongGeneration. Read from the model's music service
+/// (/v1/music/info, 0.1.38); by its id when the device doesn't say.
+async fn plain_song_model(ctx: &Ctx, model: &str) -> bool {
+    let (code, info) = crate::device::call(&ctx.state, "GET", &format!("/v1/music/info?model={}", quote(model)), None, 15, None).await;
+    match info.get("service_name").and_then(Value::as_str).filter(|_| code == 200) {
+        Some(service) => !service.starts_with("SongGeneration"),
+        None => model.starts_with("ACE-Step/"),
+    }
 }
 
 /// {k: req[k] for k in keys if req.get(k) not in (None, "")}
@@ -106,15 +115,21 @@ pub async fn run_song(ctx: Ctx) -> JobResult {
         config.insert("reference_audio_base64".into(), json!(base64::engine::general_purpose::STANDARD.encode(&reference)));
         sources.push(save(&ctx, &format!("{}-styleref.wav", ctx.id), &reference));
     }
+    let ace = req.get("ace_step").cloned().unwrap_or(Value::Null);
+    let ace = pick(&ace, &ACE_STEP_KEYS);
+    if !ace.is_empty() {
+        config.insert("ace_step".into(), Value::Object(ace));
+    }
     let inst = running_instance(&ctx, &model).await?;
+    let plain = plain_song_model(&ctx, &model).await;
     let cur = ctx.state.settings.current();
     let host = cur.host();
     let gw = format!("{}/v1/music/generate", cur.url);
     let port = inst.get("port").and_then(Value::as_u64);
-    let direct = !is_ace_step(&model) && port_open(&host, port).await && !req.get("preview").is_some_and(truthy) && !req.get("resume_session").is_some_and(truthy);
+    let direct = !plain && port_open(&host, port).await && !req.get("preview").is_some_and(truthy) && !req.get("resume_session").is_some_and(truthy);
     let direct_url = direct.then(|| format!("http://{host}:{}", port.unwrap_or(0)));
     let progress = tokio::spawn(song_progress(ctx.clone(), direct_url));
-    let composed = compose(&ctx, &mut config, &inst, direct, &gw, &host).await;
+    let composed = compose(&ctx, &mut config, &inst, direct, plain, &gw, &host).await;
     progress.abort();
     let (code, res, route, url) = composed?;
     if code != 200 || !res.get("success").is_some_and(truthy) || !res.get("audio_data").is_some_and(truthy) {
@@ -123,7 +138,7 @@ pub async fn run_song(ctx: Ctx) -> JobResult {
     song_entry(&ctx, &res, &config, sources, route, url).await
 }
 
-async fn compose(ctx: &Ctx, config: &mut Map<String, Value>, inst: &Value, direct: bool, gw: &str, host: &str) -> Result<(u16, Value, &'static str, Option<String>), JobError> {
+async fn compose(ctx: &Ctx, config: &mut Map<String, Value>, inst: &Value, direct: bool, plain: bool, gw: &str, host: &str) -> Result<(u16, Value, &'static str, Option<String>), JobError> {
     let req = &ctx.req;
     let model = &ctx.model;
     let post = |path: &str, config: Value, session: Option<Value>| {
@@ -133,10 +148,9 @@ async fn compose(ctx: &Ctx, config: &mut Map<String, Value>, inst: &Value, direc
         }
         (format!("{gw}{path}"), body)
     };
-    if is_ace_step(model) {
-        // AceStep (TiinyOS 0.1.36): the gateway's plain /generate composes the whole song at seconds_total on every
-        // link; it has no preview or resume ("AceStep preview generation is not implemented"). A preview request
-        // becomes an 8-second song.
+    if plain {
+        // AceStep (0.1.36+) and YuE2 (0.1.38): the gateway's plain /generate composes the whole song at seconds_total
+        // on every link; they have no preview or resume. A preview request becomes an 8-second song.
         if req.get("preview").is_some_and(truthy) && !config.get("seconds_total").is_some_and(truthy) {
             config.insert("seconds_total".into(), json!(8));
         }

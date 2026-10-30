@@ -12,6 +12,11 @@
   loaded voice model can do. Built-in voices to pick from (Qwen3-CustomVoice, MOSS-TTS-Nano), a box to describe a new
   voice (Qwen3-VoiceDesign), your cloned voices (Qwen3-VoiceClone), the style field only where it works, and the model's
   own languages. Before, every voice model was treated as a cloning one.
+- **Songs follow the model** ([#23](https://github.com/thezolon/tiiny-studio/issues/23)): **YuE2-3B** works now (it has no
+  preview, like AceStep). The Song panel shows each model's own defaults and limits for steps, temperature, top-k, top-p
+  and length (AceStep up to 8 minutes). **AceStep gets its own settings:** tempo, key, time signature, the language
+  it sings in, and things to avoid. Preview and separate tracks only show for SongGeneration, the model that has them.
+  Which route a song takes is read from the model instead of guessed from its name.
 - A voice model that fails inside TiinyOS now says so, instead of "The upstream TTS model failed" (on 0.1.38:
   Supertonic-3, and cloning with MOSS-TTS-Nano; reported to Tiiny).
 - Tested on TiinyOS 0.1.38.

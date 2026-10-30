@@ -52,9 +52,10 @@ const A = {
   tool: store.get("audio.tool", "speech"), view: null, voices: [],
   speech: { voiceId: store.get("audio.voice", null), clip: null, clipText: "", clipName: "", text: "", language: store.get("audio.lang", ""), instruct: "",
     speaker: store.get("audio.speaker", null), design: "" },
-  voiceInfo: {},  // model id -> what the loaded voice model offers (/api/model/info), or "loading"
+  modelInfo: {},  // model id -> what the loaded model reports about itself (/api/model/info), or "loading"
   loop: { family: "Synth", role: "Wavetable Synth", desc: "", character: new Set(["warm"]), fx: new Set(), phrase: new Set(["chord progression"]), bpm: 120, bars: 4, key: "A minor", custom: null, steps: 64, cfg: 6, seed: "" },
-  song: { type: "mixed", caption: "", lyrics: "", seconds: 60, ref: null, seed: "", steps: "", temperature: "", top_k: "" },
+  song: { type: "mixed", caption: "", lyrics: "", seconds: 60, ref: null, seed: "", steps: "", temperature: "", top_k: "", top_p: "",
+    bpm: "", key_scale: "", time_signature: "", vocal_language: "", negative_prompt: "" },
   transcribe: { clip: null, language: "" },
   recorder: null, recFor: null,
   help: null, helpBusy: null,  // chat helper state: { key, gate } | { key, what, undo }
@@ -111,16 +112,29 @@ const AudioWS = {
   /* ---------- Voice ---------- */
   /** What the loaded voice model offers: cloning, built-in speakers, a voice from a description, style instructions,
    *  languages (its /v1/capabilities via /api/model/info). Null until it's loaded: then the panel is the cloning one. */
-  voiceCaps() {
-    const m = modelForTool("speech");
+  voiceCaps() { return this.infoOf("speech"); },
+  /** What the loaded model for a tool reports about itself (/api/model/info), fetched once per model; null until then. */
+  infoOf(tool) {
+    const m = modelForTool(tool);
     if (!m || m.status !== "running") return null;
-    const got = A.voiceInfo[m.id];
+    const got = A.modelInfo[m.id];
     if (got === undefined) {
-      A.voiceInfo[m.id] = "loading";
-      api("/api/model/info?id=" + encodeURIComponent(m.id)).then((r) => { A.voiceInfo[m.id] = r.info || {}; }).catch(() => { A.voiceInfo[m.id] = {}; })
+      A.modelInfo[m.id] = "loading";
+      api("/api/model/info?id=" + encodeURIComponent(m.id)).then((r) => { A.modelInfo[m.id] = r.info || {}; }).catch(() => { A.modelInfo[m.id] = {}; })
         .then(() => this.render());
     }
     return got && got !== "loading" && Object.keys(got).length ? got : null;
+  },
+  /** The loaded song model's options (/v1/music/info): its service, defaults, step and length limits. SongGeneration has
+   *  a preview, separate tracks and an own-port route; AceStep and YuE2 only compose whole songs ("plain"). */
+  songModel() {
+    const i = this.infoOf("song"), svc = i?.service_name || "";
+    const mi = i?.model_info?.model || {}, d = i?.default_config || {};
+    const plain = svc ? !svc.startsWith("SongGeneration") : /^ACE-Step\//.test(modelForTool("song")?.id || "");
+    return { known: !!svc, plain, ace: svc.startsWith("AceStep") || (!svc && plain), service: svc,
+      steps: d.steps, temperature: d.temperature, top_k: d.top_k, top_p: d.top_p,
+      maxSteps: mi.max_decoder_steps || null, maxSeconds: mi.codec_llm_duration > 0 ? mi.codec_llm_duration : 270,
+      secsPerSec: svc.startsWith("YuE") ? 4 : svc.startsWith("AceStep") ? 1.5 : null };
   },
   /** The voice modes the model has: { clone, speakers[], design, instruct, languages[] }. */
   voiceModes() {
@@ -289,9 +303,12 @@ const AudioWS = {
 
   /* ---------- Song ---------- */
   songPanel() {
-    const G = A.song, rerender = () => this.render();
+    const G = A.song, rerender = () => this.render(), sm = this.songModel();
+    if (sm.plain && G.type === "separate") G.type = "mixed";  // separate tracks come from SongGeneration's own port
+    if (G.seconds > sm.maxSeconds) G.seconds = sm.maxSeconds;
     const vocals = G.type !== "bgm";  // every mode except instrumental sings the lyrics
-    const viaGateway = S.directAccess === false;  // e.g. the USB cable: songs go through the gateway's preview route
+    const viaGateway = S.directAccess === false && !sm.plain;  // e.g. the USB cable: SongGeneration goes through the gateway's preview route
+    const num = (v) => (typeof v === "number" ? String(Math.round(v * 100) / 100) : "");
     const cap = el("textarea", { rows: "2", placeholder: "e.g. upbeat indie pop, female vocals, jangly guitars", oninput: (e) => { G.caption = e.target.value; this.renderFoot(); } }, G.caption);
     const lyr = el("textarea", { class: "lyrics", rows: "12", placeholder: "[verse]\nYour first verse…\n\n[chorus]\nThe hook…", oninput: (e) => { G.lyrics = e.target.value; this.renderFoot(); } }, G.lyrics);
     const insert = (tag) => { const s = lyr.selectionStart, pre = lyr.value.slice(0, s), add = (pre && !pre.endsWith("\n\n") ? (pre.endsWith("\n") ? "\n" : "\n\n") : "") + `[${tag}]\n`; lyr.setRangeText(add, s, s, "end"); lyr.focus(); G.lyrics = lyr.value; };
@@ -299,7 +316,7 @@ const AudioWS = {
     return [
       el("div", { class: "seg song-modes", style: "margin-top:4px" },
         [["mixed", "With vocals", "Vocals and accompaniment"], ["bgm", "Instrumental", "Accompaniment only"],
-          ["vocal", "Vocals only", "A cappella vocal track"], ["separate", "Separate tracks", "The mix plus the vocal and backing tracks as separate files"]]
+          ["vocal", "Vocals only", "A cappella vocal track"], ...(sm.plain ? [] : [["separate", "Separate tracks", "The mix plus the vocal and backing tracks as separate files"]])]
           .map(([t, label, title]) => el("button", { "aria-pressed": G.type === t, title, onclick: () => { G.type = t; rerender(); } }, label))),
       el("div", { class: "field" }, el("div", { class: "label" }, "Style"), el("div", { class: "prompt-wrap" }, cap),
         el("div", { class: "chips" }, SONG_CHIPS.map((c) => el("button", { class: "chip", onclick: () => { cap.value = cap.value.trim() ? cap.value.trim().replace(/,?$/, ", ") + c : c; G.caption = cap.value; this.renderFoot(); } }, "+ " + c)))),
@@ -308,20 +325,38 @@ const AudioWS = {
           el("button", { class: "chip", onclick: () => { lyr.value = LYRICS_TEMPLATE; G.lyrics = lyr.value; this.renderFoot(); } }, "Example"),
           this.helpBtn("lyrics", "Write lyrics", "Writing…", () => this.writeLyrics())),
         this.helpSlot("lyrics"), lyr) : null,
-      el("label", { class: "switch-row" }, el("input", { type: "checkbox", checked: !!G.preview, onchange: (e) => { G.preview = e.target.checked; rerender(); } }),
+      sm.plain ? null : el("label", { class: "switch-row" }, el("input", { type: "checkbox", checked: !!G.preview, onchange: (e) => { G.preview = e.target.checked; rerender(); } }),
         el("span", {}, el("b", {}, "Preview first (8 s)"), el("small", {}, "Hear the opening in about a minute, then continue to the full song only if you like it"))),
-      G.preview ? null : el("div", { class: "field" }, el("div", { class: "label" }, "Length"),
-        el("div", { class: "slider-row" }, el("input", { type: "range", min: 15, max: 270, step: 5, value: G.seconds, oninput: (e) => { G.seconds = Number(e.target.value); lenOut.textContent = fmtSec(G.seconds); this.renderFoot(); } }), lenOut),
+      sm.ace ? this.aceStepFields(G) : null,
+      G.preview && !sm.plain ? null : el("div", { class: "field" }, el("div", { class: "label" }, "Length", el("span", { class: "hint" }, `up to ${fmtSec(sm.maxSeconds)}`)),
+        el("div", { class: "slider-row" }, el("input", { type: "range", min: 15, max: sm.maxSeconds, step: 5, value: G.seconds, oninput: (e) => { G.seconds = Number(e.target.value); lenOut.textContent = fmtSec(G.seconds); this.renderFoot(); } }), lenOut),
         viaGateway && G.type === "separate" ? el("div", { class: "hint-line warn" }, "Separate tracks need a Wi-Fi/LAN connection; over this one you'll get the mix only.") : null,
         viaGateway ? el("div", { class: "hint-line" }, "On this connection songs come from the device's gateway: shorter lengths are the opening of a full arrangement and may end mid-phrase; 4:00 or more renders a complete full-length song (takes ~15 min). Over Wi-Fi every length is a complete song.") : null),
       !SONG_STYLE_REF ? null : el("div", { class: "field" }, el("div", { class: "label" }, "Style reference", el("span", { class: "hint" }, "optional · 10–30 s of a song to borrow the feel from")),
         this.captureRow("song", G.ref), G.ref ? el("button", { class: "btn-sm ghost", style: "margin-top:6px", onclick: () => { G.ref = null; rerender(); } }, "Remove reference") : null),
       el("details", { class: "adv" }, el("summary", {}, icon("i-chev"), "Advanced", el("span", { class: "sum" }, "model defaults")),
         el("div", { class: "adv-body" }, this.seedField(G),
-          el("div", { class: "field" }, el("div", { class: "label" }, "Decoder steps", el("span", { class: "hint" }, "default 10")), el("input", { class: "input", inputmode: "numeric", placeholder: "10", value: G.steps, oninput: (e) => { G.steps = e.target.value; } })),
-          el("div", { class: "field" }, el("div", { class: "label" }, "Temperature", el("span", { class: "hint" }, "default 1.0")), el("input", { class: "input", inputmode: "decimal", placeholder: "1.0", value: G.temperature, oninput: (e) => { G.temperature = e.target.value; } })),
-          el("div", { class: "field" }, el("div", { class: "label" }, "Top-k", el("span", { class: "hint" }, "default 250")), el("input", { class: "input", inputmode: "numeric", placeholder: "250", value: G.top_k, oninput: (e) => { G.top_k = e.target.value; } })))),
+          // defaults and limits from the loaded model (/v1/music/info); SongGeneration's when it doesn't say
+          el("div", { class: "field" }, el("div", { class: "label" }, "Decoder steps", el("span", { class: "hint" }, `default ${num(sm.steps) || "10"}${sm.maxSteps ? `, up to ${sm.maxSteps}` : ""}`)),
+            el("input", { class: "input", inputmode: "numeric", placeholder: num(sm.steps) || "10", value: G.steps, oninput: (e) => { G.steps = e.target.value; } })),
+          el("div", { class: "field" }, el("div", { class: "label" }, "Temperature", el("span", { class: "hint" }, `default ${num(sm.temperature) || "1.0"}`)), el("input", { class: "input", inputmode: "decimal", placeholder: num(sm.temperature) || "1.0", value: G.temperature, oninput: (e) => { G.temperature = e.target.value; } })),
+          el("div", { class: "field" }, el("div", { class: "label" }, "Top-k", el("span", { class: "hint" }, `default ${num(sm.top_k) || "250"}`)), el("input", { class: "input", inputmode: "numeric", placeholder: num(sm.top_k) || "250", value: G.top_k, oninput: (e) => { G.top_k = e.target.value; } })),
+          sm.known ? el("div", { class: "field" }, el("div", { class: "label" }, "Top-p", el("span", { class: "hint" }, `default ${num(sm.top_p) || "0"}`)), el("input", { class: "input", inputmode: "decimal", placeholder: num(sm.top_p) || "0", value: G.top_p, oninput: (e) => { G.top_p = e.target.value; } })) : null)),
     ];
+  },
+  /** AceStep's own settings (sent nested as config.ace_step): tempo, key, time signature, sung language, things to avoid. */
+  aceStepFields(G) {
+    const opt = (list, cur) => list.map(([v, n]) => el("option", { value: v, selected: v === cur }, n));
+    const keys = [["", "Auto"], ...KEYS.map((k) => [k, k])];
+    const sigs = [["", "Auto"], ["2", "2/4"], ["3", "3/4"], ["4", "4/4"], ["6", "6/8"]];
+    const langs = [["", "Auto"], ...["en", "zh", "ja", "ko", "es", "fr", "de", "it", "pt", "ru"].map((c) => [c, langName(c)])];
+    return el("div", { class: "field" }, el("div", { class: "label" }, "Song settings", el("span", { class: "hint" }, "optional · AceStep")),
+      el("div", { class: "ace-grid" },
+        el("label", {}, el("small", {}, "Tempo (BPM)"), el("input", { class: "input", inputmode: "numeric", placeholder: "auto", value: G.bpm, oninput: (e) => { G.bpm = e.target.value; this.renderFoot(); } })),
+        el("label", {}, el("small", {}, "Key"), el("select", { class: "input", onchange: (e) => { G.key_scale = e.target.value; } }, opt(keys, G.key_scale))),
+        el("label", {}, el("small", {}, "Time signature"), el("select", { class: "input", onchange: (e) => { G.time_signature = e.target.value; } }, opt(sigs, G.time_signature))),
+        el("label", {}, el("small", {}, "Sung in"), el("select", { class: "input", onchange: (e) => { G.vocal_language = e.target.value; } }, opt(langs, G.vocal_language)))),
+      el("input", { class: "input", style: "margin-top:6px", placeholder: "Avoid (optional), e.g. drums, distortion", value: G.negative_prompt, oninput: (e) => { G.negative_prompt = e.target.value; } }));
   },
 
   /* ---------- chat helpers ---------- */
@@ -436,14 +471,22 @@ const AudioWS = {
       if (!G.caption.trim()) return { ok: false, why: "Describe the style" };
       if (G.type !== "bgm" && !G.lyrics.trim()) return { ok: false, why: "Add lyrics, or switch to Instrumental" };
       if (G.ref && G.ref.duration < 10) return { ok: false, why: "The style reference must be at least 10 seconds long" };
+      const sm = this.songModel();
+      if (G.bpm && !(Number(G.bpm) >= 30 && Number(G.bpm) <= 300)) return { ok: false, why: "Tempo is a number of beats per minute (30–300)" };
       const body = { caption: G.caption.trim(), generation_type: G.type, seconds_total: G.seconds, seed: seed(G) };
       if (G.type !== "bgm") body.lyrics = G.lyrics.trim();
-      if (G.preview) body.preview = true;
+      if (G.preview && !sm.plain) body.preview = true;
       if (G.steps) body.steps = Number(G.steps);
       if (G.temperature) body.temperature = Number(G.temperature);
       if (G.top_k) body.top_k = Number(G.top_k);
+      if (G.top_p) body.top_p = Number(G.top_p);
+      if (sm.ace) {
+        const ace = { bpm: G.bpm ? Number(G.bpm) : null, key_scale: G.key_scale, time_signature: G.time_signature, vocal_language: G.vocal_language, negative_prompt: G.negative_prompt.trim() };
+        Object.keys(ace).forEach((k) => (ace[k] === null || ace[k] === "") && delete ace[k]);
+        if (Object.keys(ace).length) body.ace_step = ace;
+      }
       if (SONG_STYLE_REF && G.ref) body.reference_audio = G.ref.uri;
-      const est = G.preview ? 50 : S.directAccess === false ? (G.seconds >= 240 ? 900 : 10 + G.seconds * 3.2) : G.seconds * 4.3;
+      const est = sm.plain ? 15 + G.seconds * (sm.secsPerSec || 1.5) : body.preview ? 50 : S.directAccess === false ? (G.seconds >= 240 ? 900 : 10 + G.seconds * 3.2) : G.seconds * 4.3;
       return { ok: true, est, kind: "song", label: "Song: " + G.caption.slice(0, 36), body };
     }
     const T = A.transcribe;

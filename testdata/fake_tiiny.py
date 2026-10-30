@@ -79,6 +79,24 @@ CAPS = {"Text Generation": ["main"], "Text-to-Image": ["image"], "Text-to-Speech
         "Image-to-3D": ["Image", "3d"], "OCR": ["ocr"], "Embedding": ["embedding"]}
 
 
+# /v1/music/info as probed on 0.1.38 (trimmed): the service tells the families apart; Foundation-1 has no config schema
+COMMON_SONG_KEYS = ["seconds_total", "steps", "llm_cfg_scale", "seed", "lyrics", "caption", "generation_type", "reference_audio_base64",
+                    "temperature", "top_k", "top_p", "record_tokens", "record_window", "preview_seconds"]
+
+
+def song_info(service, steps, temperature, top_k, top_p, duration, max_steps):
+    return {"service_name": service, "config_schema": {"common": COMMON_SONG_KEYS},
+            "default_config": {"generation_type": "mixed", "steps": steps, "temperature": temperature, "top_k": top_k, "top_p": top_p},
+            "model_info": {"model": {"codec_llm_duration": duration, "max_decoder_steps": max_steps}}}
+
+
+MUSIC_INFO = {"Fake/SongGeneration-v2": song_info("SongGenerationTTMService", 10, 1.0, 250, 0.0, 270, 512),
+              "ACE-Step/AceStep-Fake": song_info("AceStepTTMService", 8, 0.85, 0, 0.9, 480, 20),
+              "Fake/YuE2": song_info("YuE2TTMService", 32, 1.0, 100, 0.95, 0, 512),
+              "Fake/Foundation-1": {"service_name": "FoundationTTMService", "model_info": {"audio": {"sample_rate": 44100}}}}
+PLAIN_SONG = ("ACE-Step/AceStep-Fake", "Fake/YuE2")  # only the gateway's plain /generate: no preview or resume
+
+
 # /v1/capabilities of the voice models as probed on 0.1.38 (trimmed): clone, built-in speakers, a voice from words
 def tts_caps(clone=False, speakers=(), design=False, instruct=False):
     return {"support_voice_clone": clone, "support_custom_voice": bool(speakers), "support_voice_design": design,
@@ -109,6 +127,7 @@ CATALOG = [
     model("Fake/Foundation-1", "Foundation-1", "Music Generation", 25, [], "text", "audio"),
     model("Fake/SongGeneration-v2", "SongGeneration", "Music Generation", 45, [], "text", "audio"),
     model("ACE-Step/AceStep-Fake", "AceStep", "Music Generation", 40, [], "text", "audio"),
+    model("Fake/YuE2", "YuE2 Song", "Music Generation", 14, [], "text,audio", "audio"),
     model("Tencent/Hunyuan3D-2.1", "Hunyuan3D", "Image-to-3D", 50, [], "image", "3d"),
     model("microsoft/TRELLIS.2-4B", "TRELLIS.2", "Image-to-3D", 6, [], "image", "3d"),
     model("Fake/PP-OCRv6", "PP-OCRv6", "OCR", 5, [], "image", "text"),
@@ -436,9 +455,9 @@ class Handler(BaseHTTPRequestHandler):
                     return self.send_json(200, {"models": [m["id"] for m in CATALOG if m["type"] == "Music Generation"]})
                 if named not in st.running:
                     return self.send_json(503, {"error": {"message": "No suitable model is currently running."}})
-                # SongGeneration-v2 as probed on 0.1.38 (trimmed)
-                return self.send_json(200, {"config_schema": {"common": ["seconds_total", "steps", "seed", "lyrics", "caption", "generation_type"]},
-                                            "default_config": {"generation_type": "mixed", "steps": 10, "temperature": 1.0, "top_k": 250}, "model": named})
+                if named not in MUSIC_INFO:
+                    return self.send_json(400, {"error": {"message": f"Model '{named}' does not support music."}})
+                return self.send_json(200, {**MUSIC_INFO[named], "model": named})
             return self.send_json(200, {"sessions": [{"session_id": s, "status": v, "progress": 1.0} for s, v in st.sessions.items()]})
         if method == "GET" and (m := re.fullmatch(r"/v1/music/sessions/([\w-]+)/download", p)):
             return self.send_bytes(200, MP3, "audio/mpeg")
@@ -449,8 +468,18 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_json(404, {"detail": "Not Found"})
         if method == "POST" and p in ("/v1/music/generate/wav", "/v1/generate/wav"):
             return self.send_bytes(200, WAV, "audio/wav")
+        if method == "POST" and p.startswith("/v1/music/generate/") and self.body.get("model") == "Fake/YuE2":
+            return self.send_json(400, {"error": {"code": "unsupported_feature", "message": "YuE2 preview generation is not implemented"}})  # 0.1.38
         if method == "POST" and p.startswith("/v1/music/generate/") and str(self.body.get("model", "")).startswith("ACE-Step/"):
             return self.send_json(500, {"success": False, "audio_data": None, "error": "AceStep preview generation is not implemented"})  # TiinyOS 0.1.36
+        if method == "POST" and p == "/v1/music/generate" and self.body.get("model") in PLAIN_SONG:
+            # like the real ones: only the common keys at the top of config; AceStep's own go nested in config.ace_step
+            config = self.body.get("config") or {}
+            extra = [k for k in config if k not in COMMON_SONG_KEYS and not (k == "ace_step" and self.body["model"].startswith("ACE-Step/"))]
+            if extra:
+                return self.send_json(400, {"success": False, "audio_data": None, "error": f"Extra inputs are not permitted in config: {extra[0]}", "error_code": "INVALID_REQUEST"})
+            if not isinstance((config.get("ace_step") or {}).get("bpm", 0), (int, float)):
+                return self.send_json(400, {"success": False, "audio_data": None, "error": "type must be number, but is string", "error_code": "INVALID_REQUEST"})
         if method == "POST" and p in ("/v1/music/generate", "/v1/music/generate/preview", "/v1/music/generate/resume", "/v1/generate"):
             sid = self.body.get("session_id") or f"sess-{len(st.sessions) + 1}"
             st.sessions[sid] = "completed"
