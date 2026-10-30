@@ -54,6 +54,7 @@ function galleryBar(ws, visible, rerender) {
       if (ws === "image" && g.sel.has(S.view?.id)) S.view = null;
       if (ws === "audio" && typeof A !== "undefined" && g.sel.has(A.view?.id)) A.view = null;
       if (ws === "mesh" && typeof M !== "undefined" && g.sel.has(M.view?.id)) M.view = null;
+      if (ws === "video" && typeof V !== "undefined" && g.sel.has(V.view?.id)) V.view = null;
       toast(`Deleted ${ids.length}`); g.sel.clear(); g.select = false; rerender(); rerenderStage(ws);
     };
     bar.append(
@@ -67,6 +68,7 @@ function rerenderStage(ws) {
   if (ws === "image") renderStage();
   else if (ws === "audio" && AudioWS.mounted) AudioWS.renderStage();
   else if (ws === "mesh" && MeshWS.mounted) MeshWS.renderStage();
+  else if (ws === "video" && VideoWS.mounted) VideoWS.renderStage();
 }
 
 /** Star + selection overlay on a thumbnail; in select mode a click toggles selection. */

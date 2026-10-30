@@ -68,6 +68,12 @@ CUTOUT_PNG = rgba_png(3, 2, bytes([169, 57, 212, 1, 200, 30, 30, 255, 125, 78, 2
                                    10, 20, 30, 0, 200, 30, 30, 128, 90, 90, 90, 31]))
 GLB = b"glTF" + struct.pack("<II", 2, 12)  # header only: enough to be recognisable, not to be loaded
 MP3 = b"ID3" + bytes(2000)
+MP4 = struct.pack(">I", 24) + b"ftypisom" + bytes(12) + bytes(3000)  # an ftyp box and padding: recognisable, not playable
+VIDEO = "lightx2v/MiniMax-H3-Turbo"
+# /v1/video/info as probed on 0.1.38 (trimmed)
+VIDEO_INFO = {"family": "minimax_h3", "id": "MiniMax-H3-Turbo", "fps": 24, "default_steps": 7, "step_options": [4, 5, 6, 7, 8], "max_keyframes": 2,
+              "audio": {"channels": 2, "sample_rate": 32000},
+              "canvases": [{"height": 768, "width": 1344}, {"height": 1344, "width": 768}, {"height": 480, "width": 832}, {"height": 832, "width": 480}]}
 CHAT_MODEL = "Qwen/Qwen3-4B-Instruct"
 
 
@@ -130,6 +136,7 @@ CATALOG = [
     model("Fake/YuE2", "YuE2 Song", "Music Generation", 14, [], "text,audio", "audio"),
     model("Tencent/Hunyuan3D-2.1", "Hunyuan3D", "Image-to-3D", 50, [], "image", "3d"),
     model("microsoft/TRELLIS.2-4B", "TRELLIS.2", "Image-to-3D", 6, [], "image", "3d"),
+    model(VIDEO, "MiniMax-H3-Turbo", "Text-to-Video", 49, [], "text,image", "video"),
     model("Fake/PP-OCRv6", "PP-OCRv6", "OCR", 5, [], "image", "text"),
     model("Qwen/Qwen3-Embedding-0.6B", "Qwen3 Embedding", "Embedding", 1),
 ]
@@ -146,7 +153,7 @@ class State:
         with self.lock:
             self.requests, self.shutdowns = [], 0
             self.running = {mid: self._instance(mid) for mid in self.initial}
-            self.pending, self.tasks, self.sessions = set(), {}, {}
+            self.pending, self.tasks, self.sessions, self.videos = set(), {}, {}, {}
             self.flags = {}
 
     def _instance(self, mid):
@@ -401,6 +408,8 @@ class Handler(BaseHTTPRequestHandler):
                                           for i, t in enumerate(inputs)]})
         elif p.startswith(("/v1/music/", "/v1/generate", "/v1/sessions")):
             self.music(method, p)
+        elif p.startswith(("/v1/video", "/v1/videos")):
+            self.videos(method, p)
         elif p.startswith(("/v1/3d/", "/v1/tasks")):
             self.tasks3d(method, p)
         else:
@@ -456,6 +465,50 @@ class Handler(BaseHTTPRequestHandler):
             stem = base64.b64encode(WAV + bytes(1000)).decode()
             out["audio_outputs"] = {"Vocals": stem, "Mixed": stem, "Bass Line": stem, "Tiny": "abc"}
         return out
+
+    def videos(self, method, p):
+        """The gateway's OpenAI-style video API (0.1.38): POST /v1/videos queues a clip, GET /v1/videos/{id} reports on it
+        (done on the second look), /content is the MP4; a size the model wasn't exported for fails the clip, not the POST."""
+        st, parts = self.st, p.strip("/").split("/")
+        if p == "/v1/video/info":
+            if (self.query.get("model") or [None])[0] != VIDEO or VIDEO not in st.running:
+                return self.send_json(503, {"error": {"message": "No suitable model is currently running."}})
+            return self.send_json(200, VIDEO_INFO)
+        if method == "POST" and p == "/v1/videos":
+            b = self.body
+            if not str(b.get("prompt") or "").strip():
+                return self.send_json(400, {"error": {"message": "prompt must be a non-empty string", "type": "invalid_request_error", "param": "prompt"}})
+            if b.get("model") not in st.running:
+                return self.send_json(503, {"error": {"message": "No suitable model is currently running."}})
+            vid = f"video_{len(st.videos) + 1:032x}"
+            sizes = [f"{c['width']}x{c['height']}" for c in VIDEO_INFO["canvases"]]
+            err = None if b.get("size") in sizes else {"code": "invalid_request", "message": f"this model was exported for [{', '.join(sizes)}], got {b.get('size')}"}
+            secs = int(b.get("seconds") or 4)
+            st.videos[vid] = {"id": vid, "object": "video", "model": b["model"], "status": "queued", "progress": 0, "size": b.get("size"),
+                              "seconds": str(secs), "frames": secs * 24 + 1, "fps": 24, "error": err, "looks": 0}
+            return self.send_json(200, {k: v for k, v in st.videos[vid].items() if k != "looks"})
+        v = st.videos.get(parts[2]) if len(parts) > 2 else None
+        if not v:
+            return self.send_json(404, {"error": {"message": "video not found", "type": "not_found"}})
+        if method == "DELETE" and len(parts) == 3:
+            del st.videos[v["id"]]
+            return self.send_json(200, {"id": v["id"], "object": "video.deleted", "deleted": True})
+        if method == "GET" and st.flags.get("video_flaky", 0) > 0:  # the link drops for a few requests
+            st.flags["video_flaky"] -= 1
+            return self.send_json(502, {"error": {"message": "Bad gateway"}})
+        if method == "GET" and len(parts) == 3:
+            v["looks"] += 1
+            if v["status"] != "cancelled" and not st.flags.get("video_hold"):  # video_hold: renders until cancelled
+                v["status"], v["progress"] = ("failed", 0) if v["error"] else ("completed", 100) if v["looks"] > 1 else ("in_progress", 50)
+            return self.send_json(200, {k: x for k, x in v.items() if k != "looks"})
+        if method == "GET" and parts[3:] == ["content"]:
+            if st.flags.get("content_flaky", 0) > 0:
+                st.flags["content_flaky"] -= 1
+                return self.send_json(503, {"error": {"message": "Service unavailable"}})
+            if v["status"] != "completed":
+                return self.send_json(409, {"error": {"message": "video is not ready"}})
+            return self.send_bytes(200, MP4, "video/mp4")
+        return self.send_json(404, {"error": {"message": f"Unknown video path: /{'/'.join(parts[2:])}", "type": "not_found"}})
 
     def music(self, method, p):
         st = self.st

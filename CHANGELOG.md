@@ -7,6 +7,11 @@
   the connection allows it. Over USB it still can't work, and the Voice panel says so.
 - **A "needs Wi-Fi" banner** where a model only works over Wi-Fi/LAN and you're on USB (Supertonic-3, GLM-OCR). Text
   mode reads with PP-OCRv6 instead of failing when GLM-OCR is picked over USB.
+- **New Video tab** for **MiniMax-H3-Turbo**: write a prompt, or start from a picture, and get a short clip **with
+  matching sound** (MP4). Sizes (wide or tall, 480p or 768p), steps and frame rate come from the loaded model. Any
+  image has an **Animate** button that opens it here. **Video is slow on the Tiiny:** about 7 minutes for 2 seconds at
+  480p with 4 steps and over 15 with the default 7 (0.1.38), longer for bigger, longer or more-step clips; the panel shows the expected time before you start. Cancel stops the render on the device, and the device's copy is deleted once the studio has it.
+- Videos can be scrubbed: both servers now answer byte-range requests for media files.
 - **Chat's Thinking switch follows the model** ([#23](https://github.com/thezolon/tiiny-studio/issues/23), the start of
   panels that adapt to the loaded model): models that can't reason (Qwen3-4B-Instruct) no longer show it, models that
   always reason (gpt-oss) say "Always thinks", and the Qwen3.5/3.6 family keeps the on/off switch. The studio reads
