@@ -300,7 +300,18 @@ async fn work(ctx: Ctx, kind: String, run: KindFn) {
             let ephemeral = ctx.req.get("ephemeral").is_some_and(crate::device::truthy);
             let cancel = ctx.cancel.clone();
             // a panicking kind must not take the worker down: surface it as an error instead
-            let result = tokio::spawn(run(ctx)).await;
+            // kinds that make something on the device (results are written there first) need room for it
+            let full = if matches!(kind.as_str(), "image" | "speech" | "transcribe" | "loop" | "song" | "mesh" | "video" | "ocr") {
+                crate::device::disk_space(&state).await.filter(|(free, _)| *free < 2.0)
+            } else {
+                None
+            };
+            let result = match full {
+                Some((free, _)) => Ok(Err(JobError(format!(
+                    "The Tiiny is almost out of space ({free:.1} GB free). Free some up (delete models or files in the TiinyOS app) and try again."
+                )))),
+                None => tokio::spawn(run(ctx)).await,
+            };
             match result {
                 Ok(Ok(mut entry)) => {
                     let e = entry.as_object_mut().map(std::mem::take).unwrap_or_default();

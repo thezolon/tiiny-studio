@@ -35,6 +35,8 @@ pub struct AppState {
     pub device_lock: Arc<tokio::sync::Mutex<()>>,
     pub(crate) direct_cache: Arc<Mutex<Option<(Instant, String, Option<bool>)>>>,
     pub(crate) stats_cache: Arc<Mutex<Option<(Instant, serde_json::Value)>>>,
+    /// (when read, device url, (free GB, total GB)) of the Tiiny's storage; see device::disk_space
+    pub(crate) disk_cache: Arc<Mutex<Option<(Instant, String, Option<(f64, f64)>)>>>,
     pub jobs: Arc<jobs::Jobs>,
     pub store: Arc<store::Store>,
     /// entry id -> (text, vector) for smart search; memory only, dropped on delete/wipe
@@ -53,6 +55,7 @@ impl AppState {
             device_lock: Arc::new(tokio::sync::Mutex::new(())),
             direct_cache: Arc::default(),
             stats_cache: Arc::default(),
+            disk_cache: Arc::default(),
             jobs: Arc::default(),
             store: Arc::new(store::Store::new(&config_dir)),
             search_cache: Arc::default(),

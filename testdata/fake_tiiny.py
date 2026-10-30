@@ -4,6 +4,7 @@ Or import it: `server, url = fake_tiiny.start()`; `server.state` holds the model
 Every request is recorded (minus the Authorization header): GET /__requests, POST /__reset (no auth).
 POST /__flags {..} switches on test behaviour until the next reset: "fail" {path: [status, message]}, "delay" {path: seconds},
 "closed_port", "no_music_gateway", "speech_text", "task_polls" N, "task_hold", "fail_stage" name, "rich_texture", "song_tracks",
+"disk_free_gb" N (free storage in /api/v1/sys/status; plenty by default), "no_disk" (sys/status without disk keys).
 "task_flaky" N / "artifact_flaky" N (the next N 3D task polls / artifact fetches answer 502).
 POST /__seed {"videos": [{"id", "status", "age", "seconds"}], "sessions": [{"session_id", "model_id", "route", "status", "age"}]} plants results the studio never
 saw (a finished clip, music sessions made `age` seconds ago), like ones left on the device by a restart or another studio.
@@ -220,6 +221,13 @@ class Handler(BaseHTTPRequestHandler):
         pass
 
     # ---------- plumbing ----------
+    def disk(self):
+        flags = self.st.flags
+        if flags.get("no_disk"):
+            return {}
+        total = 921123848192
+        return {"total_bytes": total, "used_bytes": total - int(flags.get("disk_free_gb", 400) * 1e9)}
+
     @property
     def st(self):
         return self.server.state
@@ -381,7 +389,7 @@ class Handler(BaseHTTPRequestHandler):
                 st.shutdowns += 1
             self.send_json(200, {"status": "ok", "message": "System shutdown will be initiated in seconds via host API"})
         elif method == "GET" and p == "/api/v1/sys/status":
-            self.send_json(200, {"cpu": {"total_percent": 12.5}, "memory": {"usage_percent": 40.0}, "gpu": {}, "npus": [], "disk": {}})
+            self.send_json(200, {"cpu": {"total_percent": 12.5}, "memory": {"usage_percent": 40.0}, "gpu": {}, "npus": [], "disk": self.disk()})
         elif method == "GET" and p == "/api/v1/sys/device_info":
             self.send_json(200, {"device_name": "Fake Tiiny"})
         elif method == "GET" and p == "/api/v1/sys/ac_power/":

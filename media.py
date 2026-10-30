@@ -29,6 +29,10 @@ class JobError(Exception):
     pass
 
 
+# Kinds that make something on the device (results are written there before the studio downloads them).
+DISK_KINDS = ("image", "speech", "transcribe", "loop", "song", "mesh", "video", "ocr")
+
+
 class Media:
     def __init__(self, settings, media_dir, add_history, device_call, device_lock):
         self.settings = settings  # live device address + key (can change from the Settings screen)
@@ -38,9 +42,33 @@ class Media:
         # The Tiiny serves one request at a time; parallel requests to different models just slow
         # each other down. One lock, shared with image generation, makes every job wait its turn.
         self.lock = device_lock
+        self._disk = (0.0, None, None)  # (when read, device url, (free_gb, total_gb) or None)
         self.seen_lock = threading.Lock()  # device_seen.json (read-modify-write)
 
     # ---------- plumbing ----------
+    def disk_space(self):
+        """(free GB, total GB) of the Tiiny's storage from /api/v1/sys/status, or None when it can't be read.
+        Cached for STUDIO_DISK_TTL seconds (60); the contract tests set 0. Results are written on the device first."""
+        ttl = float(os.environ.get("STUDIO_DISK_TTL", "60"))
+        when, url, val = self._disk
+        if url == self.settings.url and time.time() - when < ttl:
+            return val
+        code, st = self.device("GET", "/api/v1/sys/status", None, 5)
+        d = st.get("disk") if code == 200 and isinstance(st, dict) else None
+        total, used = (d.get("total_bytes"), d.get("used_bytes")) if isinstance(d, dict) else (None, None)
+        ok = all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in (total, used)) and total > 0
+        val = (max(0, total - used) / 1e9, total / 1e9) if ok else None
+        self._disk = (time.time(), self.settings.url, val)
+        return val
+
+    def check_disk(self, kind):
+        """Fail early when the Tiiny has almost no room left for what this job would write there."""
+        if kind in DISK_KINDS:
+            space = self.disk_space()
+            if space and space[0] < 2:
+                raise JobError(f"The Tiiny is almost out of space ({space[0]:.1f} GB free). "
+                               "Free some up (delete models or files in the TiinyOS app) and try again.")
+
     def running_instance(self, model_id):
         code, run = self.device("GET", "/api/v1/models/running", None, 15)
         for r in (run.get("instances") or {}).get("running", []):
@@ -168,6 +196,7 @@ class Media:
                 return
             job.update(status="running", started=time.time(), message="Working…")
             try:
+                self.check_disk(job["kind"])
                 entry = KINDS[job["kind"]](self, job, req)
                 entry.update(id=job["id"], created=int(time.time()), kind=entry.get("kind", job["kind"]),
                              seconds=round(time.time() - job["started"], 1))

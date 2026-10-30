@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- The studio watches the Tiiny's free space: the Models panel shows it, and a job won't start with under 2 GB free (it would fail halfway).
 - **Supertonic-3 speaks over Wi-Fi/LAN.** TiinyOS's gateway fails it ("The upstream TTS model failed", 0.1.38: it sends
   the model a name it doesn't know); the studio now asks the model's own port directly when the gateway fails, where
   the connection allows it. Over USB it still can't work, and the Voice panel says so.
