@@ -431,6 +431,9 @@ class Handler(BaseHTTPRequestHandler):
             chunks += [{"tool_calls": [{"index": 0, "id": "call_fake", "type": "function", "function": {"name": name, "arguments": ""}}]},
                        {"tool_calls": [{"index": 0, "function": {"arguments": "{}"}}]}]
             finish = "tool_calls"
+        elif "FAKE_NO_ANSWER" in text:  # reasoned until max_tokens, never answered (gpt-oss-20b once on 0.1.38)
+            chunks += [{"reasoning_content": " And on and on."}]
+            finish = "length"
         else:
             chunks += [{"content": "Fake "}, {"content": "reply."}]
         out = b""

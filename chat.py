@@ -260,6 +260,8 @@ def run_chat(m, job, req):
         job["partial"]["done_reasoning"] = job["partial"]["reasoning"]
         job.pop("tool", None)
     text = job["partial"]["content"].strip()
+    if not text and not artifacts and finish == "length":  # an always-reasoning model (gpt-oss) spent max_tokens thinking
+        raise JobError("The model reasoned until it ran out of room and gave no answer. Try again, or ask for less.")
     entry = {"kind": "chat", "params": {"model": model}, "sources": [], "outputs": [], "text": text,
              "reasoning": job["partial"]["reasoning"].strip(), "artifacts": artifacts, "finish": finish}
     if warnings:
