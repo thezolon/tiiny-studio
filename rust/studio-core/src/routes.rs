@@ -43,6 +43,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/stats", get(stats))
         .route("/api/busy", get(busy))
         .route("/api/model/plan", get(model_plan))
+        .route("/api/model/info", get(model_info))
         .route("/api/model/launch", post(model_launch))
         .route("/api/model/stop", post(model_stop))
         .route("/api/model/unload_all", post(unload_all))
@@ -376,6 +377,42 @@ async fn model_plan(State(state): State<AppState>, Query(q): Query<std::collecti
         return error(StatusCode::BAD_REQUEST, "id required");
     }
     reply(device::call(&state, "GET", &format!("/api/v1/models/{}/unload_candidate", quote(mid)), None, 30, None).await)
+}
+
+/// Where a loaded model reports its own options (#23), by catalog type. Image, OCR and transcription models have no
+/// such route: their options come from the catalog row (supported, capabilities, desc).
+fn info_route(model_type: &str) -> Option<&'static str> {
+    match model_type {
+        "Text Generation" | "Image-Text-to-Text" | "Text-to-Speech" => Some("/v1/capabilities"),
+        "Music Generation" => Some("/v1/music/info"),
+        "Image-to-3D" => Some("/v1/3d/capabilities"),
+        _ => None,
+    }
+}
+
+/// What a model reports about its options: chat (thinking, vision), voice (clone, speakers, languages), music (config
+/// schema and defaults), 3D (stages, params). Only a loaded model answers; info is null otherwise.
+async fn model_info(State(state): State<AppState>, Query(q): Query<std::collections::HashMap<String, String>>) -> Response {
+    let mid = q.get("id").map(String::as_str).unwrap_or("");
+    if mid.is_empty() {
+        return error(StatusCode::BAD_REQUEST, "id required");
+    }
+    let (code, inst) = device::call(&state, "GET", "/api/v1/models/?including_downloading=false", None, 15, None).await;
+    if code != 200 {
+        return reply((code, inst));
+    }
+    let Some(row) = inst.get("data").and_then(Value::as_array).into_iter().flatten().find(|m| m.get("id").and_then(Value::as_str) == Some(mid)) else {
+        return error(StatusCode::NOT_FOUND, &format!("{mid} isn't installed on the device"));
+    };
+    let model_type = row.get("type").cloned().unwrap_or(Value::Null);
+    let mut info = Value::Null;
+    if let Some(route) = info_route(model_type.as_str().unwrap_or("")) {
+        let (code, res) = device::call(&state, "GET", &format!("{route}?model={}", quote(mid)), None, 15, None).await;
+        if code == 200 && res.is_object() {
+            info = res.get("data").filter(|d| d.is_object()).cloned().unwrap_or(res);
+        }
+    }
+    Json(json!({"id": mid, "type": model_type, "info": info})).into_response()
 }
 
 fn model_id(body: &Bytes) -> String {

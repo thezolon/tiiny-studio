@@ -191,13 +191,15 @@ def stream_completion(m, job, body):
 
 
 def chat_model_id(m, wanted):
-    """The real id behind 'default' (the device's alias for the loaded model), so it can be reloaded after a swap."""
+    """The real id behind 'default' (the device's alias for the loaded model), so it can be reloaded after a swap, and
+    its thinking object (None when the device doesn't say)."""
     code, res = m.device("GET", "/v1/models", None, 15)
     for item in (res.get("data") or []) if code == 200 else []:
         if item.get("id") == wanted or wanted in (item.get("aliases") or []):
-            return item["id"]
+            t = item.get("thinking")
+            return item["id"], t if isinstance(t, dict) else None
     if wanted and wanted != "default":
-        return wanted
+        return wanted, None
     raise JobError("No chat model is loaded. Load one from the Models panel.")
 
 
@@ -210,7 +212,9 @@ def run_chat(m, job, req):
     messages, warnings = safety.guard_messages(messages)
     if warnings:
         job["warnings"] = warnings
-    model = chat_model_id(m, req.get("model") or "default")
+    model, thinking = chat_model_id(m, req.get("model") or "default")
+    mode = media.thinking_mode(model, thinking)
+    think = mode == "always" or (mode == "switch" and bool(req.get("thinking")))
     job["model"] = model
     tools = [{"type": "function", "function": {"name": n, **spec}} for n, spec in TOOL_SPECS.items() if n in (req.get("tools") or [])]
     convo = [{"role": "system", "content": SYSTEM + rule + (" " + req["system"].strip() if (req.get("system") or "").strip() else "")}] + messages
@@ -218,13 +222,13 @@ def run_chat(m, job, req):
     artifacts, usage_rounds = [], 0
     for usage_rounds in range(MAX_TOOL_ROUNDS + 1):
         body = {"model": model, "messages": convo, "stream": True, "max_tokens": int(req.get("max_tokens") or 4096)}
-        if "gpt-oss" in model:
+        if mode == "always":  # reasons whatever it's sent
             body["reasoning_effort"] = "medium" if req.get("thinking") else "low"
-        else:
+        elif mode == "switch":
             body["chat_template_kwargs"] = {"enable_thinking": bool(req.get("thinking"))}
         if tools and usage_rounds < MAX_TOOL_ROUNDS:
             body["tools"] = tools
-        job["message"] = "Thinking" if req.get("thinking") else "Replying"
+        job["message"] = "Thinking" if think else "Replying"
         content, reasoning, calls, finish = stream_completion(m, job, body)
         if job["cancel"]:
             raise JobError("Stopped")

@@ -147,11 +147,12 @@ pub async fn run(ctx: Ctx) -> JobResult {
 async fn call(ctx: &Ctx, task: &str, model: &str, prompt: &str, tokens: u64, message: &str, user: Value) -> JobResult {
     let mut body = json!({"model": model, "messages": [{"role": "system", "content": prompt}, {"role": "user", "content": user}],
         "max_tokens": tokens, "temperature": if task == "lyrics" { 0.8 } else { 0.6 }, "stream": false});
-    if model.contains("gpt-oss") {
-        // always reasons and rejects enable_thinking; give it room to think
+    let mode = super::thinking_mode(model, super::thinking_of(ctx, model).await.as_ref());
+    if mode == "always" {
+        // reasons anyway: give it room to think
         body["reasoning_effort"] = json!("low");
         body["max_tokens"] = json!(tokens + 1500);
-    } else {
+    } else if mode == "switch" {
         body["chat_template_kwargs"] = json!({"enable_thinking": false});
     }
     ctx.update(json!({"message": message}));

@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- **Chat's Thinking switch follows the model** ([#23](https://github.com/thezolon/tiiny-studio/issues/23), the start of
+  panels that adapt to the loaded model): models that can't reason (Qwen3-4B-Instruct) no longer show it, models that
+  always reason (gpt-oss) say "Always thinks", and the Qwen3.5/3.6 family keeps the on/off switch. The studio reads
+  this from the model instead of guessing from its name, for chat and for the helpers.
+- The studio now keeps each model's own description of its options, and can ask a loaded chat, voice, music or 3D
+  model for the rest. The Voice, Song and 3D panels will build on this.
+- Tested on TiinyOS 0.1.38.
+
 ## 0.3.2 (2026-10-29)
 
 3D with TRELLIS.2-4B.

@@ -196,7 +196,7 @@ Everything the studio saves stays on your machine: results, prompts, sources and
 | `tools/api_snapshot.py` | snapshots the device's API specs into `docs/api/` and lists what changed after an update |
 | `tools/release.py` | builds `dist/tiiny-studio-<version>.zip` from the committed tree (`--tag` also tags it) |
 
-## Device APIs (TiinyOS 0.1.35 to 0.1.37, found by probing)
+## Device APIs (TiinyOS 0.1.35 to 0.1.38, found by probing)
 
 The full reference (every service, port and endpoint, marked tested/spec/docs) is in
 [docs/DEVICE-API.md](docs/DEVICE-API.md); `tools/api_snapshot.py` rechecks it after a TiinyOS update.
@@ -236,7 +236,7 @@ ports (from `running`; no auth; not exposed over USB):
 main slot, and a toast says where it landed. Image drop zones also have a **Paste** button, handy on a
 phone or tablet. Browsers only paste images that way, so for audio use `Ctrl+V`, drag-and-drop or Browse.
 
-## Known device issues (TiinyOS 0.1.35 to 0.1.37)
+## Known device issues (TiinyOS 0.1.35 to 0.1.38)
 
 - The 3D models' `background` stage fails (BriefNet is missing; Hunyuan3D and TRELLIS.2 alike), so the studio cuts
   the subject out with Qwen-Image first and doesn't offer the stage.
@@ -250,7 +250,7 @@ phone or tablet. Browsers only paste images that way, so for audio use `Ctrl+V`,
 ## Status
 
 Version 0.3.2 (see [CHANGELOG.md](CHANGELOG.md)). An unofficial community project, not affiliated with
-Tiiny. Tested against TiinyOS 0.1.35 to 0.1.37; device APIs may change with firmware updates
+Tiiny. Tested against TiinyOS 0.1.35 to 0.1.38; device APIs may change with firmware updates
 (`python tools/api_snapshot.py --check` shows what changed).
 
 ## License
