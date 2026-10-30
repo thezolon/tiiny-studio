@@ -157,11 +157,13 @@ function helperModel(vision) {
 /** May the studio swap models on the device for this section (Settings → Model swapping)? All on by default. */
 const swapOn = (section) => { const s = SET.info?.swap; return !s || (s.on && s[section] !== false); };
 const helperSection = (task) => (task === "lyrics" || task === "tags" ? "audio" : "image");
+/** An Image-to-Text model that finds a page's regions but doesn't read them (PP-DocLayoutV3): not an OCR model. */
+const layoutOnly = (m) => /layout analysis only|does not transcribe/i.test(m.desc || "") || /DocLayout/i.test(m.id);
 function modelForTool(tool) {
   if (tool === "chat" || tool === "vision") return helperModel(tool === "vision");
   const list = (S.allModels || []).filter((m) => m.type === TOOL_TYPES[tool]);
   const isSong = (m) => /song|lyric/i.test(m.id + " " + (m.desc || "").slice(0, 300));
-  const pick = tool === "song" ? list.filter(isSong) : tool === "loop" ? list.filter((m) => !isSong(m)) : list;
+  const pick = tool === "song" ? list.filter(isSong) : tool === "loop" ? list.filter((m) => !isSong(m)) : tool === "ocr" ? list.filter((m) => !layoutOnly(m)) : list;
   return pick.find((m) => m.status === "running") || pick[0] || null;
 }
 function mediaBadges(m) {
@@ -170,7 +172,7 @@ function mediaBadges(m) {
   if (m.type === "ASR") return ["Transcribe", /30 languages/.test(d) && "30 languages", /detect/i.test(d) && "Auto-detect language"].filter(Boolean);
   if (m.type === "Music Generation") return /song|lyric/i.test(m.id + d.slice(0, 300)) ? ["Full songs", "Lyrics + style", "Vocals or instrumental", "Up to 4:30"] : ["Loops", "BPM + key locked", "4 / 8 bars"];
   if (CHAT_TYPES.includes(m.type)) return ["Improve prompts", "Lyrics", "Loop tags", seesImages(m) && "Describe images"].filter(Boolean);
-  if (m.type === "Image-to-Text") return ["Text from images (OCR)"];
+  if (m.type === "Image-to-Text") return [layoutOnly(m) ? "Page layout only" : "Text from images (OCR)"];
   if (m.type === "Image-to-3D") return ["Image → 3D", /PBR/.test(d) && "PBR texture", "GLB export"].filter(Boolean);
   return [m.type];
 }
