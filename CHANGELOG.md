@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **Supertonic-3 speaks over Wi-Fi/LAN.** TiinyOS's gateway fails it ("The upstream TTS model failed", 0.1.38: it sends
+  the model a name it doesn't know); the studio now asks the model's own port directly when the gateway fails, where
+  the connection allows it. Over USB it still can't work, and the Voice panel says so.
+- **A "needs Wi-Fi" banner** where a model only works over Wi-Fi/LAN and you're on USB (Supertonic-3, GLM-OCR). Text
+  mode reads with PP-OCRv6 instead of failing when GLM-OCR is picked over USB.
 - **Chat's Thinking switch follows the model** ([#23](https://github.com/thezolon/tiiny-studio/issues/23), the start of
   panels that adapt to the loaded model): models that can't reason (Qwen3-4B-Instruct) no longer show it, models that
   always reason (gpt-oss) say "Always thinks", and the Qwen3.5/3.6 family keeps the on/off switch. The studio reads

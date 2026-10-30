@@ -231,7 +231,12 @@ class Audio(ContractCase):
             for k in not_sent:
                 self.assertNotIn(k, body)
         self.failed({**base, "model": "Fake/CustomVoice", "load": "Fake/CustomVoice", "speaker": "nobody"}, "Unsupported speaker")
-        py = self.failed({**base, "model": "Fake/Broken-TTS", "load": "Fake/Broken-TTS", "speaker": "F1"}, "don't work through TiinyOS's gateway")
+        # the gateway fails it (Supertonic-3 on 0.1.38); over USB that's the end, over Wi-Fi its own port answers
+        broken = {**base, "model": "Fake/Broken-TTS", "load": "Fake/Broken-TTS", "speaker": "F1"}
+        self.failed({**broken, "flags": {"closed_port": True}}, "don't work through TiinyOS's gateway")
+        py, _ = self.same_job(broken)
+        self.assertEqual(py["status"], "done", py.get("error"))
+        self.assertEqual([c[3]["model"] for c in self.calls() if c[:2] == ("POST", "/v1/audio/speech")], ["Fake/Broken-TTS", "Broken-TTS"])
         for mid in ("Fake/CustomVoice", "Qwen/Qwen3-TTS-Base"):  # what the panel reads
             request(self.h.fake_url, "POST", "/api/v1/models/" + mid.replace("/", "%2F") + "/launch", {"model_id": mid}, headers=AUTH)
         time.sleep(0.4)
