@@ -4,7 +4,7 @@
 use axum::{
     body::Bytes,
     extract::{Path, State},
-    http::{header, StatusCode},
+    http::{header, HeaderMap, StatusCode},
     response::{IntoResponse, Response},
     routing::{delete, get, post},
     Json, Router,
@@ -124,14 +124,29 @@ async fn fav(State(state): State<AppState>, Path(id): Path<String>, body: Bytes)
     Json(json!({"ok": true, "fav": fav})).into_response()
 }
 
-async fn image(State(state): State<AppState>, Path(name): Path<String>) -> Response {
+async fn image(State(state): State<AppState>, Path(name): Path<String>, headers: HeaderMap) -> Response {
     if !safe_file(&name) {
         return not_found();
     }
-    match std::fs::read(state.store.images.join(&name)) {
-        Ok(b) => ([(header::CONTENT_TYPE, mime(&name)), (header::CACHE_CONTROL, "no-store")], b).into_response(),
-        Err(_) => not_found(),
+    let Ok(b) = std::fs::read(state.store.images.join(&name)) else { return not_found() };
+    let common = [(header::CONTENT_TYPE, mime(&name)), (header::CACHE_CONTROL, "no-store"), (header::ACCEPT_RANGES, "bytes")];
+    // one byte range ("bytes=a-b", "bytes=a-", "bytes=-n"): a <video> asks for them to seek
+    let range = headers.get(header::RANGE).and_then(|v| v.to_str().ok()).and_then(|r| r.strip_prefix("bytes=")).and_then(|r| r.split_once('-'));
+    let Some((a, z)) = range.filter(|(a, z)| (!a.is_empty() || !z.is_empty()) && a.chars().chain(z.chars()).all(|c| c.is_ascii_digit())) else {
+        return (common, b).into_response();
+    };
+    let len = b.len() as u64;
+    let last = len.saturating_sub(1);
+    let (start, end) = if a.is_empty() {
+        (len.saturating_sub(z.parse().unwrap_or(0)), last)
+    } else {
+        (a.parse().unwrap_or(u64::MAX), z.parse().unwrap_or(last).min(last))
+    };
+    if len == 0 || start > end {
+        return (StatusCode::RANGE_NOT_SATISFIABLE, [(header::CONTENT_RANGE, format!("bytes */{len}"))]).into_response();
     }
+    let part = b[start as usize..=end as usize].to_vec();
+    (StatusCode::PARTIAL_CONTENT, common, [(header::CONTENT_RANGE, format!("bytes {start}-{end}/{len}"))], part).into_response()
 }
 
 async fn voices(State(state): State<AppState>) -> Json<Value> {

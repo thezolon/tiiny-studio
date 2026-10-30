@@ -13,6 +13,7 @@ AUTH = {"Authorization": "Bearer fake-key"}
 TTS, ASR, LOOP, SONG, MESH = "Qwen/Qwen3-TTS-Base", "Fake/Whisper-ASR", "Fake/Foundation-1", "Fake/SongGeneration-v2", "Tencent/Hunyuan3D-2.1"
 IMAGE = "Qwen/Qwen-Image-2.1"
 TRELLIS = "microsoft/TRELLIS.2-4B"
+VIDEO = fake_tiiny.VIDEO
 PNG = "data:image/png;base64," + base64.b64encode(fake_tiiny.tiny_png()).decode()
 WAV = "data:audio/wav;base64," + base64.b64encode(fake_tiiny.tiny_wav()).decode()
 WAV_44K = "data:audio/x-wav;base64," + base64.b64encode(fake_tiiny.tiny_wav(0.05, 44100)).decode()
@@ -36,7 +37,8 @@ def png_pixels(data):
     return [b for y in range(h) for b in raw[y * (w * 4 + 1) + 1:(y + 1) * (w * 4 + 1)]]
 
 
-class Audio(ContractCase):
+class Jobs(ContractCase):
+    """Runs media jobs on both servers against the fake and compares them."""
     maxDiff = None
 
     def run_job(self, base, req, reset=True):
@@ -88,6 +90,8 @@ class Audio(ContractCase):
             self.assertIn(text, py["error"])
         return py
 
+
+class Audio(Jobs):
     # ---------- speech ----------
     def speech(self, **kw):
         return {"kind": "speech", "model": TTS, "text": "RUST TEST hello there.", "ref_audio": WAV, "ref_text": "hi", "load": TTS, **kw}
@@ -395,6 +399,87 @@ class Audio(ContractCase):
             job, _ = self.finish(base, job)
             results.append((job["status"], job["message"]))
         self.assertEqual(results, [("cancelled", "Cancelled")] * 2)
+
+
+class Video(Jobs):
+    """Video (0.4.0): the gateway's /v1/videos with MiniMax-H3-Turbo's own sizes and steps (/v1/video/info)."""
+
+    def video(self, **kw):
+        return {"kind": "video", "model": VIDEO, "load": VIDEO, "prompt": "RUST TEST a red apple rolls", "size": "832x480", "seconds": 2, **kw}
+
+    def test_video_from_text(self):
+        py, rs = self.same_job(self.video(steps=4, seed=7, bogus=1))
+        self.assertEqual(py["status"], "done", py.get("error"))
+        self.assertEqual((py["entry"]["kind"], py["entry"]["duration"], py["entry"]["sources"]), ("video", 2.0, []))
+        self.assertEqual(py["entry"]["params"], {"model": VIDEO, "prompt": "RUST TEST a red apple rolls", "size": "832x480", "seconds": 2, "steps": 4, "seed": 7})
+        self.files_equal(py, rs)
+        calls = self.calls()
+        sent = next(c[3] for c in calls if c[:2] == ("POST", "/v1/videos"))
+        self.assertEqual(sent, {"model": VIDEO, "prompt": "RUST TEST a red apple rolls", "size": "832x480", "seconds": "2", "steps": 4, "seed": 7})
+        self.assertTrue(any(c[0] == "GET" and c[1].endswith("/content") for c in calls))
+        self.assertEqual(calls[-1][0], "DELETE")  # the device's copy goes once the studio has it
+        for base, job in ((self.h.py_url, py), (self.h.rs_url, rs)):
+            got = request(base, "GET", "/images/" + job["entry"]["outputs"][0])
+            self.assertEqual((got.status, got.headers["Content-Type"], got.body[4:8]), (200, "video/mp4", b"ftyp"))
+
+    def test_video_from_frames(self):
+        py, rs = self.same_job(self.video(prompt="", image=PNG, last_image=PNG))
+        self.assertEqual(py["status"], "done", py.get("error"))
+        self.assertEqual(len(py["entry"]["sources"]), 2)
+        self.files_equal(py, rs, "sources")
+        sent = next(c[3] for c in self.calls() if c[:2] == ("POST", "/v1/videos"))
+        self.assertEqual(sent["prompt"], "Bring this picture to life")
+        self.assertEqual([sent[k].split(",")[0] for k in ("image", "last_image")], ["data:image/png;base64"] * 2)
+
+    def test_video_errors(self):
+        self.failed(self.video(prompt=" "), "Describe the clip")
+        self.failed({**self.video(), "load": None}, "isn't loaded")
+        self.failed(self.video(size="1x1"), "exported for [1344x768")
+        dirs = [d / "images" for d in self.h.tmp[-2:]]
+        before = [len(list(d.iterdir())) for d in dirs]
+        self.failed(self.video(size="1x1", image=PNG), "exported for")  # its saved first frame goes too
+        self.assertEqual([len(list(d.iterdir())) for d in dirs], before)
+
+    def test_video_cancel(self):
+        results = []
+        for base in (self.h.py_url, self.h.rs_url):
+            request(self.h.fake_url, "POST", "/__reset")
+            request(self.h.fake_url, "POST", "/api/v1/models/" + VIDEO.replace("/", "%2F") + "/launch", {"model_id": VIDEO}, headers=AUTH)
+            time.sleep(0.4)
+            request(self.h.fake_url, "POST", "/__reset_log")
+            request(self.h.fake_url, "POST", "/__flags", {"video_hold": True})
+            job = request(base, "POST", "/api/jobs", {k: v for k, v in self.video().items() if k != "load"}).json
+            time.sleep(4)
+            self.assertEqual(request(base, "POST", f"/api/jobs/{job['id']}/cancel").status, 200)
+            job, calls = self.finish(base, job)
+            self.assertEqual(job["status"], "cancelled")
+            results.append([c[:2] for i, c in enumerate(calls) if i == 0 or c != calls[i - 1]])
+        self.assertEqual(results[0], results[1])
+        self.assertIn("DELETE", [m for m, p in results[0]])  # deleting the clip stops the render
+
+    def test_video_info_and_workspace(self):
+        request(self.h.fake_url, "POST", "/__reset")
+        request(self.h.fake_url, "POST", "/api/v1/models/" + VIDEO.replace("/", "%2F") + "/launch", {"model_id": VIDEO}, headers=AUTH)
+        time.sleep(0.4)
+        infos = [request(b, "GET", "/api/model/info?id=" + VIDEO.replace("/", "%2F")).json for b in (self.h.py_url, self.h.rs_url)]
+        self.assertEqual(infos[0], infos[1])
+        self.assertEqual(infos[0]["info"]["step_options"], [4, 5, 6, 7, 8])
+        rows = [next(m for m in request(b, "GET", "/api/catalog").json["models"] if m["id"] == VIDEO) for b in (self.h.py_url, self.h.rs_url)]
+        self.assertEqual([r["workspace"] for r in rows], ["video", "video"])
+
+    def test_media_ranges(self):
+        # a <video> seeks with byte ranges
+        py, rs = self.same_job(self.video())
+        for base, job in ((self.h.py_url, py), (self.h.rs_url, rs)):
+            path = "/images/" + job["entry"]["outputs"][0]
+            n = len(fake_tiiny.MP4)
+            for rng, code, cr, body in [("bytes=4-11", 206, f"bytes 4-11/{n}", fake_tiiny.MP4[4:12]),
+                                        ("bytes=-4", 206, f"bytes {n - 4}-{n - 1}/{n}", fake_tiiny.MP4[-4:]),
+                                        ("bytes=10-", 206, f"bytes 10-{n - 1}/{n}", fake_tiiny.MP4[10:]),
+                                        (f"bytes={n}-", 416, f"bytes */{n}", b"")]:
+                got = request(base, "GET", path, headers={"Range": rng})
+                self.assertEqual((got.status, got.headers.get("Content-Range"), got.body), (code, cr, body), (base, rng))
+            self.assertEqual(request(base, "GET", path).headers.get("Accept-Ranges"), "bytes")
 
 
 def strip(obj):

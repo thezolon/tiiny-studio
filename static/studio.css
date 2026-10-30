@@ -105,6 +105,13 @@ textarea.lyrics:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(-
 .switch-row input { margin-top: 3px; accent-color: var(--accent); width: 16px; height: 16px; }
 .switch-row b { display: block; font-weight: 600; }
 .switch-row small { color: var(--faint); font-size: 12px; }
+/* video */
+.video-frames { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.video-frames > :only-child { grid-column: 1 / -1; }
+.video-frame { aspect-ratio: 16 / 10; max-height: 180px; width: 100%; }
+.video-result { display: flex; flex-direction: column; align-items: center; gap: 10px; width: 100%; height: 100%; min-height: 0; }
+.video-player { width: 100%; flex: 1; min-height: 240px; max-height: 70vh; border-radius: 18px; border: 1px solid var(--line); background: #000; object-fit: contain; }
+.media-thumb video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
 .mesh-result { display: flex; flex-direction: column; align-items: center; width: 100%; height: 100%; min-height: 0; }
 .viewer-wrap { position: relative; width: 100%; flex: 1; min-height: 320px; border-radius: 18px; overflow: hidden; border: 1px solid var(--line);
   background: radial-gradient(ellipse at 50% 35%, var(--panel-2), var(--bg) 75%); }

@@ -478,6 +478,7 @@ details.adv summary .sum { margin-left: auto; color: var(--faint); font-weight: 
   <symbol id="i-trash" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16"/><path d="M9 7V4.5h6V7"/><path d="M6.5 7l1 13h9l1-13"/></symbol>
   <symbol id="i-wave" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M3 12h1M7 8v8M11 4v16M15 7v10M19 10v4M22 12h-1"/></symbol>
   <symbol id="i-cube" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M12 2.8l8.5 4.7v9L12 21.2l-8.5-4.7v-9z"/><path d="M3.5 7.5L12 12l8.5-4.5M12 12v9.2"/></symbol>
+  <symbol id="i-film" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2.5"/><path d="M7 5v14M17 5v14M3 9.5h4M3 14.5h4M17 9.5h4M17 14.5h4"/><path d="M10.5 9.8v4.4l3.6-2.2z" fill="currentColor"/></symbol>
   <symbol id="i-mic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0013 0M12 17.5V21"/></symbol>
   <symbol id="i-play" viewBox="0 0 24 24" fill="currentColor"><path d="M7 4.8v14.4a1 1 0 001.5.86l11.6-7.2a1 1 0 000-1.72L8.5 3.94A1 1 0 007 4.8z"/></symbol>
   <symbol id="i-pause" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4.2" height="16" rx="1.2"/><rect x="13.8" y="4" width="4.2" height="16" rx="1.2"/></symbol>
@@ -497,6 +498,7 @@ details.adv summary .sum { margin-left: auto; color: var(--faint); font-weight: 
       <button role="tab" data-ws="image" aria-selected="true"><svg><use href="#i-spark"/></svg><span>Image</span></button>
       <button role="tab" data-ws="audio" aria-selected="false"><svg><use href="#i-wave"/></svg><span>Audio</span></button>
       <button role="tab" data-ws="mesh" aria-selected="false"><svg><use href="#i-cube"/></svg><span>3D</span></button>
+      <button role="tab" data-ws="video" aria-selected="false"><svg><use href="#i-film"/></svg><span>Video</span></button>
       <button role="tab" data-ws="chat" aria-selected="false"><svg><use href="#i-chat"/></svg><span>Chat</span></button>
     </nav>
     <div class="spacer"></div>
@@ -603,6 +605,7 @@ details.adv summary .sum { margin-left: auto; color: var(--faint); font-weight: 
   </div>
   <div class="main ws" id="wsAudio" hidden></div>
   <div class="main ws" id="wsMesh" hidden></div>
+  <div class="main ws" id="wsVideo" hidden></div>
   <div class="main ws" id="wsChat" hidden></div>
 </div>
 
@@ -1140,6 +1143,7 @@ function renderStage() {
   const tb = el("div", { class: "toolbar" },
     el("button", { class: "tb primary", title: "Use this image as the source for an edit (E)", onclick: () => useAsSource(url) }, icon("i-brush"), el("span", { class: "lbl" }, "Edit this")),
     el("button", { class: "tb", title: "Turn this image into a 3D model", onclick: () => MeshWS.fromImage(url) }, icon("i-cube"), el("span", { class: "lbl" }, "Make 3D")),
+    modelForTool("video") ? el("button", { class: "tb", title: "Start a video clip from this image", onclick: () => VideoWS.fromImage(url) }, icon("i-film"), el("span", { class: "lbl" }, "Animate")) : null,
     el("button", { class: "tb", title: "Describe this image with the chat model", disabled: !!S.describing[entry.outputs[idx]], onclick: () => describeImage(entry, idx) }, icon("i-text"), el("span", { class: "lbl" }, S.describing[entry.outputs[idx]] ? "Describing…" : "Describe")),
     entry.sources.length ? el("button", { class: "tb", "aria-pressed": S.compare, title: "Before / after (C)", onclick: () => { S.compare = !S.compare; renderStage(); } }, icon("i-cmp"), el("span", { class: "lbl" }, "Compare")) : null,
     el("button", { class: "tb", title: "Same settings, new seed (V)", onclick: () => rerun(entry, true) }, icon("i-redo"), el("span", { class: "lbl" }, "Vary")),
@@ -1407,8 +1411,8 @@ function renderDrawer() {
   const all = S.allModels || [];
   // the current workspace's models first (its workspace names differ from the models' own: mesh = 3d, chat = text)
   const cur = { mesh: "3d", chat: "text" }[S.ws] || S.ws || "image";
-  const order = [cur, ...["image", "audio", "3d", "text"].filter((w) => w !== cur)];
-  const wsName = { image: "Image", audio: "Audio", "3d": "3D", text: "Chat" };
+  const order = [cur, ...["image", "audio", "3d", "video", "text"].filter((w) => w !== cur)];
+  const wsName = { image: "Image", audio: "Audio", "3d": "3D", video: "Video", text: "Chat" };
   const sections = order.map((w) => {
     const list = all.filter((m) => m.workspace === w).sort(byRun);
     return list.length ? [el("div", { class: "section-title" }, `${wsName[w]} models · ${list.length}`), ...list.map(modelCard)] : [];
@@ -1711,6 +1715,7 @@ setInterval(() => {
 <script src="/static/extras.js"></script>
 <script src="/static/audio.js"></script>
 <script src="/static/mesh.js"></script>
+<script src="/static/video.js"></script>
 <script src="/static/chat.js"></script>
 </body>
 </html>
