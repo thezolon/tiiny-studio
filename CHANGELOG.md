@@ -1,46 +1,59 @@
 # Changelog
 
-## Unreleased
+## 0.4.0 (2026-10-30)
 
-- The studio watches the Tiiny's free space: the Models panel shows it, and a job won't start with under 2 GB free (it would fail halfway).
-- **Supertonic-3 speaks over Wi-Fi/LAN.** TiinyOS's gateway fails it ("The upstream TTS model failed", 0.1.38: it sends
-  the model a name it doesn't know); the studio now asks the model's own port directly when the gateway fails, where
-  the connection allows it. Over USB it still can't work, and the Voice panel says so.
-- **A "needs Wi-Fi" banner** where a model only works over Wi-Fi/LAN and you're on USB (Supertonic-3, GLM-OCR). Text
-  mode reads with PP-OCRv6 instead of failing when GLM-OCR is picked over USB.
+Video with sound, panels that follow the loaded model, and a queue you can leave running overnight.
+
+**Video**
+
 - **New Video tab** for **MiniMax-H3-Turbo**: write a prompt, or start from a picture, and get a short clip **with
   matching sound** (MP4). Sizes (wide or tall, 480p or 768p), steps and frame rate come from the loaded model. Any
-  image has an **Animate** button that opens it here. **Video is slow on the Tiiny:** about 7 minutes for 2 seconds at
-  480p with 4 steps and over 15 with the default 7 (0.1.38), longer for bigger, longer or more-step clips; the panel shows the expected time before you start. Cancel stops the render on the device, and the device's copy is deleted once the studio has it.
-- **Results left on the Tiiny are saved automatically:** if the studio restarted mid-render, or another studio made it,
-  videos and songs/loops from the last day that never reached your gallery are pulled in when you open the studio
-  (3D can't be: the device has no list). The first time only takes stock, so old results are never imported. Two studios
-  sharing one Tiiny will each pull the other's recent results. Deleting a song or loop now also deletes the Tiiny's copy.
-- **Video defaults to 4 steps** (about 7 minutes for 2 s at 480p, against 15+ at 7); "Default" is still there.
+  image has an **Animate** button that opens it here.
+- **Video is slow on the Tiiny:** about 7 minutes for 2 seconds at 480p with the default 4 steps (0.1.38), over 15 at
+  7 steps, longer for bigger or longer clips. The panel shows the expected time before you start, and each clip says
+  how long it took to render.
 - Videos can be scrubbed: both servers now answer byte-range requests for media files.
-- **Chat's Thinking switch follows the model** ([#23](https://github.com/thezolon/tiiny-studio/issues/23), the start of
-  panels that adapt to the loaded model): models that can't reason (Qwen3-4B-Instruct) no longer show it, models that
-  always reason (gpt-oss) say "Always thinks", and the Qwen3.5/3.6 family keeps the on/off switch. The studio reads
-  this from the model instead of guessing from its name, for chat and for the helpers.
-- The studio now keeps each model's own description of its options, and can ask a loaded chat, voice, music or 3D
-  model for the rest. The Voice, Song and 3D panels will build on this.
-- **Voice follows the model** ([#23](https://github.com/thezolon/tiiny-studio/issues/23)): the Voice panel shows what the
-  loaded voice model can do. Built-in voices to pick from (Qwen3-CustomVoice, MOSS-TTS-Nano), a box to describe a new
-  voice (Qwen3-VoiceDesign), your cloned voices (Qwen3-VoiceClone), the style field only where it works, and the model's
-  own languages. Before, every voice model was treated as a cloning one.
-- **Songs follow the model** ([#23](https://github.com/thezolon/tiiny-studio/issues/23)): **YuE2-3B** works now (it has no
-  preview, like AceStep). The Song panel shows each model's own defaults and limits for steps, temperature, top-k, top-p
-  and length (AceStep up to 8 minutes). **AceStep gets its own settings:** tempo, key, time signature, the language
-  it sings in, and things to avoid. Preview and separate tracks only show for SongGeneration, the model that has them.
-  Which route a song takes is read from the model instead of guessed from its name.
-- **3D follows the model** ([#23](https://github.com/thezolon/tiiny-studio/issues/23)): the 3D panel shows the loaded model's
-  own detail levels (Hunyuan3D: octree 192/288/384; TRELLIS.2: 512 or 1024 px, so Draft and Standard are one choice
-  there), its sampling qualities, a new **Mesh quality** setting, and texture/simplify only when the model has those
-  steps. Time estimates use each model's own timings.
-- The 3D cut-out prefers an image model that writes a real alpha channel (Qwen-Image). FLUX.2-klein
-  Background-Remove returns the subject on white, which TRELLIS.2 handles but Hunyuan3D doesn't.
+
+**Panels follow the loaded model** ([#23](https://github.com/thezolon/tiiny-studio/issues/23))
+
+- **Chat's Thinking switch:** models that can't reason (Qwen3-4B-Instruct) no longer show it, models that always reason
+  (gpt-oss) say "Always thinks", and the Qwen3.5/3.6 family keeps the on/off switch. Read from the model, for chat and
+  the helpers, instead of guessed from its name.
+- **Voice:** built-in voices to pick from (Qwen3-CustomVoice, MOSS-TTS-Nano), a box to describe a new voice
+  (Qwen3-VoiceDesign), your cloned voices (Qwen3-VoiceClone), the style field only where it works, and the model's own
+  languages. Before, every voice model was treated as a cloning one.
+- **Songs:** **YuE2-3B** works now. Each model's own defaults and limits for steps, temperature, top-k, top-p and length
+  (AceStep up to 8 minutes). **AceStep gets its own settings:** tempo, key, time signature, the language it sings in,
+  and things to avoid. Preview and separate tracks only show for SongGeneration, the model that has them.
+- **3D:** the loaded model's own detail levels (Hunyuan3D: octree 192/288/384; TRELLIS.2: 512 or 1024 px), sampling
+  qualities, a new **Mesh quality** setting, and texture/simplify only when the model has those steps, with each model's
+  own timings. The cut-out prefers an image model that writes a real alpha channel (Qwen-Image).
+- **Supertonic-3 speaks over Wi-Fi/LAN.** TiinyOS's gateway fails it (it sends the model a name it doesn't know); the
+  studio now asks the model's own port directly. Over USB it still can't work, and the Voice panel says so.
+- **A "needs Wi-Fi" banner** where a model only works over Wi-Fi/LAN and you're on USB (Supertonic-3, GLM-OCR). Text
+  mode reads with PP-OCRv6 instead of failing when GLM-OCR is picked over USB.
+- PP-DocLayoutV3 is no longer offered in Text mode: it finds a page's layout but doesn't read text.
+
+**Queue and jobs** (overnight queues requested on the Tiiny Discord)
+
+- **The jobs menu shows when each job should start and finish**, and when the whole queue will be done. **Remove all
+  waiting** clears what hasn't started.
+- **The desktop app keeps the computer awake** while jobs are queued or running (the screen can still turn off).
+- **A dropped connection doesn't end a video or 3D job:** it keeps trying for about 5 minutes.
+- **Results left on the Tiiny are saved automatically:** videos and songs/loops from the last day that never reached your
+  gallery (the studio was closed mid-render, or another studio made them) are pulled in when you open the studio. The
+  first time only takes stock, so old results are never imported. 3D can't be recovered: the device can't list it.
+  Two studios sharing one Tiiny each pull the other's recent results.
+- **Deleting a song or loop also deletes the Tiiny's copy.**
+- **The Tiiny's free space is watched:** the Models panel shows it, and a job won't start with under 2 GB free (it
+  would fail halfway).
+- A chat where the model spends all its tokens thinking and gives no answer (seen once with gpt-oss-20b) now says so,
+  instead of showing an empty reply.
+
+**Device notes**
+
 - A voice model that fails inside TiinyOS now says so, instead of "The upstream TTS model failed" (on 0.1.38:
-  Supertonic-3, and cloning with MOSS-TTS-Nano; reported to Tiiny).
+  Supertonic-3 over USB, and cloning with MOSS-TTS-Nano; reported to Tiiny).
 - Tested on TiinyOS 0.1.38.
 
 ## 0.3.2 (2026-10-29)

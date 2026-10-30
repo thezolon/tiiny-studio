@@ -1,6 +1,6 @@
 # Roadmap
 
-Where Tiiny Studio stands, what's next, and what doesn't work yet. Version **0.3.2**, checked against TiinyOS
+Where Tiiny Studio stands, what's next, and what doesn't work yet. Version **0.4.0**, checked against TiinyOS
 0.1.35 to 0.1.38 on a Tiiny Pocket.
 
 ## Works now
@@ -13,8 +13,11 @@ Where Tiiny Studio stands, what's next, and what doesn't work yet. Version **0.3
 - **Chat:** streaming replies, thinking view, pictures and documents as attachments, speech input, and tools
   that create/edit images, speak, and make loops and songs, swapping models on the Tiiny when they don't fit
   together. Attached documents are delimited and screened for prompt injection; suspicious ones are flagged.
-- **Audio:** voice cloning with a saved voice library, tempo/key-locked loops, full songs with an 8-second
-  preview, MP3 copies, transcription in 30 languages.
+- **Audio:** voice cloning with a saved voice library, built-in and described voices, tempo/key-locked loops, full
+  songs (SongGeneration with an 8-second preview, AceStep with its own settings, YuE2), MP3 copies, transcription in
+  30 languages.
+- **Video** (MiniMax-H3-Turbo): text or a start picture to a short clip with sound.
+- **Panels follow the loaded model:** Chat's thinking, Voice, Songs, 3D and Video read their options from the model.
 - **3D** (Hunyuan3D-2.1 or TRELLIS.2-4B): image → shape → simplify → texture → GLB, with a viewer. The subject is cut out first (Qwen-Image), so the
   background doesn't end up in the model.
 - **Gallery, models panel and device:** search and smart search, favourites, zip export, bulk delete; load and
@@ -22,9 +25,11 @@ Where Tiiny Studio stands, what's next, and what doesn't work yet. Version **0.3
 - **Model swapping:** helpers (Improve prompt, Describe, Write lyrics, loop tags) and chat tools load the model they
   need and put yours back afterwards. A global switch and one per section in Settings (all on by default), and a
   choice of which text model the helpers use.
-- **Jobs:** one queue on the server (the Tiiny does one thing at a time); jobs keep running if you close the
-  page; **cancel** any running or queued job, and the Tiiny's work stops too. Quitting the app or stopping the
-  server stops running work on the device first.
+- **Jobs:** one queue on the server (the Tiiny does one thing at a time) with start and finish times; jobs keep
+  running if you close the page, ride out a dropped connection, and the desktop app keeps the computer awake for
+  them; **cancel** any running or queued job (or remove all waiting ones), and the Tiiny's work stops too. Quitting
+  the app or stopping the server stops running work on the device first. Results left on the Tiiny are saved, and
+  deleting a song or loop deletes the Tiiny's copy too. The Tiiny's free space is watched.
 - **Connections:** Wi-Fi/LAN and USB, several saved devices with auto-switch.
 - **Private by default:** results stay on your computer, complete deletes, no telemetry, network access off
   unless you turn it on (with an optional password).

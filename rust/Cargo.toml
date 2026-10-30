@@ -3,7 +3,7 @@ resolver = "2"
 members = ["studio-core", "studio-server", "studio-desktop"]
 
 [workspace.package]
-version = "0.3.2"
+version = "0.4.0"
 edition = "2021"
 license = "Apache-2.0"
 authors = ["Zolon Farsane"]
