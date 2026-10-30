@@ -332,6 +332,20 @@ class Audio(ContractCase):
         py, _ = self.same_job({k: v for k, v in full.items() if k not in ("faces", "texture")})
         self.assertEqual(request(self.h.py_url, "GET", "/images/" + py["entry"]["outputs"][0]).body, fake_tiiny.GLB + b"shape")
 
+    def test_mesh_rides_out_a_dropped_link(self):
+        # 502s on the status polls (and on the artifact fetch) are "no answer", not a failed job
+        flags = {"task_polls": 1, "task_flaky": 2}
+        py, rs = self.same_job(self.mesh(flags=flags))
+        self.assertEqual(py["status"], "done", py.get("error"))
+        self.assertEqual([c[1] for c in self.calls() if c[0] == "GET" and c[1].startswith("/v1/3d/tasks/")].count("/v1/3d/tasks/task-1"), 3)
+        self.files_equal(py, rs)
+        py, rs = self.same_job({"kind": "mesh", "model": TRELLIS, "image": PNG, "load": TRELLIS,
+                                "flags": {"task_polls": 1, "task_flaky": 1, "artifact_flaky": 2}})
+        self.assertEqual(py["status"], "done", py.get("error"))
+        self.assertEqual(len([c for c in self.calls() if "/artifacts/" in c[1]]), 3)  # two 502s, then the file
+        self.files_equal(py, rs)
+        self.assertEqual(request(self.h.py_url, "GET", "/images/" + py["entry"]["outputs"][0]).body, fake_tiiny.GLB + b"shape")
+
     def test_mesh_two_models_loaded(self):
         # with TRELLIS loaded too, a Hunyuan3D job must still reach Hunyuan3D (the gateway routes by ?model=)
         py, rs = self.same_job({**self.mesh(faces="5000", texture=True), "load": [TRELLIS, MESH]})
