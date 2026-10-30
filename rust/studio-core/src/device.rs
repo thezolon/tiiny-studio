@@ -59,6 +59,7 @@ fn workspace(kind: &str) -> &'static str {
         "Text-to-Image" | "Image-to-Image" => "image",
         "Text-to-Speech" | "ASR" | "Music Generation" => "audio",
         "Image-to-3D" => "3d",
+        "Text-to-Video" => "video",
         "Image-Text-to-Text" | "Text Generation" => "text",
         _ => "other",
     }

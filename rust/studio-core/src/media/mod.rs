@@ -1,4 +1,4 @@
-//! Job kinds (media.py KINDS): image, ocr, speech, transcribe, loop, song, mesh, assist, and chat.py's chat.
+//! Job kinds (media.py KINDS): image, ocr, speech, transcribe, loop, song, mesh, video, assist, and chat.py's chat.
 //! Each arrives with its stage (3: image/assist/ocr, 4: chat, 5: audio and 3D); until then the kind is unknown.
 //! The plumbing below is media.py's Media helpers.
 
@@ -10,6 +10,7 @@ mod music;
 mod ocr;
 mod speech;
 mod transcribe;
+mod video;
 
 use std::time::{Duration, Instant};
 
@@ -30,6 +31,7 @@ pub fn kind(name: &str) -> Option<KindFn> {
         "loop" => Some(|ctx| Box::pin(music::run_loop(ctx))),
         "song" => Some(|ctx| Box::pin(music::run_song(ctx))),
         "mesh" => Some(|ctx| Box::pin(mesh::run(ctx))),
+        "video" => Some(|ctx| Box::pin(video::run(ctx))),
         #[cfg(test)]
         "test" => Some(|ctx| Box::pin(test_kind(ctx))),
         _ => None,

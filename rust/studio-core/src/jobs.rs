@@ -99,7 +99,7 @@ impl Ctx {
         }
     }
 
-    /// A remote task the device can cancel (POSTed to on cancel, like media.py remote_task).
+    /// A remote task the device can cancel (POSTed to on cancel, or "DELETE <url>", like media.py remote_task).
     pub fn set_remote_task(&self, url: Option<String>) {
         if let Some(j) = self.state.jobs.lock().get_mut(&self.id) {
             j.remote_task = url;
@@ -229,9 +229,14 @@ impl Jobs {
             }
             (j.remote_task.clone(), halt)
         };
-        if let Some(url) = remote {
+        if let Some(task) = remote {
+            // POSTed to, or "DELETE <url>" (a video)
             let key = state.settings.current().key;
-            let _ = state.http.post(url).bearer_auth(key).body(Vec::new()).timeout(std::time::Duration::from_secs(15)).send().await;
+            let req = match task.strip_prefix("DELETE ") {
+                Some(url) => state.http.delete(url),
+                None => state.http.post(task).body(Vec::new()),
+            };
+            let _ = req.bearer_auth(key).timeout(std::time::Duration::from_secs(15)).send().await;
         }
         if let Some((kind, model)) = halt {
             tokio::spawn(halt_device(state.clone(), kind, model));
