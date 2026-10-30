@@ -395,6 +395,25 @@ def run_transcribe(m, job, req):
             "sources": [src] if src else [], "outputs": [], "text": res["text"]}
 
 
+# ---------- thinking: what a chat model does, from its own /v1/models "thinking" object (TiinyOS 0.1.36+) ----------
+def thinking_of(m, model):
+    """The model's thinking object from /v1/models, or None (older TiinyOS, or the model isn't loaded)."""
+    code, res = m.device("GET", "/v1/models", None, 15)
+    item = next((x for x in (res.get("data") or []) if x.get("id") == model), None) if code == 200 else None
+    t = (item or {}).get("thinking")
+    return t if isinstance(t, dict) else None
+
+
+def thinking_mode(model, thinking):
+    """"none" (never reasons), "switch" (enable_thinking turns it on/off) or "always" (reasons whatever it's sent,
+    like gpt-oss; tested on 0.1.38: neither enable_thinking nor reasoning_effort changes it reliably)."""
+    if thinking is None:  # no thinking object: older TiinyOS, where gpt-oss also rejected enable_thinking
+        return "always" if "gpt-oss" in model else "switch"
+    if not thinking.get("supported"):
+        return "none"
+    return "switch" if thinking.get("toggleable") else "always"
+
+
 # ---------- model juggling: chat tools and helpers load what they need, then put the user's models back ----------
 LOAD_TIMEOUT = 420  # seconds; the biggest models take ~2 minutes to load
 
@@ -1009,9 +1028,10 @@ def run_assist(m, job, req):
 def assist_call(m, job, task, user):
     body = {"model": job["model"], "messages": [{"role": "system", "content": ASSIST_SYSTEM[task]}, {"role": "user", "content": user}],
             "max_tokens": ASSIST_TOKENS[task], "temperature": 0.8 if task == "lyrics" else 0.6, "stream": False}
-    if "gpt-oss" in job["model"]:  # always reasons and rejects enable_thinking; give it room to think
+    mode = thinking_mode(job["model"], thinking_of(m, job["model"]))
+    if mode == "always":  # reasons anyway: give it room to think
         body.update(reasoning_effort="low", max_tokens=body["max_tokens"] + 1500)
-    else:
+    elif mode == "switch":
         body["chat_template_kwargs"] = {"enable_thinking": False}
     job["message"] = {"prompt": "Rewriting the prompt", "edit": "Rewriting the instruction", "describe": "Looking at the image",
                       "lyrics": "Writing lyrics", "tags": "Picking tags"}[task]

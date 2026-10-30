@@ -4,7 +4,8 @@ the fake Tiiny) and compares answers and, where it matters, what each server ask
 import json
 import unittest
 
-from harness import ContractCase, request
+from harness import ContractCase, request  # first: puts testdata/ on the path
+import fake_tiiny  # noqa: E402
 
 # Device ids are random per server; probe times differ.
 IGNORE = ("id", "active", "ms", "t")
@@ -63,6 +64,19 @@ class Device(ContractCase):
         self.same((py, rs), IGNORE)
         self.assertIn("Docker's own network", py.json["message"])
         self.assertTrue(self.get("/api/settings")[0].json["docker"])
+
+    def test_catalog_and_model_info(self):
+        py, _ = self.same_calls("GET", "/api/catalog")
+        chat = next(m for m in py.json["models"] if m["id"] == fake_tiiny.CHAT_MODEL)
+        self.assertEqual((chat["thinking"]["toggleable"], chat["capabilities"]), (True, ["main"]))
+        q = fake_tiiny.CHAT_MODEL.replace("/", "%2F")
+        py, _ = self.same_calls("GET", f"/api/model/info?id={q}")  # loaded: the model's own answer
+        self.assertEqual(py.json["info"]["thinking"]["toggleable"], True)
+        py, _ = self.same_calls("GET", "/api/model/info?id=Fake%2FSongGeneration-v2")  # not loaded: no info
+        self.assertEqual((py.json["type"], py.json["info"]), ("Music Generation", None))
+        py, _ = self.same_calls("GET", "/api/model/info?id=Fake%2FNope")
+        self.assertEqual(py.status, 404)
+        self.same_calls("GET", "/api/model/info")
 
     def test_models_catalog_plan(self):
         self.same_calls("GET", "/api/models")

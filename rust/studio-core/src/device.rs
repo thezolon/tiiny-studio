@@ -77,7 +77,8 @@ pub async fn catalog(state: &AppState) -> (u16, Value) {
     let mut pending: Vec<String> = list("pending").iter().filter_map(|r| r.get("model_id").and_then(Value::as_str).map(String::from)).collect();
     pending.extend(run.get("pending").and_then(Value::as_array).into_iter().flatten().filter_map(|v| v.as_str().map(String::from)));
     let running_of = |mid: &str| running.iter().find(|r| r.get("model_id").and_then(Value::as_str) == Some(mid));
-    const KEEP: [&str; 13] = ["id", "display_name", "params", "type", "input", "output", "supported", "desc", "npu_usage", "load_time", "costMemory", "size", "version"];
+    const KEEP: [&str; 16] = ["id", "display_name", "params", "type", "input", "output", "supported", "desc", "npu_usage", "load_time", "costMemory", "size", "version",
+        "thinking", "reasoning_levels", "capabilities"];
     let mut models = vec![];
     for m in inst.get("data").and_then(Value::as_array).into_iter().flatten() {
         let mid = m.get("id").and_then(Value::as_str).unwrap_or("");

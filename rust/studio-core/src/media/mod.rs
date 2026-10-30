@@ -124,6 +124,28 @@ pub async fn put_back(ctx: &Ctx, target: &str, unloaded: &[String]) -> Result<()
     Ok(())
 }
 
+// ---------- thinking: what a chat model does, from its own /v1/models "thinking" object (TiinyOS 0.1.36+) ----------
+/// The model's thinking object from /v1/models, or None (older TiinyOS, or the model isn't loaded).
+pub async fn thinking_of(ctx: &Ctx, model: &str) -> Option<Value> {
+    let (code, res) = crate::device::call(&ctx.state, "GET", "/v1/models", None, 15, None).await;
+    if code != 200 {
+        return None;
+    }
+    let item = res.get("data").and_then(Value::as_array)?.iter().find(|x| x.get("id").and_then(Value::as_str) == Some(model))?;
+    item.get("thinking").filter(|t| t.is_object()).cloned()
+}
+
+/// "none" (never reasons), "switch" (enable_thinking turns it on/off) or "always" (reasons whatever it's sent, like
+/// gpt-oss; tested on 0.1.38: neither enable_thinking nor reasoning_effort changes it reliably).
+pub fn thinking_mode(model: &str, thinking: Option<&Value>) -> &'static str {
+    match thinking {
+        // no thinking object: older TiinyOS, where gpt-oss also rejected enable_thinking
+        None => if model.contains("gpt-oss") { "always" } else { "switch" },
+        Some(t) if !t.get("supported").is_some_and(crate::device::truthy) => "none",
+        Some(t) => if t.get("toggleable").is_some_and(crate::device::truthy) { "switch" } else { "always" },
+    }
+}
+
 /// The running instance of a model (its port etc.), or the "isn't loaded" error the UI shows.
 pub async fn running_instance(ctx: &Ctx, model: &str) -> Result<Value, JobError> {
     let (_, run) = crate::device::call(&ctx.state, "GET", "/api/v1/models/running", None, 15, None).await;

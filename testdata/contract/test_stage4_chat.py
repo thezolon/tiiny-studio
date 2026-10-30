@@ -93,6 +93,26 @@ class Chat(ContractCase):
         self.same_job({"kind": "chat", "voice_id": "missing", "messages": [{"role": "user", "content": "RUST TEST hi"}]})
 
 
+    # ---------- thinking follows the model's own "thinking" info (#23) ----------
+    def test_thinking_follows_the_model(self):
+        cases = [("Fake/Always-Thinks", "reasoning_effort", "chat_template_kwargs"),   # reasons anyway: never sent enable_thinking
+                 ("Fake/No-Thinking", None, "chat_template_kwargs"),                   # can't reason: sent nothing about it
+                 (fake_tiiny.CHAT_MODEL, "chat_template_kwargs", "reasoning_effort")]  # a switch, as before
+        for model, sent, not_sent in cases:
+            req = {"kind": "chat", "model": model, "thinking": True, "messages": [{"role": "user", "content": "RUST TEST hi"}]}
+            if model != fake_tiiny.CHAT_MODEL:
+                req["load"] = model
+            py, rs = self.same_job(req)
+            self.assertEqual(py["status"], "done", (model, py.get("error")))
+            body = next(b for m, p, b in self.calls if p == "/v1/chat/completions")
+            if sent:
+                self.assertIn(sent, body, model)
+            self.assertNotIn(not_sent, body, model)
+        # a helper on a model that always reasons gets room for it
+        py, _ = self.same_job({"kind": "assist", "model": "Fake/Always-Thinks", "task": "prompt", "text": "RUST TEST fox", "load": "Fake/Always-Thinks"})
+        body = next(b for m, p, b in self.calls if p == "/v1/chat/completions")
+        self.assertEqual((body.get("reasoning_effort"), body["max_tokens"]), ("low", 1700))
+
     # ---------- model swapping switches (#5) ----------
     def set_swap(self, **kw):
         for base in (self.h.py_url, self.h.rs_url):

@@ -93,7 +93,7 @@ The **device handles one request at a time**; parallel requests to different mod
 |---|---|---|---|
 | GET | `/v1/models` | loaded models; each has `aliases` (`default` = the loaded chat model), `supports_vision`, `supports_chat`, `thinking`, `context_window` | **tested** |
 | POST | `/v1/chat/completions` | OpenAI chat. Streaming (`reasoning_content` deltas when thinking), tools/tool calls, images as `image_url` data URIs. Thinking off: `chat_template_kwargs: {"enable_thinking": false}` (gpt-oss rejects it; use `reasoning_effort`). Model `default` = whatever is loaded | **tested** |
-| GET | `/v1/capabilities` | capabilities of the running model (503 when none) | probed |
+| GET | `/v1/capabilities?model=<id>` | what a loaded **chat or voice** model can do (0.1.38). Chat: `thinking` {`supported`, `toggleable`, `enabled_by_default`, `levels`, `default_level`}, vision, `input_modalities`, `supported`. Voice: `support_voice_clone`, `support_custom_voice` (built-in `supported_speakers`), `support_voice_design`, `support_instruct`, `support_speed`, `supported_languages`, `sample_rate`. Other models answer 400 "does not support tts"; a model that isn't loaded, 503. Music: `/v1/music/info?model=` (`config_schema`, `default_config`, per-task `defaults`); 3D: `/v1/3d/capabilities?model=`. Image, OCR and ASR models have no such route (catalog row and `desc` only) | **tested** |
 | POST | `/v1/embeddings` | embeddings (load an embedding model, e.g. Qwen3-Embedding-0.6B) | **tested** |
 | POST | `/v1/rerank` | `{model, query, documents[]}` (not in the OpenAI spec) | **docs** |
 | POST | `/v1/images/generations` | create: `model, prompt, size "WxH", negative_prompt, seed, steps, guidance_scale, response_format`; **edit**: add `image` (one, base64/data URI) or `images` (array, up to 10) with an edit-capable model. `n` > 1 fails: one image per request. `/images/edits` and `/variations` don't exist | **tested** |
@@ -244,6 +244,11 @@ From Tiiny's docs (**docs**), not tested here.
   route (separate tracks, exact-length songs). The USB /30 is derived from the serial and can land in
   Docker's `172.17.x.x`.
 - Hunyuan3D `background` stage fails (BriefNet missing; still on 0.1.37); SongGeneration style reference fails.
+- **Thinking** (tested 2026-10-30, 0.1.38): follow the model's `thinking` object, not its name. `toggleable` models
+  (Qwen3.5/3.6) switch with `chat_template_kwargs.enable_thinking` (off: no reasoning, ~10x faster); `reasoning_effort`
+  changes nothing for them. gpt-oss (`toggleable: false`, levels low/medium/high) reasons whatever it's sent and no longer
+  rejects `enable_thinking`; neither `reasoning_effort` nor `chat_template_kwargs.reasoning_effort` changed its reasoning
+  reliably. `supported: false` models (Qwen3-4B-Instruct) never reason.
 - **3D models differ; read `/v1/3d/capabilities`** (tested 2026-10-29, TiinyOS 0.1.37). Its `inputs` name what each
   stage takes: Hunyuan3D-2.1 `simplify: [mesh]`, `texture: [image, mesh]`, `export: [material_artifact, mesh_glb]`;
   TRELLIS.2-4B `simplify: [shape_artifact]`, `texture: [shape_artifact]`,

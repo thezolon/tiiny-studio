@@ -123,10 +123,17 @@ const TOOL_TYPES = { speech: "Text-to-Speech", transcribe: "ASR", loop: "Music G
   chat: "Text Generation or Image-Text-to-Text", vision: "Image-Text-to-Text with image input" };
 const CHAT_TYPES = ["Image-Text-to-Text", "Text Generation"];
 const seesImages = (m) => /\bImage\b/.test(m.input || "");
-/** Helpers run on whichever chat model is loaded; otherwise suggest the leanest stock one (gpt-oss always thinks, so it's slow). */
+/** How a chat model reasons, from its own "thinking" info (TiinyOS 0.1.36+): "none", "switch" (on/off) or "always"
+    (like gpt-oss: it reasons whatever it's sent). Without the info (older TiinyOS): gpt-oss always, others switch. */
+function thinkingMode(m) {
+  const t = m?.thinking;
+  if (!t || typeof t !== "object") return /gpt-oss/i.test(m?.id || "") ? "always" : "switch";
+  return !t.supported ? "none" : t.toggleable ? "switch" : "always";
+}
+/** Helpers run on whichever chat model is loaded; otherwise suggest the leanest stock one (one that always reasons is slow). */
 function chatModel(vision) {
   const list = (S.allModels || []).filter((m) => CHAT_TYPES.includes(m.type) && (!vision || seesImages(m)));
-  const rank = (m) => [m.status === "running" ? 0 : 1, /abliterated|heretic|uncensored/i.test(m.id) ? 1 : 0, /gpt-oss/i.test(m.id) ? 1 : 0, m.npu_usage ?? 100];
+  const rank = (m) => [m.status === "running" ? 0 : 1, /abliterated|heretic|uncensored/i.test(m.id) ? 1 : 0, thinkingMode(m) === "always" ? 1 : 0, m.npu_usage ?? 100];
   const cmp = (a, b) => { const x = rank(a), y = rank(b); for (let i = 0; i < x.length; i++) if (x[i] !== y[i]) return x[i] - y[i]; return 0; };
   return list.sort(cmp)[0] || null;
 }

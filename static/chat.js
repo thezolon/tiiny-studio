@@ -312,7 +312,9 @@ const ChatWS = {
         input,
         el("button", { class: "go chat-send", disabled: C.busy, onclick: chatSend }, icon("i-spark"), "Send")),
       el("div", { class: "chat-opts" },
-        toggle("thinking", "Thinking", "Let the model reason before answering (slower, often better)"),
+        // the model's own thinking info decides: an on/off switch, a note that it always reasons, or nothing
+        { switch: toggle("thinking", "Thinking", "Let the model reason before answering (slower, often better)"),
+          always: el("span", { class: "btn-sm toggle", "aria-pressed": "true", title: `${shortName(runningChat()?.id || "")} always reasons before answering` }, "Always thinks") }[thinkingMode(runningChat())] || null,
         toggle("tools", "Can make things", "Let the model create and edit images, speak, and make loops and songs (models are swapped on the device when needed)"),
         el("span", { class: "spacer" }),
         el("small", { style: "color:var(--faint)" }, C.save ? "Saved in the data folder · delete removes it completely" : "Not saved"))].filter(Boolean));

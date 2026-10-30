@@ -368,6 +368,29 @@ WORKSPACE = {"Text-to-Image": "image", "Image-to-Image": "image", "Text-to-Speec
              "Music Generation": "audio", "Image-to-3D": "3d", "Image-Text-to-Text": "text", "Text Generation": "text"}
 
 
+# Where a loaded model reports its own options (#23), by catalog type. Image, OCR and transcription models have no
+# such route: their options come from the catalog row (supported, capabilities, desc).
+INFO_ROUTES = {"Text Generation": "/v1/capabilities", "Image-Text-to-Text": "/v1/capabilities", "Text-to-Speech": "/v1/capabilities",
+               "Music Generation": "/v1/music/info", "Image-to-3D": "/v1/3d/capabilities"}
+
+
+def model_info(mid):
+    """What a model reports about its options: chat (thinking, vision), voice (clone, speakers, languages), music
+    (config schema and defaults), 3D (stages, params). Only a loaded model answers; info is None otherwise."""
+    code, inst = device("GET", "/api/v1/models/?including_downloading=false", timeout=15)
+    if code != 200:
+        return code, inst
+    row = next((m for m in inst.get("data", []) if m.get("id") == mid), None)
+    if not row:
+        return 404, {"error": {"message": f"{mid} isn't installed on the device"}}
+    route, info = INFO_ROUTES.get(row.get("type")), None
+    if route:
+        code, res = device("GET", f"{route}?model={quote(mid, safe='')}", timeout=15)
+        if code == 200 and isinstance(res, dict):
+            info = res["data"] if isinstance(res.get("data"), dict) else res
+    return 200, {"id": mid, "type": row.get("type"), "info": info}
+
+
 def catalog():
     """Every installed model with live status, tagged with the studio workspace that uses it."""
     code, inst = device("GET", "/api/v1/models/?including_downloading=false", timeout=15)
@@ -377,7 +400,7 @@ def catalog():
     running = {r["model_id"]: r for r in (run.get("instances") or {}).get("running", [])}
     pending = {r.get("model_id") for r in (run.get("instances") or {}).get("pending", [])} | set(run.get("pending") or [])
     keep = ("id", "display_name", "params", "type", "input", "output", "supported", "desc",
-            "npu_usage", "load_time", "costMemory", "size", "version")
+            "npu_usage", "load_time", "costMemory", "size", "version", "thinking", "reasoning_levels", "capabilities")
     models = []
     for m in inst.get("data", []):
         mid = m["id"]
@@ -610,6 +633,11 @@ class Handler(BaseHTTPRequestHandler):
         m = re.fullmatch(r"/static/((?:vendor/(?:pdfjs/(?:cmaps/)?)?)?[\w.-]+)", p)
         if m:
             return self.send_file(STATIC / m.group(1), MIME.get(m.group(1).rsplit(".", 1)[-1], "application/octet-stream"))
+        if p == "/api/model/info":
+            mid = self.query_id()
+            if not mid:
+                return self.send_json(400, {"error": {"message": "id required"}})
+            return self.send_json(*model_info(mid))
         if p == "/api/model/plan":
             mid = self.query_id()
             if not mid:

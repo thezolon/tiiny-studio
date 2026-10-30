@@ -273,19 +273,20 @@ async fn stream_completion(ctx: &Ctx, partial: &mut Partial, body: &Value) -> Re
     Ok((content, reasoning, calls.into_values().collect(), finish))
 }
 
-/// The real id behind "default" (the device's alias for the loaded model), so it can be reloaded after a swap.
-async fn chat_model_id(ctx: &Ctx, wanted: &str) -> Result<String, JobError> {
+/// The real id behind "default" (the device's alias for the loaded model), so it can be reloaded after a swap, and
+/// its thinking object (None when the device doesn't say).
+async fn chat_model_id(ctx: &Ctx, wanted: &str) -> Result<(String, Option<Value>), JobError> {
     let (code, res) = crate::device::call(&ctx.state, "GET", "/v1/models", None, 15, None).await;
     if code == 200 {
         for item in res.get("data").and_then(Value::as_array).into_iter().flatten() {
             let aliases = item.get("aliases").and_then(Value::as_array).cloned().unwrap_or_default();
             if s(item, "id") == wanted || aliases.iter().any(|a| a.as_str() == Some(wanted)) {
-                return Ok(s(item, "id").to_string());
+                return Ok((s(item, "id").to_string(), item.get("thinking").filter(|t| t.is_object()).cloned()));
             }
         }
     }
     if !wanted.is_empty() && wanted != "default" {
-        return Ok(wanted.to_string());
+        return Ok((wanted.to_string(), None));
     }
     Err(JobError("No chat model is loaded. Load one from the Models panel.".into()))
 }
@@ -303,7 +304,8 @@ pub async fn run(ctx: Ctx) -> JobResult {
         ctx.update(json!({"warnings": warnings}));
     }
     let wanted = Some(s(&req, "model")).filter(|m| !m.is_empty()).unwrap_or("default");
-    let model = chat_model_id(&ctx, wanted).await?;
+    let (model, thinking_info) = chat_model_id(&ctx, wanted).await?;
+    let mode = crate::media::thinking_mode(&model, thinking_info.as_ref());
     ctx.update(json!({"model": model}));
     let wanted_tools: Vec<&str> = req.get("tools").and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_str).collect();
     let tools: Vec<Value> = tool_specs().into_iter().filter(|(n, _)| wanted_tools.contains(n)).map(|(n, spec)| {
@@ -320,20 +322,22 @@ pub async fn run(ctx: Ctx) -> JobResult {
     let mut partial = Partial { content: String::new(), reasoning: String::new(), done: String::new(), done_reasoning: String::new() };
     ctx.update(json!({"partial": partial.json()}));
     let thinking = req.get("thinking").is_some_and(crate::device::truthy);
+    let think = mode == "always" || (mode == "switch" && thinking);
     let max_tokens = as_int(req.get("max_tokens")).unwrap_or(4096);
     let mut artifacts: Vec<Value> = vec![];
     let mut finish = Value::Null;
     for round in 0..=MAX_TOOL_ROUNDS {
         let mut body = json!({"model": model, "messages": convo, "stream": true, "max_tokens": max_tokens});
-        if model.contains("gpt-oss") {
+        if mode == "always" {
+            // reasons whatever it's sent
             body["reasoning_effort"] = json!(if thinking { "medium" } else { "low" });
-        } else {
+        } else if mode == "switch" {
             body["chat_template_kwargs"] = json!({"enable_thinking": thinking});
         }
         if !tools.is_empty() && round < MAX_TOOL_ROUNDS {
             body["tools"] = json!(tools);
         }
-        ctx.update(json!({"message": if thinking { "Thinking" } else { "Replying" }}));
+        ctx.update(json!({"message": if think { "Thinking" } else { "Replying" }}));
         let (content, _reasoning, calls, f) = stream_completion(&ctx, &mut partial, &body).await?;
         finish = f;
         if ctx.cancelled() {

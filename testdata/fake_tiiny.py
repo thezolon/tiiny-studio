@@ -71,13 +71,24 @@ MP3 = b"ID3" + bytes(2000)
 CHAT_MODEL = "Qwen/Qwen3-4B-Instruct"
 
 
-def model(mid, name, mtype, npu, supported=(), inp="text", out="text"):
+# the catalog's "thinking" object (TiinyOS 0.1.36+), one per kind of chat model seen on 0.1.38
+NO_THINKING = {"supported": False, "toggleable": False, "enabled_by_default": False, "levels": [], "default_level": None}
+SWITCH = {"supported": True, "toggleable": True, "enabled_by_default": True, "levels": [], "default_level": None}  # Qwen3.5/3.6
+ALWAYS = {"supported": True, "toggleable": False, "enabled_by_default": True, "levels": ["low", "medium", "high"], "default_level": "medium"}  # gpt-oss
+CAPS = {"Text Generation": ["main"], "Text-to-Image": ["image"], "Text-to-Speech": ["voice"], "ASR": ["audio"], "Music Generation": ["music"],
+        "Image-to-3D": ["Image", "3d"], "OCR": ["ocr"], "Embedding": ["embedding"]}
+
+
+def model(mid, name, mtype, npu, supported=(), inp="text", out="text", thinking=NO_THINKING):
     return {"id": mid, "display_name": name, "params": "4B", "type": mtype, "input": inp, "output": out, "supported": list(supported),
-            "desc": f"Fake {name}", "npu_usage": npu, "load_time": 20, "costMemory": npu * 100, "size": 1 << 30, "version": 1}  # the device sends numbers
+            "desc": f"Fake {name}", "npu_usage": npu, "load_time": 20, "costMemory": npu * 100, "size": 1 << 30, "version": 1,  # the device sends numbers
+            "thinking": thinking, "reasoning_levels": thinking["levels"], "capabilities": CAPS.get(mtype, [])}
 
 
 CATALOG = [
-    model(CHAT_MODEL, "Qwen3 4B", "Text Generation", 30, ["Tool Use"]),
+    model(CHAT_MODEL, "Qwen3 4B", "Text Generation", 30, ["Tool Use"], thinking=SWITCH),
+    model("Fake/Always-Thinks", "Always Thinks", "Text Generation", 25, ["Reasoning", "Tool Use"], thinking=ALWAYS),
+    model("Fake/No-Thinking", "No Thinking", "Text Generation", 20, ["Tool Use"]),
     model("Qwen/Qwen-Image-2.1", "Qwen Image", "Text-to-Image", 60, ["Image Editing"], "text", "image"),
     model("Qwen/Qwen3-TTS-Base", "Qwen3 TTS", "Text-to-Speech", 15, [], "text", "audio"),
     model("Fake/Whisper-ASR", "Whisper ASR", "ASR", 10, [], "audio", "text"),
@@ -279,11 +290,26 @@ class Handler(BaseHTTPRequestHandler):
                 {"id": mid, "object": "model", "aliases": ["default"] if mid == CHAT_MODEL else [], "supports_vision": False,
                  "supports_chat": mid == CHAT_MODEL, "context_window": 32768,
                  # an object since the 2026-10 TiinyOS update (was a bool)
-                 "thinking": {"supported": True, "toggleable": True, "enabled_by_default": True, "levels": ["low", "medium", "high"], "default_level": "medium"}} for mid in list(st.running)]})
+                 "thinking": next(m for m in CATALOG if m["id"] == mid)["thinking"]} for mid in list(st.running)]})
         elif method == "GET" and p == "/api/tags":
             self.send_json(200, {"models": [{"name": m["id"]} for m in CATALOG]})
         elif method == "GET" and p == "/v1/capabilities":
-            self.send_json(200, {"capabilities": ["chat"]})
+            named = (self.query.get("model") or [None])[0]
+            if not named:
+                return self.send_json(200, {"capabilities": ["chat"]}) or True
+            row = next((m for m in CATALOG if m["id"] == named), None)
+            if not row or named not in st.running:  # like the device: only a loaded model answers
+                return self.send_json(503, {"error": {"message": "No suitable model is currently running."}}) or True
+            if row["type"] == "Text Generation":
+                self.send_json(200, {"object": "capabilities", "service": "chat", "model": named, "supports_chat": True,
+                                     "supported": row["supported"], "thinking": row["thinking"]})
+            elif row["type"] == "Text-to-Speech":  # Qwen3-TTS Base, as probed on 0.1.38 (trimmed)
+                self.send_json(200, {"capabilities": ["voice_clone", "instruct"], "support_voice_clone": True, "support_custom_voice": False,
+                                     "support_voice_design": False, "support_instruct": True, "sample_rate": 24000,
+                                     "supported_languages": ["en", "zh", "german"], "supported_speakers": ["aiden", "vivian"],
+                                     "service": "tts", "model": named})
+            else:
+                self.send_json(400, {"error": {"message": f"Model '{named}' does not support tts.", "type": "invalid_request_error"}})
         elif method == "POST" and p == "/api/v1/sys/shutdown/":
             with st.lock:
                 st.shutdowns += 1
@@ -380,7 +406,14 @@ class Handler(BaseHTTPRequestHandler):
         st = self.st
         if method == "GET" and p in ("/v1/music/info", "/v1/music/sessions", "/v1/sessions"):
             if p == "/v1/music/info":
-                return self.send_json(200, {"models": [m["id"] for m in CATALOG if m["type"] == "Music Generation"]})
+                named = (self.query.get("model") or [None])[0]
+                if not named:
+                    return self.send_json(200, {"models": [m["id"] for m in CATALOG if m["type"] == "Music Generation"]})
+                if named not in st.running:
+                    return self.send_json(503, {"error": {"message": "No suitable model is currently running."}})
+                # SongGeneration-v2 as probed on 0.1.38 (trimmed)
+                return self.send_json(200, {"config_schema": {"common": ["seconds_total", "steps", "seed", "lyrics", "caption", "generation_type"]},
+                                            "default_config": {"generation_type": "mixed", "steps": 10, "temperature": 1.0, "top_k": 250}, "model": named})
             return self.send_json(200, {"sessions": [{"session_id": s, "status": v, "progress": 1.0} for s, v in st.sessions.items()]})
         if method == "GET" and (m := re.fullmatch(r"/v1/music/sessions/([\w-]+)/download", p)):
             return self.send_bytes(200, MP3, "audio/mpeg")
