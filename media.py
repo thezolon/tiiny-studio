@@ -988,8 +988,8 @@ def run_ocr(m, job, req):
 # lists its own; TRELLIS.2 chains "shape_artifact" and "geometry_artifact" instead of "mesh".
 STAGE_INPUTS = {"background": ["image"], "shape": ["image"], "simplify": ["mesh"], "texture": ["image", "mesh"],
                 "export": ["material_artifact", "mesh_glb"]}
-# Inputs the task form takes under another field name (its fields: image, mesh, material, file, shape_artifact, ...).
 MESH_LOST_POLLS = 150  # ~5 minutes of polls (2 s) without an answer before a 3D stage gives up
+# Inputs the task form takes under another field name (its fields: image, mesh, material, file, shape_artifact, ...).
 STAGE_FIELDS = {"material_artifact": "material", "mesh_glb": "mesh"}
 
 ASSIST_SYSTEM = {
