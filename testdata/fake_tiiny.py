@@ -254,6 +254,9 @@ class Handler(BaseHTTPRequestHandler):
         open_paths = method == "GET" and (path == "/" or path.endswith("/icon"))  # the device serves model icons without a key
         # a model container's own port (what Studio reaches directly over Wi-Fi/LAN) takes no key
         open_paths = open_paths or path in ("/v1/generate", "/v1/generate/wav") or path.startswith("/v1/sessions")
+        # a voice model's own port (no key): only while Broken-TTS is loaded, so the gateway still refuses keyless calls
+        tts_port = path in ("/v1/models", "/v1/audio/speech") and not self.headers.get("Authorization") and "Fake/Broken-TTS" in self.st.running
+        open_paths = open_paths or tts_port
         if not open_paths:
             if self.headers.get("Authorization") != f"Bearer {self.st.key}":
                 return self.err(401, "Unauthorized")
@@ -265,6 +268,12 @@ class Handler(BaseHTTPRequestHandler):
             self.st.sessions.pop("live", None)
         if path in flags.get("fail", {}):
             return self.err(*flags["fail"][path])
+        if tts_port:  # Broken-TTS's container, like Supertonic-3's on 0.1.38: it works under its own name only
+            if method == "GET":
+                return self.send_json(200, {"model_config": {"id": "Broken-TTS"}})
+            if self.body.get("model") != "Broken-TTS":
+                return self.send_json(400, {"error": {"message": f"Model '{self.body.get('model')}' not found"}})
+            return self.send_bytes(200, WAV, "audio/wav")
         if not self.route(method, unquote(path)):
             self.err(404, "endpoint not found")
 

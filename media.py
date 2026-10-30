@@ -247,7 +247,7 @@ class Media:
 
 # ---------- kinds ----------
 UPSTREAM_FAILED = ("{model} failed on the device (\"The upstream TTS model failed\"). Some voice models and modes don't work "
-                   "through TiinyOS's gateway yet (on 0.1.38: Supertonic-3, and cloning with MOSS-TTS-Nano). Try another voice model.")
+                   "through TiinyOS's gateway yet (on 0.1.38: Supertonic-3 over USB, and cloning with MOSS-TTS-Nano). Try another voice model.")
 
 
 def run_speech(m, job, req):
@@ -277,16 +277,27 @@ def run_speech(m, job, req):
     m.ensure_running(job["model"])
     # Long text is voiced a few sentences at a time (the model has a context limit) and stitched together.
     chunks = split_for_speech(text)
-    parts = []
+    parts, direct = [], None
     for i, chunk in enumerate(chunks):
         if job["cancel"]:
             raise JobError("Cancelled")
         job["message"] = "Synthesising speech" if len(chunks) == 1 else f"Speaking part {i + 1} of {len(chunks)}"
         job["progress"] = round(i / len(chunks) * 100) if len(chunks) > 1 else 0
-        code, res = m.http("POST", f"{m.settings.url}/v1/audio/speech", {**body, "input": chunk}, headers=m.gateway_headers(), raw=True)
+        if direct:
+            code, res = m.http("POST", f"{direct[0]}/v1/audio/speech", {**body, "model": direct[1], "input": chunk}, raw=True)
+        else:
+            code, res = m.http("POST", f"{m.settings.url}/v1/audio/speech", {**body, "input": chunk}, headers=m.gateway_headers(), raw=True)
         if code != 200 or not isinstance(res, bytes) or res[:4] != b"RIFF":
             why = m.err(res if not isinstance(res, bytes) else res.decode("utf-8", "replace"))
-            raise JobError(UPSTREAM_FAILED.format(model=job["model"].split("/")[-1]) if "upstream TTS model failed" in why else why)
+            if "upstream TTS model failed" not in why and not direct:
+                raise JobError(why)
+            # The gateway sends some containers the store id, which they don't know (Supertonic-3, 0.1.38): ask the
+            # model's own port under its own name, where the link allows it.
+            direct = None if direct else speech_direct(m, job["model"])
+            if direct:
+                code, res = m.http("POST", f"{direct[0]}/v1/audio/speech", {**body, "model": direct[1], "input": chunk}, raw=True)
+            if not direct or code != 200 or not isinstance(res, bytes) or res[:4] != b"RIFF":
+                raise JobError(UPSTREAM_FAILED.format(model=job["model"].split("/")[-1]))
         parts.append(res)
     res = join_wavs(parts)
     out = m.save(f"{job['id']}-speech.wav", res)
@@ -296,6 +307,17 @@ def run_speech(m, job, req):
                                          "instruct": config.get("instruct"), "voice": req.get("voice_name") or speaker or None,
                                          "ref_text": config.get("ref_text"), "speaker": speaker or None, "design": design or None},
             "sources": [src] if src else [], "outputs": [out], "duration": res.get("duration")}
+
+
+def speech_direct(m, model):
+    """(container URL, the name it knows itself by) for a voice model whose port this link reaches, else None."""
+    try:
+        url = m.instance_url(model)
+        _, info = m.http("GET", f"{url}/v1/models", timeout=15)
+    except JobError:
+        return None
+    own = (info.get("model_config") or {}).get("id") if isinstance(info, dict) else None
+    return url, own or model.split("/")[-1]
 
 
 def split_for_speech(text, limit=320):

@@ -136,7 +136,7 @@ const AudioWS = {
     const sp = A.speech, vm = this.voiceModes();
     if (vm.speakers.length && !vm.speakers.includes(sp.speaker)) sp.speaker = !vm.clone || !A.voices.length ? vm.speakers[0] : null;
     const useSpeaker = vm.speakers.includes(sp.speaker) && !sp.clip;
-    const out = [];
+    const out = [wifiNote(modelForTool("speech"))].filter(Boolean);
     if (vm.design) {  // a voice described in words (Qwen3-TTS VoiceDesign)
       const box = el("textarea", { rows: "3", placeholder: "e.g. a calm, warm narrator with a slight British accent", oninput: (e) => { sp.design = e.target.value; this.renderFoot(); } }, sp.design);
       out.push(el("div", { class: "field" }, el("div", { class: "label" }, "Voice", el("span", { class: "hint" }, "describe how it should sound")),
