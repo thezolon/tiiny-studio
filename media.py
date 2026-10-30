@@ -219,9 +219,10 @@ class Media:
         if not job:
             return False
         job["cancel"] = True
-        if job.get("remote_task"):
+        if job.get("remote_task"):  # POSTed to, or "DELETE <url>" (a video)
+            method, _, url = job["remote_task"].rpartition(" ")
             try:
-                self.http("POST", job["remote_task"], b"", timeout=15, headers=self.gateway_headers())
+                self.http(method or "POST", url, b"" if not method else None, timeout=15, headers=self.gateway_headers())
             except JobError:
                 pass
         if job["status"] == "queued":
@@ -1075,5 +1076,84 @@ def assist_call(m, job, task, user):
             "usage": res.get("usage")}
 
 
+def run_video(m, job, req):
+    """Text or a first (and last) frame to a clip with sound (MiniMax-H3-Turbo) through the gateway's /v1/videos: submit,
+    poll, download the MP4, then delete the device's copy. Sizes and steps are the model's own (/v1/video/info)."""
+    prompt = (req.get("prompt") or "").strip()
+    if not prompt and not req.get("image"):
+        raise JobError("Describe the clip, or give it a picture to start from.")
+    m.ensure_running(job["model"])
+    url, auth = f"{m.settings.url}/v1/videos", m.gateway_headers()
+    secs = req.get("seconds")
+    secs = secs if isinstance(secs, int) and not isinstance(secs, bool) and 1 <= secs <= 20 else 2
+    body = {"model": job["model"], "prompt": prompt or "Bring this picture to life", "size": str(req.get("size") or "832x480"), "seconds": str(secs)}
+    for k in ("steps", "seed"):
+        if isinstance(req.get(k), int) and not isinstance(req.get(k), bool):
+            body[k] = req[k]
+    sources = []
+    for i, k in enumerate(("image", "last_image")):
+        if req.get(k):
+            ctype, data = m.decode_uri(req[k])
+            sources.append(m.save(f"{job['id']}-frame{i}.png", data))
+            body[VIDEO_FRAME_FIELDS[i]] = f"data:{ctype};base64,{base64.b64encode(data).decode()}"
+    try:
+        code, res = m.http("POST", url, body, headers=auth, timeout=120)
+        if code >= 300:
+            raise JobError(m.err(res))
+        vid = res["id"]
+        job["remote_task"] = f"DELETE {url}/{vid}"  # deleting a clip stops its render (there's no /cancel)
+        lost = 0  # polls in a row with no answer: a render takes many minutes, so ride out a dropped link
+        while True:
+            time.sleep(3)
+            try:
+                code, v = m.http("GET", f"{url}/{vid}", headers=auth, timeout=30)
+            except JobError:
+                code, v = 0, {}
+            if job["cancel"]:
+                raise JobError("Cancelled")
+            st = v.get("status") if isinstance(v, dict) and code < 500 else None
+            if st in ("completed", "failed", "cancelled"):
+                break
+            lost = 0 if st else lost + 1
+            if lost >= VIDEO_LOST_POLLS:
+                raise JobError("Lost the Tiiny while it rendered this video. If it finished, it's kept on the device for an hour.")
+            if lost:
+                job["message"] = "Can't reach the Tiiny, still trying…"
+                continue
+            job["progress"] = int(v.get("progress") or 0)
+            job["message"] = "Rendering" if st == "in_progress" else "Waiting in the device queue"
+        job["remote_task"] = None
+        if st != "completed":
+            raise JobError(m.err(v.get("error") or st))
+        job["message"] = "Downloading"
+        for attempt in range(5):  # the same: a dropped link shouldn't lose a finished clip
+            try:
+                code, data = m.http("GET", f"{url}/{vid}/content", headers=auth, timeout=600, raw=True)
+            except JobError as e:
+                code, data = 0, str(e)
+            if code == 200 or 0 < code < 500 or job["cancel"]:
+                break
+            time.sleep(3)
+        if code != 200 or not data:
+            raise JobError(f"Couldn't fetch the video: {m.err(data)}")
+        out = m.save(f"{job['id']}-video.mp4", data)
+        try:
+            m.http("DELETE", f"{url}/{vid}", headers=auth, timeout=30)  # the device keeps it an hour otherwise
+        except JobError:
+            pass
+    except BaseException:
+        for name in sources:
+            (m.dir / name).unlink(missing_ok=True)
+        raise
+    seconds = int(v.get("frames") or 0) / int(v.get("fps") or 24) if v.get("frames") else secs
+    return {"kind": "video", "params": {"model": job["model"], "prompt": prompt, "size": body["size"], "seconds": secs,
+                                        **{k: body[k] for k in ("steps", "seed") if k in body}},
+            "sources": sources, "outputs": [out], "duration": round(seconds, 1)}
+
+
+VIDEO_LOST_POLLS = 100  # ~5 minutes of polls without an answer before a video job gives up
+VIDEO_FRAME_FIELDS = ("image", "last_image")  # first frame tested on 0.1.38; the last-frame name is a guess (max_keyframes 2)
+
+
 KINDS = {"image": run_image, "ocr": run_ocr, "speech": run_speech, "transcribe": run_transcribe, "loop": run_loop, "song": run_song, "mesh": run_mesh,
-         "assist": run_assist}
+         "assist": run_assist, "video": run_video}

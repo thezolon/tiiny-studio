@@ -196,6 +196,7 @@ pub fn mime(path: &str) -> &'static str {
         "ogg" => "audio/ogg",
         "flac" => "audio/flac",
         "glb" => "model/gltf-binary",
+        "mp4" => "video/mp4",
         "js" | "mjs" => "text/javascript; charset=utf-8",
         "css" => "text/css; charset=utf-8",
         _ => "application/octet-stream",
@@ -386,6 +387,7 @@ fn info_route(model_type: &str) -> Option<&'static str> {
         "Text Generation" | "Image-Text-to-Text" | "Text-to-Speech" => Some("/v1/capabilities"),
         "Music Generation" => Some("/v1/music/info"),
         "Image-to-3D" => Some("/v1/3d/capabilities"),
+        "Text-to-Video" => Some("/v1/video/info"),
         _ => None,
     }
 }

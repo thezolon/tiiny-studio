@@ -365,13 +365,13 @@ def device(method, path, body=None, timeout=30, url=None, key=None):
 
 
 WORKSPACE = {"Text-to-Image": "image", "Image-to-Image": "image", "Text-to-Speech": "audio", "ASR": "audio",
-             "Music Generation": "audio", "Image-to-3D": "3d", "Image-Text-to-Text": "text", "Text Generation": "text"}
+             "Music Generation": "audio", "Image-to-3D": "3d", "Text-to-Video": "video", "Image-Text-to-Text": "text", "Text Generation": "text"}
 
 
 # Where a loaded model reports its own options (#23), by catalog type. Image, OCR and transcription models have no
 # such route: their options come from the catalog row (supported, capabilities, desc).
 INFO_ROUTES = {"Text Generation": "/v1/capabilities", "Image-Text-to-Text": "/v1/capabilities", "Text-to-Speech": "/v1/capabilities",
-               "Music Generation": "/v1/music/info", "Image-to-3D": "/v1/3d/capabilities"}
+               "Music Generation": "/v1/music/info", "Image-to-3D": "/v1/3d/capabilities", "Text-to-Video": "/v1/video/info"}
 
 
 def model_info(mid):
@@ -464,7 +464,7 @@ def device_stats():
     STATS_CACHE.update(t=time.time(), data=out)
     return out
 MIME = {"png": "image/png", "jpg": "image/jpeg", "webp": "image/webp", "wav": "audio/wav", "mp3": "audio/mpeg",
-        "m4a": "audio/mp4", "webm": "audio/webm", "ogg": "audio/ogg", "flac": "audio/flac", "glb": "model/gltf-binary",
+        "m4a": "audio/mp4", "webm": "audio/webm", "ogg": "audio/ogg", "flac": "audio/flac", "glb": "model/gltf-binary", "mp4": "video/mp4",
         "js": "text/javascript; charset=utf-8", "mjs": "text/javascript; charset=utf-8", "css": "text/css; charset=utf-8", "mp3": "audio/mpeg"}
 
 
@@ -531,12 +531,30 @@ class Handler(BaseHTTPRequestHandler):
             body = path.read_bytes()
         except OSError:
             return self.send_json(404, {"error": {"message": "not found"}})
-        self.send_response(200)
+        # one byte range ("bytes=a-b", "bytes=a-", "bytes=-n"): a <video> asks for them to seek
+        rng = re.fullmatch(r"bytes=(\d*)-(\d*)", self.headers.get("Range") or "")
+        start, end = 0, len(body) - 1
+        if rng and (rng.group(1) or rng.group(2)):
+            if rng.group(1):
+                start, end = int(rng.group(1)), min(int(rng.group(2) or end), end)
+            else:
+                start = max(0, len(body) - int(rng.group(2)))
+            if start > end:
+                self.send_response(416)
+                self.send_header("Content-Range", f"bytes */{len(body)}")
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return
+        part = rng and (rng.group(1) or rng.group(2))
+        self.send_response(206 if part else 200)
         self.send_header("Content-Type", ctype)
-        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Accept-Ranges", "bytes")
+        if part:
+            self.send_header("Content-Range", f"bytes {start}-{end}/{len(body)}")
+        self.send_header("Content-Length", str(end - start + 1))
         self.send_header("Cache-Control", {True: "public, max-age=31536000, immutable", "private": "no-store"}.get(cache, "no-cache"))
         self.end_headers()
-        self.wfile.write(body)
+        self.wfile.write(body[start:end + 1])
 
     def foreign(self):
         """Other websites are refused (same rule as the Rust server): any page open in the browser could otherwise

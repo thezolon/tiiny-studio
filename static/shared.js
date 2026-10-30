@@ -7,21 +7,22 @@ S.ws = store.get("ws", "image");
 // audio.js / mesh.js load after this file; a fetch can finish before they run, so look them up lazily.
 const WS = { image: { el: "#wsImage" }, audio: { el: "#wsAudio", mod: () => (typeof AudioWS === "undefined" ? null : AudioWS) },
   mesh: { el: "#wsMesh", mod: () => (typeof MeshWS === "undefined" ? null : MeshWS) },
+  video: { el: "#wsVideo", mod: () => (typeof VideoWS === "undefined" ? null : VideoWS) },
   chat: { el: "#wsChat", mod: () => (typeof ChatWS === "undefined" ? null : ChatWS) } };
 function setWs(ws) {
   if (!WS[ws]) ws = "image";
   S.ws = ws; store.set("ws", ws);
   for (const [k, v] of Object.entries(WS)) $(v.el).hidden = k !== ws;
   for (const b of document.querySelectorAll(".ws-tabs [data-ws]")) b.setAttribute("aria-selected", b.dataset.ws === ws);
-  $("#dropveilText").textContent = { image: "Drop to use as source image", audio: "Drop audio to use it here", mesh: "Drop an image to turn into 3D", chat: "Drop pictures or documents to attach" }[ws];
+  $("#dropveilText").textContent = { image: "Drop to use as source image", audio: "Drop audio to use it here", mesh: "Drop an image to turn into 3D", video: "Drop a picture to start the clip from", chat: "Drop pictures or documents to attach" }[ws];
   const mod = WS[ws].mod?.();
   if (mod) { if (!mod.mounted) { mod.mount($(WS[ws].el)); mod.mounted = true; } mod.render(); }
   renderModelBtn(); renderDrawer();
 }
 for (const b of document.querySelectorAll(".ws-tabs [data-ws]")) b.onclick = () => setWs(b.dataset.ws);
 function wsFiles(files) { const mod = WS[S.ws].mod?.(); return mod?.files ? mod.files(files) : false; }
-function onModelsChanged() { for (const k of ["audio", "mesh"]) { const m = WS[k].mod(); if (m?.mounted && S.ws === k) m.renderGate?.(); } WS.chat.mod()?.onModels?.(); renderAssistGates(); }
-function onHistoryLoaded() { for (const k of ["audio", "mesh"]) { const m = WS[k].mod(); if (m?.mounted) m.render(); } }
+function onModelsChanged() { for (const k of ["audio", "mesh", "video"]) { const m = WS[k].mod(); if (m?.mounted && S.ws === k) m.renderGate?.(); } WS.chat.mod()?.onModels?.(); renderAssistGates(); }
+function onHistoryLoaded() { for (const k of ["audio", "mesh", "video"]) { const m = WS[k].mod(); if (m?.mounted) m.render(); } }
 
 /* ---------- server-side jobs ---------- */
 S.jobs = [];
@@ -55,7 +56,7 @@ async function pollJobs() {
   // after finished results are in history, so a render never shows "nothing selected"
   if (typeof syncImageJobs === "function") syncImageJobs();
   renderJobsPill();
-  for (const k of ["audio", "mesh"]) { const m = WS[k].mod(); if (m?.mounted && S.ws === k) m.renderJobs?.(); }
+  for (const k of ["audio", "mesh", "video"]) { const m = WS[k].mod(); if (m?.mounted && S.ws === k) m.renderJobs?.(); }
   const active = S.jobs.some((j) => j.status === "queued" || j.status === "running");
   if (active && typeof pollStats === "function" && !statsTimer) pollStats();
   jobTimer = setTimeout(pollJobs, active ? 1500 : 15000);
@@ -63,11 +64,11 @@ async function pollJobs() {
 function onJobDone(j) {
   if (j.kind === "ocr" && typeof showOcrResult === "function") return showOcrResult(j);
   if (j.kind === "assist") { const w = ASSIST_WAIT.get(j.id); ASSIST_WAIT.delete(j.id); w?.(j.status === "done" ? j.entry.text : null); return; }
-  const mod = { image: "image", speech: "audio", transcribe: "audio", loop: "audio", song: "audio", mesh: "mesh" }[j.kind];
+  const mod = { image: "image", speech: "audio", transcribe: "audio", loop: "audio", song: "audio", mesh: "mesh", video: "video" }[j.kind];
   if (j.kind === "image" && typeof imageJobDone === "function") imageJobDone(j);
   const m = WS[mod]?.mod?.();
   if (m?.mounted) m.jobDone?.(j);
-  if (j.status === "done" && mod && S.ws !== mod) toast(`${j.label || j.kind} is ready — open ${{ image: "Image", mesh: "3D", audio: "Audio" }[mod]} to see it`);
+  if (j.status === "done" && mod && S.ws !== mod) toast(`${j.label || j.kind} is ready — open ${{ image: "Image", mesh: "3D", audio: "Audio", video: "Video" }[mod]} to see it`);
   if (j.status === "done" && document.hidden && "Notification" in window && Notification.permission === "granted")
     new Notification("Tiiny Studio", { body: `${j.label || j.kind} is ready` });
 }
@@ -82,7 +83,7 @@ function renderJobsPill() {
   pill.onclick = (e) => { e.stopPropagation(); toggleJobsMenu(); };
   if (!$("#jobsMenu")?.hidden) renderJobsMenu();
 }
-const wsOfJob = (j) => ({ mesh: "mesh", image: "image", chat: "chat", assist: S.ws }[j.kind] || "audio");
+const wsOfJob = (j) => ({ mesh: "mesh", video: "video", image: "image", chat: "chat", assist: S.ws }[j.kind] || "audio");
 /** Every queued and running job, from any workspace, each with Cancel. */
 function renderJobsMenu() {
   let menu = $("#jobsMenu");
@@ -173,6 +174,7 @@ function mediaBadges(m) {
   if (m.type === "Music Generation") return /song|lyric/i.test(m.id + d.slice(0, 300)) ? ["Full songs", "Lyrics + style", "Vocals or instrumental", "Up to 4:30"] : ["Loops", "BPM + key locked", "4 / 8 bars"];
   if (CHAT_TYPES.includes(m.type)) return ["Improve prompts", "Lyrics", "Loop tags", seesImages(m) && "Describe images"].filter(Boolean);
   if (m.type === "Image-to-Text") return [layoutOnly(m) ? "Page layout only" : "Text from images (OCR)"];
+  if (m.type === "Text-to-Video") return ["Text or picture → video", /audio/i.test(d) && "With sound"].filter(Boolean);
   if (m.type === "Image-to-3D") return ["Image → 3D", /PBR/.test(d) && "PBR texture", "GLB export"].filter(Boolean);
   return [m.type];
 }
@@ -365,10 +367,11 @@ function thumbDel(onDelete) {
   return b;
 }
 function mediaThumb(e, current, onclick, onDelete) {
-  const icons = { speech: "i-voice", loop: "i-wave", song: "i-music", transcript: "i-text", mesh: "i-cube" };
-  const labels = { speech: "VOICE", loop: "LOOP", song: "SONG", transcript: "TEXT", mesh: "3D" };
+  const icons = { speech: "i-voice", loop: "i-wave", song: "i-music", transcript: "i-text", mesh: "i-cube", video: "i-film" };
+  const labels = { speech: "VOICE", loop: "LOOP", song: "SONG", transcript: "TEXT", mesh: "3D", video: "VIDEO" };
   const t = el("button", { class: "thumb media-thumb", "aria-current": current, title: e.params?.text || e.params?.prompt || e.params?.caption || e.text || "", onclick });
   if (e.kind === "mesh" && e.sources?.[0]) t.append(el("img", { src: "/images/" + e.sources[0], alt: "", loading: "lazy" }));
+  else if (e.kind === "video") t.append(el("video", { src: "/images/" + e.outputs[0] + "#t=0.5", muted: true, preload: "metadata" }));
   else t.append(icon(icons[e.kind] || "i-wave"));
   t.append(el("span", { class: "badge" }, labels[e.kind] || e.kind));
   if (e.duration) t.append(el("span", { class: "multi" }, fmtSec(e.duration)));
