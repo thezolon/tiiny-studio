@@ -108,6 +108,7 @@ fn main() {
                     eprintln!("studio server stopped: {e}");
                 }
             });
+            std::thread::spawn(move || keep_awake(port));
             let url = format!("http://127.0.0.1:{port}/").parse().expect("local url");
             let handle = app.handle().clone();
             WebviewWindowBuilder::new(app, "main", WebviewUrl::External(url))
@@ -200,6 +201,64 @@ fn main() {
 }
 
 static QUITTING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// While jobs are queued or running (a night of videos), keep the computer from going to sleep: a sleeping PC stops the
+/// queue. Checked every 20 s through the studio's own API; the screen may still turn off.
+fn keep_awake(port: u16) {
+    let Ok(rt) = tokio::runtime::Builder::new_current_thread().enable_all().build() else { return };
+    let http = reqwest::Client::new();
+    let mut awake = Awake::default();
+    loop {
+        let busy = rt.block_on(async {
+            let jobs = http.get(format!("http://127.0.0.1:{port}/api/jobs")).timeout(std::time::Duration::from_secs(10)).send().await.ok()?;
+            let jobs = jobs.json::<serde_json::Value>().await.ok()?;
+            Some(jobs.as_array()?.iter().any(|j| matches!(j.get("status").and_then(|s| s.as_str()), Some("queued" | "running"))))
+        });
+        awake.set(busy.unwrap_or(false));
+        std::thread::sleep(std::time::Duration::from_secs(20));
+    }
+}
+
+/// Holds off system sleep while `on`: Windows' execution state (for this thread), `caffeinate` on macOS,
+/// `systemd-inhibit` on Linux (a child process that ends when released). Best effort: nothing happens where they're missing.
+#[derive(Default)]
+struct Awake {
+    on: bool,
+    #[allow(dead_code)]
+    child: Option<std::process::Child>,
+}
+
+impl Awake {
+    fn set(&mut self, on: bool) {
+        if on == self.on {
+            return;
+        }
+        self.on = on;
+        #[cfg(windows)]
+        unsafe {
+            use windows_sys::Win32::System::Power::{SetThreadExecutionState, ES_CONTINUOUS, ES_SYSTEM_REQUIRED};
+            SetThreadExecutionState(if on { ES_CONTINUOUS | ES_SYSTEM_REQUIRED } else { ES_CONTINUOUS });
+        }
+        #[cfg(not(windows))]
+        {
+            if let Some(mut c) = self.child.take() {
+                let _ = c.kill();
+                let _ = c.wait();
+            }
+            if on {
+                let pid = std::process::id().to_string();
+                let cmd = if cfg!(target_os = "macos") {
+                    std::process::Command::new("caffeinate").args(["-i", "-w", &pid]).spawn()
+                } else {
+                    std::process::Command::new("systemd-inhibit")
+                        .args(["--what=sleep:idle", "--who=Tiiny Studio", "--why=Jobs are running on the Tiiny", "--mode=block", "sleep", "infinity"])
+                        .spawn()
+                };
+                self.child = cmd.ok();
+            }
+        }
+    }
+}
 
 /// Cancel the studio's running jobs through its own API and wait (at most 20 s) until they've ended.
 async fn stop_running_jobs(port: u16) {

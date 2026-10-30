@@ -165,8 +165,14 @@ function ocrModel(id) {
 let ocrLastUrl = null;
 async function ocrImage(url, modelId) {
   ocrLastUrl = url;
-  const m = ocrModel(modelId || store.get("ocr.model", null));
+  let m = ocrModel(modelId || store.get("ocr.model", null));
   if (!m) return toast("No text-recognition (OCR) model is installed. Download one in the TiinyOS app.");
+  if (wifiNote(m)) {  // GLM-OCR over USB: read with one that works on this link
+    const alt = ocrModels().find((x) => !needsWifi(x));
+    if (!alt) return toast(`${shortName(m.id)} needs a Wi-Fi/LAN connection: switch to the Tiiny's Wi-Fi address in Settings.`, "err");
+    toast(`${shortName(m.id)} needs Wi-Fi/LAN, so this is read with ${shortName(alt.id)}.`);
+    m = alt;
+  }
   if (m.status !== "running") { S.ocrPending = url; toast(`Loading ${shortName(m.id)} first, then reading…`); return loadModel(m.id); }
   try {
     const uri = await blobToUri(await (await fetch(url)).blob());
@@ -368,7 +374,7 @@ function showOcrResult(j) {
   if (OCR_QUIET.delete(j.id) || j.status !== "done") return;
   const models = ocrModels().length > 1 ? el("select", { class: "input", style: "width:auto;padding:4px 8px", title: "Read again with another model",
     onchange: (e) => { store.set("ocr.model", e.target.value); $("#settingsModal").classList.remove("show"); ocrImage(ocrLastUrl, e.target.value); } },
-    ocrModels().map((m) => el("option", { value: m.id, selected: m.id === j.model }, shortName(m.id) + (m.status === "running" ? "" : " (not loaded)")))) : null;
+    ocrModels().map((m) => el("option", { value: m.id, selected: m.id === j.model }, shortName(m.id) + (m.status === "running" ? "" : " (not loaded)") + (wifiNote(m) ? " · needs Wi-Fi" : "")))) : null;
   const d = textDialog("Text in this image", { models });
   d.set([{ label: "Image", text: j.entry?.text || "" }]);
   d.meta(`${(j.entry?.lines || []).length} lines · ${shortName(j.model)} · not saved`);

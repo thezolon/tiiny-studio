@@ -97,11 +97,37 @@ function renderJobsMenu() {
   const r = $("#jobsPill").getBoundingClientRect();
   menu.style.top = `${r.bottom + 6}px`;
   requestAnimationFrame(() => { menu.style.left = `${Math.max(8, Math.min(r.left, innerWidth - menu.offsetWidth - 8))}px`; });  // stay inside the window
+  const times = queueTimes(act), waiting = act.filter((j) => j.status === "queued");
+  const last = times.get(act[act.length - 1].id);
   menu.replaceChildren(...act.map((j) => el("div", { class: "jobs-menu-row" },
     el("span", { class: "dot " + (j.status === "running" ? "busy" : "") }),
     el("button", { class: "jobs-menu-label", title: "Open its workspace", onclick: () => { menu.hidden = true; setWs(wsOfJob(j)); } },
-      el("b", {}, j.label || j.kind), el("small", {}, j.stopping ? STOPPING : j.status === "running" ? (j.tool_message || j.message || "Working…") + (j.progress ? ` · ${j.progress}%` : "") : `Waiting · #${j.queue_pos || 1} in line`)),
-    el("button", { class: "btn-sm ghost", disabled: !!j.stopping, ...onPress((b) => stopButton(b, j.id)) }, j.stopping ? "Stopping…" : j.status === "running" ? "Cancel" : "Remove"))));
+      el("b", {}, j.label || j.kind), el("small", {}, j.stopping ? STOPPING : (j.status === "running" ? (j.tool_message || j.message || "Working…") + (j.progress ? ` · ${j.progress}%` : "") : `Waiting · #${j.queue_pos || 1} in line`)
+        + (j.stopping ? "" : timeNote(j, times.get(j.id))))),
+    el("button", { class: "btn-sm ghost", disabled: !!j.stopping, ...onPress((b) => stopButton(b, j.id)) }, j.stopping ? "Stopping…" : j.status === "running" ? "Cancel" : "Remove"))),
+    act.length > 1 || waiting.length ? el("div", { class: "jobs-menu-foot" },
+      el("span", {}, last?.end ? `Queue done around ${clock(last.end)}` : "The queue's end time isn't known yet"),
+      waiting.length > 1 ? el("button", { class: "btn-sm ghost", ...onPress((b) => { b.disabled = true; b.textContent = "Removing…"; Promise.all(waiting.map((w) => api(`/api/jobs/${w.id}/cancel`, { method: "POST", body: "{}" }).catch(() => {}))).then(pollJobs); }) },
+        `Remove all ${waiting.length} waiting`) : null) : null);
+}
+/** When each job should start and finish, from its estimate (est, seconds) and the jobs ahead of it: a running job's
+ *  remaining time, then each queued one in line. Unknown from the first job without an estimate on. */
+function queueTimes(act) {
+  const out = new Map(), now = Date.now() / 1000;
+  let t = now;
+  for (const j of act) {
+    if (t == null || !(j.est > 0)) { out.set(j.id, { start: j.status === "running" ? null : t }); t = null; continue; }
+    const start = j.status === "running" ? (j.started || now) : t;
+    const end = Math.max(now + 5, start + j.est);
+    out.set(j.id, { start, end });
+    t = end;
+  }
+  return out;
+}
+const clock = (s) => new Date(s * 1000).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+function timeNote(j, t) {
+  if (!t?.end) return t?.start && j.status === "queued" ? ` · starts ~${clock(t.start)}` : "";
+  return j.status === "running" ? ` · done ~${clock(t.end)}` : ` · starts ~${clock(t.start)}, done ~${clock(t.end)}`;
 }
 function toggleJobsMenu() {
   renderJobsMenu();
@@ -160,6 +186,14 @@ const swapOn = (section) => { const s = SET.info?.swap; return !s || (s.on && s[
 const helperSection = (task) => (task === "lyrics" || task === "tags" ? "audio" : "image");
 /** An Image-to-Text model that finds a page's regions but doesn't read them (PP-DocLayoutV3): not an OCR model. */
 const layoutOnly = (m) => /layout analysis only|does not transcribe/i.test(m.desc || "") || /DocLayout/i.test(m.id);
+/** Models the device's gateway can't run (0.1.38): they work only where the studio reaches the model's own port. */
+const needsWifi = (m) => /GLM-OCR|supertonic/i.test(m?.id || "");
+/** A banner when the picked model needs Wi-Fi/LAN and this connection (the USB cable) only reaches the gateway. */
+function wifiNote(m) {
+  if (!m || S.directAccess !== false || !needsWifi(m)) return null;
+  return el("div", { class: "hint-line warn" }, `${shortName(m.id)} needs a Wi-Fi/LAN connection: over this one (USB) the Tiiny's gateway can't run it. `
+    + "Switch to the Tiiny's Wi-Fi address in Settings, or pick another model.");
+}
 function modelForTool(tool) {
   if (tool === "chat" || tool === "vision") return helperModel(tool === "vision");
   const list = (S.allModels || []).filter((m) => m.type === TOOL_TYPES[tool]);

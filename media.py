@@ -276,7 +276,7 @@ class Media:
 
 # ---------- kinds ----------
 UPSTREAM_FAILED = ("{model} failed on the device (\"The upstream TTS model failed\"). Some voice models and modes don't work "
-                   "through TiinyOS's gateway yet (on 0.1.38: Supertonic-3, and cloning with MOSS-TTS-Nano). Try another voice model.")
+                   "through TiinyOS's gateway yet (on 0.1.38: Supertonic-3 over USB, and cloning with MOSS-TTS-Nano). Try another voice model.")
 
 
 def run_speech(m, job, req):
@@ -306,16 +306,27 @@ def run_speech(m, job, req):
     m.ensure_running(job["model"])
     # Long text is voiced a few sentences at a time (the model has a context limit) and stitched together.
     chunks = split_for_speech(text)
-    parts = []
+    parts, direct = [], None
     for i, chunk in enumerate(chunks):
         if job["cancel"]:
             raise JobError("Cancelled")
         job["message"] = "Synthesising speech" if len(chunks) == 1 else f"Speaking part {i + 1} of {len(chunks)}"
         job["progress"] = round(i / len(chunks) * 100) if len(chunks) > 1 else 0
-        code, res = m.http("POST", f"{m.settings.url}/v1/audio/speech", {**body, "input": chunk}, headers=m.gateway_headers(), raw=True)
+        if direct:
+            code, res = m.http("POST", f"{direct[0]}/v1/audio/speech", {**body, "model": direct[1], "input": chunk}, raw=True)
+        else:
+            code, res = m.http("POST", f"{m.settings.url}/v1/audio/speech", {**body, "input": chunk}, headers=m.gateway_headers(), raw=True)
         if code != 200 or not isinstance(res, bytes) or res[:4] != b"RIFF":
             why = m.err(res if not isinstance(res, bytes) else res.decode("utf-8", "replace"))
-            raise JobError(UPSTREAM_FAILED.format(model=job["model"].split("/")[-1]) if "upstream TTS model failed" in why else why)
+            if "upstream TTS model failed" not in why and not direct:
+                raise JobError(why)
+            # The gateway sends some containers the store id, which they don't know (Supertonic-3, 0.1.38): ask the
+            # model's own port under its own name, where the link allows it.
+            direct = None if direct else speech_direct(m, job["model"])
+            if direct:
+                code, res = m.http("POST", f"{direct[0]}/v1/audio/speech", {**body, "model": direct[1], "input": chunk}, raw=True)
+            if not direct or code != 200 or not isinstance(res, bytes) or res[:4] != b"RIFF":
+                raise JobError(UPSTREAM_FAILED.format(model=job["model"].split("/")[-1]))
         parts.append(res)
     res = join_wavs(parts)
     out = m.save(f"{job['id']}-speech.wav", res)
@@ -325,6 +336,17 @@ def run_speech(m, job, req):
                                          "instruct": config.get("instruct"), "voice": req.get("voice_name") or speaker or None,
                                          "ref_text": config.get("ref_text"), "speaker": speaker or None, "design": design or None},
             "sources": [src] if src else [], "outputs": [out], "duration": res.get("duration")}
+
+
+def speech_direct(m, model):
+    """(container URL, the name it knows itself by) for a voice model whose port this link reaches, else None."""
+    try:
+        url = m.instance_url(model)
+        _, info = m.http("GET", f"{url}/v1/models", timeout=15)
+    except JobError:
+        return None
+    own = (info.get("model_config") or {}).get("id") if isinstance(info, dict) else None
+    return url, own or model.split("/")[-1]
 
 
 def split_for_speech(text, limit=320):
@@ -899,10 +921,21 @@ def build_mesh(m, job, req, saved):
             raise JobError(f"{stage}: {m.err(res)}")
         tid = res["data"]["task_id"]
         job["remote_task"] = f"{url}/tasks/{tid}/cancel{mq}"
-        silent = 0  # polls in a row without a status: the task is gone, don't hold the device forever
+        silent = 0  # polls in a row without a status: the task is gone, or the link is down (a stage can take many minutes)
         while True:
             time.sleep(2)
-            _, st = m.http("GET", f"{url}/tasks/{tid}{mq}", timeout=30, headers=auth)
+            try:
+                code, st = m.http("GET", f"{url}/tasks/{tid}{mq}", timeout=30, headers=auth)
+            except (JobError, ValueError):
+                code, st = 0, {}
+            if code == 0 or code >= 500:  # no answer: ride out a dropped link
+                if job["cancel"]:
+                    raise JobError("Cancelled")
+                silent += 1
+                if silent >= MESH_LOST_POLLS:
+                    raise JobError(f"{stage}: lost the Tiiny while it worked on this task")
+                job["message"] = "Can't reach the Tiiny, still trying…"
+                continue
             d = st.get("data") or {}
             p = d.get("progress") or 0
             job["progress"] = round((done + weights[stage] * p / 100) / total * 100)
@@ -913,7 +946,7 @@ def build_mesh(m, job, req, saved):
             if job["cancel"]:
                 raise JobError("Cancelled")
             silent = 0 if d.get("status") else silent + 1
-            if silent >= 30:
+            if silent >= MESH_LOST_POLLS:
                 raise JobError(f"{stage}: the device stopped reporting on this task")
         if d.get("status") != "completed":
             raise JobError(f"{stage}: {m.err(d.get('error') or d.get('message') or d.get('status'))}")
@@ -935,8 +968,15 @@ def build_mesh(m, job, req, saved):
             elif use_refs and kind != "mesh_glb" and not kind.endswith("_preview"):
                 continue  # only the model itself comes to the studio
             elif art.get("artifact_id"):  # not inline (TRELLIS.2): fetch it from the task
-                code, data = m.http("GET", f"{url}/tasks/{tid}/artifacts/{quote(art['artifact_id'], safe='')}{mq}", timeout=600,
-                                    headers=auth, raw=True)
+                for attempt in range(5):  # a dropped link shouldn't lose a finished stage
+                    try:
+                        code, data = m.http("GET", f"{url}/tasks/{tid}/artifacts/{quote(art['artifact_id'], safe='')}{mq}", timeout=600,
+                                            headers=auth, raw=True)
+                    except JobError as e:
+                        code, data = 0, {"error": str(e)}
+                    if code == 200 or 0 < code < 500 or job["cancel"]:
+                        break
+                    time.sleep(3)
                 if code != 200:
                     raise JobError(f"{stage}: couldn't fetch its {kind}: {m.err(data)}")
             else:
@@ -999,6 +1039,7 @@ def run_ocr(m, job, req):
 # lists its own; TRELLIS.2 chains "shape_artifact" and "geometry_artifact" instead of "mesh".
 STAGE_INPUTS = {"background": ["image"], "shape": ["image"], "simplify": ["mesh"], "texture": ["image", "mesh"],
                 "export": ["material_artifact", "mesh_glb"]}
+MESH_LOST_POLLS = 150  # ~5 minutes of polls (2 s) without an answer before a 3D stage gives up
 # Inputs the task form takes under another field name (its fields: image, mesh, material, file, shape_artifact, ...).
 STAGE_FIELDS = {"material_artifact": "material", "mesh_glb": "mesh"}
 

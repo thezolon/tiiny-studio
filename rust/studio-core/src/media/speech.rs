@@ -6,7 +6,7 @@ use base64::Engine;
 use serde_json::{json, Map, Value};
 
 use super::audio::{join_wavs, split_for_speech, strip, wav_seconds};
-use super::{decode_uri, ensure_running, err, http_bytes, json_body, py_round, save};
+use super::{decode_uri, ensure_running, err, http, http_bytes, instance_url, json_body, py_round, save};
 use crate::jobs::{Ctx, JobError, JobResult};
 
 fn text<'a>(req: &'a Value, k: &str) -> &'a str {
@@ -15,7 +15,7 @@ fn text<'a>(req: &'a Value, k: &str) -> &'a str {
 
 fn upstream_failed(model: &str) -> String {
     format!(
-        "{} failed on the device (\"The upstream TTS model failed\"). Some voice models and modes don't work through TiinyOS's gateway yet (on 0.1.38: Supertonic-3, and cloning with MOSS-TTS-Nano). Try another voice model.",
+        "{} failed on the device (\"The upstream TTS model failed\"). Some voice models and modes don't work through TiinyOS's gateway yet (on 0.1.38: Supertonic-3 over USB, and cloning with MOSS-TTS-Nano). Try another voice model.",
         model.rsplit('/').next().unwrap_or(model)
     )
 }
@@ -62,6 +62,7 @@ pub async fn run(ctx: Ctx) -> JobResult {
     let chunks = split_for_speech(&said, 320);
     let url = format!("{}/v1/audio/speech", ctx.state.settings.current().url);
     let mut parts: Vec<Vec<u8>> = vec![];
+    let mut direct: Option<(String, String)> = None;
     for (i, chunk) in chunks.iter().enumerate() {
         if ctx.cancelled() {
             return Err(JobError("Cancelled".into()));
@@ -70,14 +71,28 @@ pub async fn run(ctx: Ctx) -> JobResult {
         let progress = if chunks.len() > 1 { py_round(i as f64 / chunks.len() as f64 * 100.0) } else { 0 };
         ctx.update(json!({"message": message, "progress": progress}));
         body.insert("input".into(), json!(chunk));
-        let (code, res) = http_bytes(&ctx, "POST", &url, json_body(&Value::Object(body.clone())), 3600, true).await?;
-        match res {
-            Ok(wav) if code == 200 && wav.starts_with(b"RIFF") => parts.push(wav),
-            Ok(other) => return Err(JobError(err(&json!(String::from_utf8_lossy(&other))))),
-            Err(v) => {
-                let why = err(&v);
-                return Err(JobError(if why.contains("upstream TTS model failed") { upstream_failed(&model) } else { why }));
+        let (code, res) = match &direct {
+            Some((ct, name)) => http_bytes(&ctx, "POST", &format!("{ct}/v1/audio/speech"), json_body(&with_model(&body, name)), 3600, false).await?,
+            None => http_bytes(&ctx, "POST", &url, json_body(&Value::Object(body.clone())), 3600, true).await?,
+        };
+        let why = match res {
+            Ok(wav) if code == 200 && wav.starts_with(b"RIFF") => {
+                parts.push(wav);
+                continue;
             }
+            Ok(other) => err(&json!(String::from_utf8_lossy(&other))),
+            Err(v) => err(&v),
+        };
+        if !why.contains("upstream TTS model failed") && direct.is_none() {
+            return Err(JobError(why));
+        }
+        // The gateway sends some containers the store id, which they don't know (Supertonic-3, 0.1.38): ask the
+        // model's own port under its own name, where the link allows it.
+        direct = if direct.is_some() { None } else { speech_direct(&ctx, &model).await };
+        let Some((ct, name)) = &direct else { return Err(JobError(upstream_failed(&model))) };
+        match http_bytes(&ctx, "POST", &format!("{ct}/v1/audio/speech"), json_body(&with_model(&body, name)), 3600, false).await? {
+            (200, Ok(wav)) if wav.starts_with(b"RIFF") => parts.push(wav),
+            _ => return Err(JobError(upstream_failed(&model))),
         }
     }
     let joined = join_wavs(&parts).map_err(|e| JobError(e.to_string()))?;
@@ -93,4 +108,20 @@ pub async fn run(ctx: Ctx) -> JobResult {
         "instruct": config.get("instruct"), "voice": voice, "ref_text": config.get("ref_text"),
         "speaker": or_none(&speaker), "design": or_none(&design)},
         "sources": src.into_iter().collect::<Vec<_>>(), "outputs": [out], "duration": duration}))
+}
+
+/// The request with the container's own model name.
+fn with_model(body: &Map<String, Value>, name: &str) -> Value {
+    let mut b = body.clone();
+    b.insert("model".into(), json!(name));
+    Value::Object(b)
+}
+
+/// (container URL, the name it knows itself by) for a voice model whose port this link reaches (media.py speech_direct).
+async fn speech_direct(ctx: &Ctx, model: &str) -> Option<(String, String)> {
+    let url = instance_url(ctx, model).await.ok()?;
+    let (_, info) = http(ctx, "GET", &format!("{url}/v1/models"), None, 15, false).await.ok()?;
+    let own = info.pointer("/model_config/id").and_then(Value::as_str).filter(|s| !s.is_empty());
+    let name = own.map(String::from).unwrap_or_else(|| model.rsplit('/').next().unwrap_or(model).to_string());
+    Some((url, name))
 }
