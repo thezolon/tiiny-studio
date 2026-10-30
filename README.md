@@ -31,20 +31,25 @@ Showcase and discussion: [Tiiny Studio on TiinyVerse](https://tiinyverse.com/pos
   was (unzip it into an Obsidian vault or any notes folder). Nothing is saved. OCR uses PP-OCRv6
   Small/Medium or GLM-OCR (GLM-OCR needs Wi-Fi/LAN because the gateway can't route it). Not supported:
   old binary Office files (.doc/.xls/.ppt) and iPhone HEIC photos.
-- **Chat**: talk to the loaded model with streaming replies and an optional thinking view; attach
+- **Chat**: talk to the loaded model with streaming replies and an optional thinking view (a switch for models that
+  can turn it off, "Always thinks" for ones that can't); attach
   pictures and documents; speak your message; and let it make things: create or edit images, read text
   aloud in your saved voice, make loops and song previews. When a tool needs a model that doesn't fit
   next to the chat model, the studio unloads the chat model, loads the tool's model, does the work, and
   loads the chat model back. Chats are saved in the studio's data folder (or not, if you switch that off) and
   each delete removes the conversation completely.
 - **Audio**: voice cloning from a few seconds of speech (with a saved voice library, and long text
-  voiced in parts and joined); tempo- and key-locked loops; full songs with lyrics, instrumental,
-  vocals only or separate tracks, with an 8-second preview you can continue to the full song and an
-  MP3 copy; transcription in 30 languages.
+  voiced in parts and joined), built-in voices (Qwen3-CustomVoice, MOSS-TTS-Nano) or a voice you describe
+  (Qwen3-VoiceDesign); tempo- and key-locked loops; full songs with lyrics, instrumental, vocals only or
+  separate tracks (SongGeneration, with an 8-second preview you can continue to the full song; AceStep with
+  tempo, key and language; YuE2) and an MP3 copy; transcription in 30 languages. Each panel shows what the
+  loaded model can do.
 - **3D** with Hunyuan3D-2.1 or TRELLIS.2-4B: image → shape → simplify → PBR texture → GLB, with an interactive
   viewer. **Cut out the subject first** (on by default): Qwen-Image puts the subject on a transparent background
   before the shape is built, since the 3D model otherwise builds the background too, as the floating shards around
   the dog above show.
+- **Video** with MiniMax-H3-Turbo: a prompt, or a picture to start from (**Animate** on any image), to a short clip
+  with matching sound, wide or tall, 480p or 768p. Slow on the device: about 7 minutes for 2 seconds at 480p.
 - **Helpers**: improve a prompt, describe an image, write lyrics, suggest loop tags. The studio loads the chat
   model they need and puts your models back afterwards (Settings → Model swapping).
 - **Gallery** (every workspace): search, smart search by meaning (the device's embedding model;
@@ -170,7 +175,11 @@ Everything the studio saves stays on your machine: results, prompts, sources and
   by side just slows all of them (a 30 s song took 285 s next to a 3D job vs 96 s alone). Every
   job (image, audio, 3D, helper) waits in a single server-side queue and shows its place in line.
 - **Jobs live on the server**, so a long song or 3D model keeps going if you reload or close the
-  page. Results, voices and sources are stored in `data/` (`history.json`, `voices.json`, `images/`).
+  page. Queue as many as you like (a night of videos): the jobs menu shows when each one should start and finish,
+  the desktop app keeps the computer awake while they run, and a short drop in the connection doesn't end them.
+  Results the studio missed (it was closed mid-render) are saved from the Tiiny the next time it starts. Jobs won't
+  start when the Tiiny has under 2 GB free. Results, voices and sources are stored in `data/` (`history.json`,
+  `voices.json`, `images/`).
 - **Works on Wi-Fi/LAN and USB.** Images, chat, transcription, voice cloning, OCR, 3D and music go
   through the device's gateway (port 80), which every connection exposes. Over USB the models' own
   ports are blocked, so songs come from the gateway's preview route (no separate tracks) and GLM-OCR
