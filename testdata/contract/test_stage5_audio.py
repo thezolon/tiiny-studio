@@ -217,6 +217,28 @@ class Audio(ContractCase):
         self.failed(self.song(flags={"fail": {"/v1/generate": [500, "boom"]}}), "boom")
         self.failed(self.song(reference_audio="nope"), "base64 data URI")
 
+    def test_speech_voice_kinds(self):
+        # what the loaded voice model offers decides the voice: a built-in speaker, a described voice, or a clone
+        base = {"kind": "speech", "text": "RUST TEST hello there.", "language": "en"}
+        for mid, extra, sent, not_sent in [("Fake/CustomVoice", {"speaker": "ryan"}, {"voice": "ryan"}, ("ref_audio", "instruct")),
+                                           ("Fake/VoiceDesign", {"design": "A deep, slow voice."}, {"instruct": "A deep, slow voice."}, ("ref_audio", "voice"))]:
+            py, rs = self.same_job({**base, "model": mid, "load": mid, **extra})
+            self.assertEqual(py["status"], "done", (mid, py.get("error")))
+            self.assertEqual(py["entry"]["sources"], [])  # no reference clip to keep
+            body = next(c[3] for c in self.calls() if c[1] == "/v1/audio/speech")
+            for k, v in sent.items():
+                self.assertEqual(body[k], v)
+            for k in not_sent:
+                self.assertNotIn(k, body)
+        self.failed({**base, "model": "Fake/CustomVoice", "load": "Fake/CustomVoice", "speaker": "nobody"}, "Unsupported speaker")
+        py = self.failed({**base, "model": "Fake/Broken-TTS", "load": "Fake/Broken-TTS", "speaker": "F1"}, "don't work through TiinyOS's gateway")
+        for mid in ("Fake/CustomVoice", "Qwen/Qwen3-TTS-Base"):  # what the panel reads
+            request(self.h.fake_url, "POST", "/api/v1/models/" + mid.replace("/", "%2F") + "/launch", {"model_id": mid}, headers=AUTH)
+        time.sleep(0.4)
+        infos = [request(b, "GET", "/api/model/info?id=Fake%2FCustomVoice").json for b in (self.h.py_url, self.h.rs_url)]
+        self.assertEqual(infos[0], infos[1])
+        self.assertEqual(infos[0]["info"]["supported_speakers"], ["ryan", "ono_anna"])
+
     # ---------- 3D ----------
     def mesh(self, **kw):
         return {"kind": "mesh", "model": MESH, "image": PNG, "load": MESH, "flags": {"task_polls": 1}, **kw}

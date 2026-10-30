@@ -79,6 +79,17 @@ CAPS = {"Text Generation": ["main"], "Text-to-Image": ["image"], "Text-to-Speech
         "Image-to-3D": ["Image", "3d"], "OCR": ["ocr"], "Embedding": ["embedding"]}
 
 
+# /v1/capabilities of the voice models as probed on 0.1.38 (trimmed): clone, built-in speakers, a voice from words
+def tts_caps(clone=False, speakers=(), design=False, instruct=False):
+    return {"support_voice_clone": clone, "support_custom_voice": bool(speakers), "support_voice_design": design,
+            "support_instruct": instruct, "supported_speakers": list(speakers) or ["aiden", "vivian"], "sample_rate": 24000,
+            "supported_languages": ["en", "zh", "german", "beijing_dialect"], "service": "tts"}
+
+
+TTS_CAPS = {"Qwen/Qwen3-TTS-Base": tts_caps(clone=True, instruct=True), "Fake/CustomVoice": tts_caps(speakers=("ryan", "ono_anna"), instruct=True),
+            "Fake/VoiceDesign": tts_caps(design=True, instruct=True), "Fake/Broken-TTS": tts_caps(speakers=("F1", "M1"))}
+
+
 def model(mid, name, mtype, npu, supported=(), inp="text", out="text", thinking=NO_THINKING):
     return {"id": mid, "display_name": name, "params": "4B", "type": mtype, "input": inp, "output": out, "supported": list(supported),
             "desc": f"Fake {name}", "npu_usage": npu, "load_time": 20, "costMemory": npu * 100, "size": 1 << 30, "version": 1,  # the device sends numbers
@@ -91,6 +102,9 @@ CATALOG = [
     model("Fake/No-Thinking", "No Thinking", "Text Generation", 20, ["Tool Use"]),
     model("Qwen/Qwen-Image-2.1", "Qwen Image", "Text-to-Image", 60, ["Image Editing"], "text", "image"),
     model("Qwen/Qwen3-TTS-Base", "Qwen3 TTS", "Text-to-Speech", 15, [], "text", "audio"),
+    model("Fake/CustomVoice", "CustomVoice", "Text-to-Speech", 7, [], "text", "audio"),
+    model("Fake/VoiceDesign", "VoiceDesign", "Text-to-Speech", 5, [], "text", "audio"),
+    model("Fake/Broken-TTS", "Broken TTS", "Text-to-Speech", 0, [], "text", "audio"),
     model("Fake/Whisper-ASR", "Whisper ASR", "ASR", 10, [], "audio", "text"),
     model("Fake/Foundation-1", "Foundation-1", "Music Generation", 25, [], "text", "audio"),
     model("Fake/SongGeneration-v2", "SongGeneration", "Music Generation", 45, [], "text", "audio"),
@@ -303,11 +317,8 @@ class Handler(BaseHTTPRequestHandler):
             if row["type"] == "Text Generation":
                 self.send_json(200, {"object": "capabilities", "service": "chat", "model": named, "supports_chat": True,
                                      "supported": row["supported"], "thinking": row["thinking"]})
-            elif row["type"] == "Text-to-Speech":  # Qwen3-TTS Base, as probed on 0.1.38 (trimmed)
-                self.send_json(200, {"capabilities": ["voice_clone", "instruct"], "support_voice_clone": True, "support_custom_voice": False,
-                                     "support_voice_design": False, "support_instruct": True, "sample_rate": 24000,
-                                     "supported_languages": ["en", "zh", "german"], "supported_speakers": ["aiden", "vivian"],
-                                     "service": "tts", "model": named})
+            elif row["type"] == "Text-to-Speech":
+                self.send_json(200, {**TTS_CAPS[named], "model": named})
             else:
                 self.send_json(400, {"error": {"message": f"Model '{named}' does not support tts.", "type": "invalid_request_error"}})
         elif method == "POST" and p == "/api/v1/sys/shutdown/":
@@ -332,6 +343,20 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(500, {"error": {"message": "xh2a backend fail"}})
             img = CUTOUT_PNG if st.flags.get("cutout_png") else PNG  # an image model's cut-out: RGBA with faint noise
             self.send_json(200, {"created": int(time.time()), "data": [{"b64_json": base64.b64encode(img).decode()}]})
+        elif method == "POST" and p == "/v1/audio/speech" and self.body.get("model") in ("Fake/CustomVoice", "Fake/VoiceDesign", "Fake/Broken-TTS"):
+            # how the real ones answered on 0.1.38: CustomVoice wants a known "voice" and refuses "instruct"; VoiceDesign
+            # needs "instruct" (the description); Supertonic-3 failed whatever it was sent
+            b, mid = self.body, self.body.get("model")
+            if mid == "Fake/Broken-TTS":
+                self.send_json(500, {"error": {"message": "The upstream TTS model failed.", "type": "model_error"}})
+            elif mid == "Fake/CustomVoice" and b.get("instruct"):
+                self.send_json(500, {"error": {"message": "voice_design is not supported by this model", "type": "unsupported_capability"}})
+            elif mid == "Fake/CustomVoice" and b.get("voice") not in (None, "ryan", "ono_anna"):
+                self.send_json(500, {"error": {"message": f"Unsupported speaker: {b.get('voice')}", "type": "invalid_request"}})
+            elif mid == "Fake/VoiceDesign" and not b.get("instruct"):
+                self.send_json(500, {"error": {"message": "custom_voice is not supported by this model", "type": "unsupported_capability"}})
+            else:
+                self.send_bytes(200, WAV, "audio/wav")
         elif method == "POST" and p == "/v1/audio/speech":
             if st.flags.get("speech_text"):
                 self.send_bytes(200, b"not audio at all", "text/plain")

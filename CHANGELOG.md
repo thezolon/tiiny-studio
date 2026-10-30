@@ -8,6 +8,12 @@
   this from the model instead of guessing from its name, for chat and for the helpers.
 - The studio now keeps each model's own description of its options, and can ask a loaded chat, voice, music or 3D
   model for the rest. The Voice, Song and 3D panels will build on this.
+- **Voice follows the model** ([#23](https://github.com/thezolon/tiiny-studio/issues/23)): the Voice panel shows what the
+  loaded voice model can do. Built-in voices to pick from (Qwen3-CustomVoice, MOSS-TTS-Nano), a box to describe a new
+  voice (Qwen3-VoiceDesign), your cloned voices (Qwen3-VoiceClone), the style field only where it works, and the model's
+  own languages. Before, every voice model was treated as a cloning one.
+- A voice model that fails inside TiinyOS now says so, instead of "The upstream TTS model failed" (on 0.1.38:
+  Supertonic-3, and cloning with MOSS-TTS-Nano; reported to Tiiny).
 - Tested on TiinyOS 0.1.38.
 
 ## 0.3.2 (2026-10-29)
