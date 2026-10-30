@@ -52,7 +52,6 @@ const A = {
   tool: store.get("audio.tool", "speech"), view: null, voices: [],
   speech: { voiceId: store.get("audio.voice", null), clip: null, clipText: "", clipName: "", text: "", language: store.get("audio.lang", ""), instruct: "",
     speaker: store.get("audio.speaker", null), design: "" },
-  modelInfo: {},  // model id -> what the loaded model reports about itself (/api/model/info), or "loading"
   loop: { family: "Synth", role: "Wavetable Synth", desc: "", character: new Set(["warm"]), fx: new Set(), phrase: new Set(["chord progression"]), bpm: 120, bars: 4, key: "A minor", custom: null, steps: 64, cfg: 6, seed: "" },
   song: { type: "mixed", caption: "", lyrics: "", seconds: 60, ref: null, seed: "", steps: "", temperature: "", top_k: "", top_p: "",
     bpm: "", key_scale: "", time_signature: "", vocal_language: "", negative_prompt: "" },
@@ -114,17 +113,7 @@ const AudioWS = {
    *  languages (its /v1/capabilities via /api/model/info). Null until it's loaded: then the panel is the cloning one. */
   voiceCaps() { return this.infoOf("speech"); },
   /** What the loaded model for a tool reports about itself (/api/model/info), fetched once per model; null until then. */
-  infoOf(tool) {
-    const m = modelForTool(tool);
-    if (!m || m.status !== "running") return null;
-    const got = A.modelInfo[m.id];
-    if (got === undefined) {
-      A.modelInfo[m.id] = "loading";
-      api("/api/model/info?id=" + encodeURIComponent(m.id)).then((r) => { A.modelInfo[m.id] = r.info || {}; }).catch(() => { A.modelInfo[m.id] = {}; })
-        .then(() => this.render());
-    }
-    return got && got !== "loading" && Object.keys(got).length ? got : null;
-  },
+  infoOf(tool) { return loadedInfo(modelForTool(tool), () => this.render()); },
   /** The loaded song model's options (/v1/music/info): its service, defaults, step and length limits. SongGeneration has
    *  a preview, separate tracks and an own-port route; AceStep and YuE2 only compose whole songs ("plain"). */
   songModel() {
