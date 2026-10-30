@@ -3,8 +3,8 @@
 A local media studio for the **[Tiiny Pocket](https://tiiny.ai)**, a pocket-sized device that runs AI models on
 its own NPU. Tiiny Studio comes as a desktop app for Windows, macOS and Linux, or a small server for your home
 network (Docker). It drives the models on your Tiiny over your own network: create and edit images, clone voices, make music
-loops and full songs, transcribe audio, and turn pictures into textured 3D models. Nothing leaves
-your network.
+loops and full songs, transcribe audio, turn pictures into textured 3D models, and make short videos with sound.
+Nothing leaves your network.
 
 Showcase and discussion: [Tiiny Studio on TiinyVerse](https://tiinyverse.com/posts/5abfe45c-3cf0-4f53-88ab-b397741702c3) · [Tiiny Discord](https://discord.com/invite/R5CHUuXy4A) (#project-showcase → Tiiny Studio).
 
@@ -173,7 +173,7 @@ Everything the studio saves stays on your machine: results, prompts, sources and
 
 - **One job at a time.** The Tiiny serves one request at a time; running different models side
   by side just slows all of them (a 30 s song took 285 s next to a 3D job vs 96 s alone). Every
-  job (image, audio, 3D, helper) waits in a single server-side queue and shows its place in line.
+  job (image, audio, 3D, video, helper) waits in a single server-side queue and shows its place in line.
 - **Jobs live on the server**, so a long song or 3D model keeps going if you reload or close the
   page. Queue as many as you like (a night of videos): the jobs menu shows when each one should start and finish,
   the desktop app keeps the computer awake while they run, and a short drop in the connection doesn't end them.
@@ -194,7 +194,7 @@ Everything the studio saves stays on your machine: results, prompts, sources and
 | `static/index.html` | shell, Image workspace, Models panel |
 | `static/settings.js` | device settings and first-run setup |
 | `static/shared.js` | workspaces, job polling, model gating, audio helpers, waveform player |
-| `static/audio.js`, `static/mesh.js` | Audio and 3D workspaces |
+| `static/audio.js`, `static/mesh.js`, `static/video.js` | Audio, 3D and Video workspaces |
 | `static/extras.js` | gallery tools, live device stats, OCR and documents in Text mode |
 | `static/chat.js` | Chat workspace |
 | `static/vendor/` | bundled for offline use: [`<model-viewer>`](https://modelviewer.dev) 3.5.0, [pdf.js](https://mozilla.github.io/pdf.js/) 4.10.38 with its CMaps, [UTIF.js](https://github.com/photopea/UTIF.js) 3.1.0 and pako 1.0.11 (TIFF) |
@@ -254,12 +254,18 @@ phone or tablet. Browsers only paste images that way, so for audio use `Ctrl+V`,
   only works over Wi-Fi/LAN; PP-OCRv6 works on every link.
 - SongGeneration's style reference (`reference_audio_base64`) fails with `xh2a backend fail`, so the
   control is hidden (`SONG_STYLE_REF` in `static/audio.js`).
-- There's no video generation yet: the import system has no video toolkit (Wan2.1 and LTX-Video
-  inspect as `unsupported`), though the gateway already reserves `/v1/video/*`.
+- Video (MiniMax-H3-Turbo, 0.1.38) is slow: about 7 minutes for 2 seconds at 480p with 4 steps, over 15 at 7. Only a
+  start picture works; an end picture (`last_image`) is ignored, so the studio doesn't offer one.
+- Supertonic-3 fails through the gateway ("The upstream TTS model failed"); the studio uses its own port instead,
+  which only works over Wi-Fi/LAN.
+- PP-DocLayoutV3 has no gateway route and its reading order is wrong even on a simple page, so Text mode doesn't
+  use it.
+- The device can't list 3D tasks, so a 3D build cut short (the studio closed mid-build) can't be recovered. Videos,
+  songs and loops can.
 
 ## Status
 
-Version 0.3.2 (see [CHANGELOG.md](CHANGELOG.md)). An unofficial community project, not affiliated with
+Version 0.4.0 (see [CHANGELOG.md](CHANGELOG.md)). An unofficial community project, not affiliated with
 Tiiny. Tested against TiinyOS 0.1.35 to 0.1.38; device APIs may change with firmware updates
 (`python tools/api_snapshot.py --check` shows what changed).
 
