@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- The studio watches the Tiiny's free space: the Models panel shows it, and a job won't start with under 2 GB free (it would fail halfway).
 - **New Video tab** for **MiniMax-H3-Turbo**: write a prompt, or start from a picture, and get a short clip **with
   matching sound** (MP4). Sizes (wide or tall, 480p or 768p), steps and frame rate come from the loaded model. Any
   image has an **Animate** button that opens it here. **Video is slow on the Tiiny:** about 7 minutes for 2 seconds at

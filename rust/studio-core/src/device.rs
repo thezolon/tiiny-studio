@@ -131,6 +131,29 @@ pub async fn port_open(host: &str, port: u16, timeout: Duration) -> bool {
     matches!(tokio::time::timeout(timeout, tokio::net::TcpStream::connect((host, port))).await, Ok(Ok(_)))
 }
 
+/// (free GB, total GB) of the Tiiny's storage from /api/v1/sys/status, or None when it can't be read. Cached for
+/// STUDIO_DISK_TTL seconds (60; the contract tests set 0) per device address. Results are written on the device first.
+pub async fn disk_space(state: &AppState) -> Option<(f64, f64)> {
+    let ttl = std::env::var("STUDIO_DISK_TTL").ok().and_then(|v| v.parse::<f64>().ok()).unwrap_or(60.0);
+    let url = state.settings.current().url;
+    {
+        let c = state.disk_cache.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some((t, u, v)) = &*c {
+            if *u == url && t.elapsed().as_secs_f64() < ttl {
+                return *v;
+            }
+        }
+    }
+    let (code, st) = call(state, "GET", "/api/v1/sys/status", None, 5, None).await;
+    let num = |k: &str| st.get("disk").and_then(|d| d.get(k)).and_then(Value::as_f64);
+    let val = match (code, num("total_bytes"), num("used_bytes")) {
+        (200, Some(total), Some(used)) if total > 0.0 => Some(((total - used).max(0.0) / 1e9, total / 1e9)),
+        _ => None,
+    };
+    *state.disk_cache.lock().unwrap_or_else(|e| e.into_inner()) = Some((Instant::now(), url, val));
+    val
+}
+
 /// NPU/CPU stats: the gateway's /api/v1/npu/status (every link) plus the optional on-device dashboard
 /// (:9109/api/stats) for power and temperatures when it's running. Cached 3 s.
 pub async fn stats(state: &AppState) -> Value {
@@ -172,6 +195,9 @@ pub async fn stats(state: &AppState) -> Value {
             out.insert("npu_temp_c".into(), temp);
         }
     }
+    let space = disk_space(state).await;
+    out.insert("disk_free_gb".into(), space.map_or(Value::Null, |(f, _)| json!((f * 10.0).round() / 10.0)));
+    out.insert("disk_total_gb".into(), space.map_or(Value::Null, |(_, t)| json!((t * 10.0).round() / 10.0)));
     let mut v = json!({"source": source});
     v.as_object_mut().unwrap().extend(out);
     *state.stats_cache.lock().unwrap_or_else(|e| e.into_inner()) = Some((Instant::now(), v.clone()));

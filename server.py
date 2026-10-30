@@ -461,6 +461,8 @@ def device_stats():
                        npu_temp_c=max(temps) if temps else out.get("npu_temp_c"))
         except (urllib.error.URLError, OSError, ValueError, AttributeError):
             pass
+    space = MEDIA.disk_space()
+    out.update(disk_free_gb=round(space[0], 1) if space else None, disk_total_gb=round(space[1], 1) if space else None)
     STATS_CACHE.update(t=time.time(), data=out)
     return out
 MIME = {"png": "image/png", "jpg": "image/jpeg", "webp": "image/webp", "wav": "audio/wav", "mp3": "audio/mpeg",

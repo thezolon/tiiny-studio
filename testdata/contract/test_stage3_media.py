@@ -21,7 +21,9 @@ class Media(ContractCase):
             request(self.h.fake_url, "POST", path, {"model_id": req["load"]}, headers={"Authorization": "Bearer fake-key"})
             time.sleep(0.4)
             request(self.h.fake_url, "POST", "/__reset_log")
-        req = {k: v for k, v in req.items() if k != "load"}
+        if req.get("flags"):  # fake device behaviour for this run only (the reset above cleared the last)
+            request(self.h.fake_url, "POST", "/__flags", req["flags"])
+        req = {k: v for k, v in req.items() if k not in ("load", "flags")}
         job = request(base, "POST", "/api/jobs", req).json
         if "id" not in job:  # refused at submit (e.g. unknown kind)
             return job, []
@@ -65,7 +67,7 @@ class Media(ContractCase):
                     break
                 time.sleep(0.05)
             log = json.loads(request(self.h.fake_url, "GET", "/__requests").body)
-            return job["status"], [r["path"] for r in log if r["path"] != "/"]
+            return job["status"], [r["path"] for r in log if r["path"] not in ("/", "/api/v1/sys/status")]
         py, rs = run(self.h.py_url), run(self.h.rs_url)
         self.assertEqual(py, rs)
         self.assertEqual(py, ("done", ["/v1/images/generations"] * 3))
@@ -113,6 +115,34 @@ class Media(ContractCase):
         self.assertEqual(py["status"], "done")
         self.same_job({"kind": "ocr", "model": "Fake/PP-OCRv6", "image": "nope"})
         self.same_job({"kind": "ocr", "model": "Fake/Not-Loaded", "image": PNG})
+
+    def test_disk_space(self):
+        job = {"kind": "image", "model": "Qwen/Qwen-Image-2.1", "prompt": "RUST TEST duck", "size": "512x512"}
+        py, _ = self.same_job({**job, "flags": {"disk_free_gb": 1.5}})
+        self.assertEqual(py["status"], "error")
+        self.assertEqual(py["error"], "The Tiiny is almost out of space (1.5 GB free). "
+                         "Free some up (delete models or files in the TiinyOS app) and try again.")
+        py, _ = self.same_job({**job, "flags": {"disk_free_gb": 50}})
+        self.assertEqual(py["status"], "done")
+        py, _ = self.same_job({**job, "flags": {"no_disk": True}})  # unknown free space never blocks
+        self.assertEqual(py["status"], "done")
+        py, _ = self.same_job({"kind": "assist", "model": fake_tiiny.CHAT_MODEL, "task": "prompt", "text": "RUST TEST a fox",
+                               "flags": {"disk_free_gb": 0.5}})  # chat and helpers aren't checked
+        self.assertEqual(py["status"], "done")
+
+    def test_disk_stats(self):
+        for flags in ({}, {"disk_free_gb": 7.26}, {"no_disk": True}):
+            request(self.h.fake_url, "POST", "/__reset")
+            request(self.h.fake_url, "POST", "/__flags", flags)
+            time.sleep(3.2)  # the stats answer is cached for 3 s on both servers
+            py, rs = (r.json for r in self.get("/api/stats"))
+            self.assertEqual((py["disk_free_gb"], py["disk_total_gb"]), (rs["disk_free_gb"], rs["disk_total_gb"]))
+            if flags.get("no_disk"):
+                self.assertIsNone(py["disk_free_gb"])
+                self.assertIsNone(py["disk_total_gb"])
+            else:
+                self.assertEqual(py["disk_total_gb"], 921.1)
+                self.assertEqual(py["disk_free_gb"], round(flags.get("disk_free_gb", 400), 1))
 
     def test_assist(self):
         model = fake_tiiny.CHAT_MODEL

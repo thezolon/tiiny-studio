@@ -3,7 +3,8 @@ Usage: python fake_tiiny.py [--port N] [--key KEY] [--launch-delay SECONDS]
 Or import it: `server, url = fake_tiiny.start()`; `server.state` holds the models, tasks and request log.
 Every request is recorded (minus the Authorization header): GET /__requests, POST /__reset (no auth).
 POST /__flags {..} switches on test behaviour until the next reset: "fail" {path: [status, message]}, "delay" {path: seconds},
-"closed_port", "no_music_gateway", "speech_text", "task_polls" N, "task_hold", "fail_stage" name, "rich_texture", "song_tracks".
+"closed_port", "no_music_gateway", "speech_text", "task_polls" N, "task_hold", "fail_stage" name, "rich_texture", "song_tracks",
+"disk_free_gb" N (free storage in /api/v1/sys/status; plenty by default), "no_disk" (sys/status without disk keys).
 Everything except GET / and /__* needs `Authorization: Bearer <key>`, like the device. stdlib only."""
 import argparse
 import base64
@@ -216,6 +217,13 @@ class Handler(BaseHTTPRequestHandler):
         pass
 
     # ---------- plumbing ----------
+    def disk(self):
+        flags = self.st.flags
+        if flags.get("no_disk"):
+            return {}
+        total = 921123848192
+        return {"total_bytes": total, "used_bytes": total - int(flags.get("disk_free_gb", 400) * 1e9)}
+
     @property
     def st(self):
         return self.server.state
@@ -352,7 +360,7 @@ class Handler(BaseHTTPRequestHandler):
                 st.shutdowns += 1
             self.send_json(200, {"status": "ok", "message": "System shutdown will be initiated in seconds via host API"})
         elif method == "GET" and p == "/api/v1/sys/status":
-            self.send_json(200, {"cpu": {"total_percent": 12.5}, "memory": {"usage_percent": 40.0}, "gpu": {}, "npus": [], "disk": {}})
+            self.send_json(200, {"cpu": {"total_percent": 12.5}, "memory": {"usage_percent": 40.0}, "gpu": {}, "npus": [], "disk": self.disk()})
         elif method == "GET" and p == "/api/v1/sys/device_info":
             self.send_json(200, {"device_name": "Fake Tiiny"})
         elif method == "GET" and p == "/api/v1/sys/ac_power/":
