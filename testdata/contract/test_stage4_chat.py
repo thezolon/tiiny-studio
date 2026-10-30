@@ -113,6 +113,13 @@ class Chat(ContractCase):
         body = next(b for m, p, b in self.calls if p == "/v1/chat/completions")
         self.assertEqual((body.get("reasoning_effort"), body["max_tokens"]), ("low", 1700))
 
+    def test_reasoned_without_answer(self):
+        # finish "length" with nothing said: an error that says why, not an empty reply
+        py, rs = self.same_job({"kind": "chat", "messages": [{"role": "user", "content": "RUST TEST FAKE_NO_ANSWER"}]})
+        self.assertEqual((py["status"], rs["status"]), ("error", "error"))
+        self.assertIn("ran out of room", py["error"])
+        self.assertEqual(py["error"], rs["error"])
+
     # ---------- model swapping switches (#5) ----------
     def set_swap(self, **kw):
         for base in (self.h.py_url, self.h.rs_url):

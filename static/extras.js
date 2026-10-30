@@ -155,7 +155,7 @@ TOOL_TYPES.ocr = "Image-to-Text";
 const OCR_WAIT = new Map();
 // Preferred order: PP-OCRv6 Small is fast, light and works on every link; GLM-OCR needs Wi-Fi/LAN.
 const OCR_RANK = (m) => (/PP-OCR.*Small/i.test(m.id) ? 0 : /PP-OCR/i.test(m.id) ? 1 : 2);
-const ocrModels = () => (S.allModels || []).filter((m) => m.type === "Image-to-Text").sort((a, b) => OCR_RANK(a) - OCR_RANK(b));
+const ocrModels = () => (S.allModels || []).filter((m) => m.type === "Image-to-Text" && !layoutOnly(m)).sort((a, b) => OCR_RANK(a) - OCR_RANK(b));
 function ocrModel(id) {
   const all = ocrModels();
   return (id && all.find((m) => m.id === id)) || all.find((m) => m.status === "running") || all[0];
