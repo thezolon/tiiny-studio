@@ -372,6 +372,10 @@ pub async fn run(ctx: Ctx) -> JobResult {
         ctx.update(json!({"partial": partial.json()}));
         ctx.remove(&["tool"]);
     }
+    if partial.content.trim().is_empty() && artifacts.is_empty() && finish == "length" {
+        // an always-reasoning model (gpt-oss) spent max_tokens thinking
+        return Err(JobError("The model reasoned until it ran out of room and gave no answer. Try again, or ask for less.".into()));
+    }
     let mut entry = json!({"kind": "chat", "params": {"model": model}, "sources": [], "outputs": [], "text": partial.content.trim(),
                            "reasoning": partial.reasoning.trim(), "artifacts": artifacts, "finish": finish});
     if !warnings.is_empty() {
