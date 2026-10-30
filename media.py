@@ -19,6 +19,8 @@ import uuid
 import zlib
 from urllib.parse import quote
 
+RECOVER_MUSIC_SECONDS = 24 * 3600  # songs and loops older than this are never pulled from the device
+
 JOBS = {}
 JOBS_LOCK = threading.Lock()
 
@@ -36,6 +38,7 @@ class Media:
         # The Tiiny serves one request at a time; parallel requests to different models just slow
         # each other down. One lock, shared with image generation, makes every job wait its turn.
         self.lock = device_lock
+        self.seen_lock = threading.Lock()  # device_seen.json (read-modify-write)
 
     # ---------- plumbing ----------
     def running_instance(self, model_id):
@@ -243,6 +246,136 @@ class Media:
         elif kind == "image":
             self.device("POST", f"/api/v1/models/{q}/stop", None, 120)
             self.device("POST", f"/api/v1/models/{q}/launch", {"model_id": model}, 120)
+
+    # ---------- results left on the device ----------
+    # A finished clip or song the studio never saved (it restarted mid-render, or another studio made it) is pulled into
+    # the gallery. device_seen.json lists every device id the studio saved, deleted or skipped; the first look only
+    # records what's there, so the device's history is never imported.
+    def seen_ids(self):
+        try:
+            return set(json.loads((self.dir.parent / "device_seen.json").read_text("utf-8")))
+        except (OSError, ValueError, TypeError):
+            return None  # no (usable) file: the next look is a baseline
+
+    def mark_seen(self, *ids, baseline=False):
+        """Only once the baseline exists: until then everything on the device counts as history anyway."""
+        with self.seen_lock:
+            have = self.seen_ids()
+            if have is None and not baseline:
+                return
+            have = sorted((have or set()) | {i for i in ids if i})
+            path = self.dir.parent / "device_seen.json"
+            tmp = path.with_suffix(".tmp")
+            tmp.write_text(json.dumps(have, indent=1), "utf-8")
+            tmp.replace(path)
+
+    def delete_device_sessions(self, ids):
+        """Best effort, in the background (it waits its turn for the device): the Tiiny keeps a finished song's session
+        until it's deleted. Never blocks or fails the local delete."""
+        ids = [i for i in ids if i]
+        if not ids or not self.settings.url:
+            return
+        self.mark_seen(*ids)
+
+        def work():
+            with self.lock:
+                for i in ids:
+                    try:
+                        self.http("DELETE", f"{self.settings.url}/v1/music/sessions/{quote(i, safe='')}", timeout=15, headers=self.gateway_headers())
+                    except JobError:
+                        pass
+        threading.Thread(target=work, daemon=True).start()
+
+    def device_list(self, path, key):
+        """The list a gateway endpoint answers; [] when the firmware lacks it (404); None when it can't be read."""
+        try:
+            code, res = self.http("GET", f"{self.settings.url}{path}", timeout=20, headers=self.gateway_headers())
+        except JobError:
+            return None
+        if code == 404:
+            return []
+        items = res.get(key) if code == 200 and isinstance(res, dict) else None
+        return [x for x in items if isinstance(x, dict)] if isinstance(items, list) else None
+
+    def recover(self):
+        """Save what the Tiiny holds that the gallery doesn't. Skipped while a job has the device (its own clip or session
+        would look unclaimed); the page asks again on its next load."""
+        nothing = {"recovered": [], "baseline": False}
+        if not self.settings.url or not self.lock.acquire(blocking=False):
+            return nothing
+        try:
+            vids, sessions = self.device_list("/v1/videos", "data"), self.device_list("/v1/music/sessions", "sessions")
+            seen = self.seen_ids()
+            if seen is None:  # first look: everything there now is history
+                if vids is None or sessions is None:
+                    return nothing
+                self.mark_seen(*[v.get("id") for v in vids if v.get("status") == "completed"], *[s.get("session_id") for s in sessions], baseline=True)
+                return {"recovered": [], "baseline": True}
+            when = lambda x: x["created_at"] if isinstance(x.get("created_at"), (int, float)) and not isinstance(x.get("created_at"), bool) else 0
+            out = []
+            for v in sorted([v for v in vids or [] if v.get("status") == "completed" and isinstance(v.get("id"), str) and v["id"] not in seen], key=when):
+                e = self._recover_video(v)
+                if e:
+                    out.append({"id": e["id"], "kind": e["kind"]})
+            new = [s for s in sessions or [] if s.get("status") == "completed" and isinstance(s.get("session_id"), str) and s["session_id"] not in seen
+                   and when(s) >= time.time() - RECOVER_MUSIC_SECONDS]
+            for s in sorted(new, key=when):
+                e = self._recover_session(s)
+                if e:
+                    out.append({"id": e["id"], "kind": e["kind"]})
+            return {"recovered": out, "baseline": False}
+        finally:
+            self.lock.release()
+
+    def _recover_video(self, v):
+        base, auth, vid = self.settings.url, self.gateway_headers(), v["id"]
+        try:
+            code, data = self.http("GET", f"{base}/v1/videos/{quote(vid, safe='')}/content", timeout=600, headers=auth, raw=True)
+        except JobError:
+            return None
+        if code != 200 or not data:
+            return None
+        eid = uuid.uuid4().hex[:12]
+        out = self.save(f"{eid}-video.mp4", data)
+        try:
+            secs = max(1, round(float(v.get("seconds"))))
+        except (TypeError, ValueError, OverflowError):
+            secs = 2
+        try:
+            frames, fps = float(v.get("frames") or 0), float(v.get("fps") or 24)
+        except (TypeError, ValueError):
+            frames, fps = 0, 24
+        entry = {"id": eid, "created": int(time.time()), "kind": "video", "seconds": 0,
+                 "params": {"model": v.get("model") or "", "prompt": "", "size": str(v.get("size") or "832x480"), "seconds": secs, "recovered": True},
+                 "sources": [], "outputs": [out], "duration": round(frames / fps if frames > 0 and fps > 0 else secs, 1)}
+        self.add_history(entry)
+        self.mark_seen(vid)
+        try:
+            self.http("DELETE", f"{base}/v1/videos/{quote(vid, safe='')}", timeout=30, headers=auth)  # the device keeps it an hour otherwise
+        except JobError:
+            pass
+        return entry
+
+    def _recover_session(self, s):
+        sid, model = s["session_id"], s.get("model_id") or ""
+        try:
+            code, mp3 = self.http("GET", f"{self.settings.url}/v1/music/sessions/{quote(sid, safe='')}/download?format=mp3", timeout=120,
+                                  headers=self.gateway_headers(), raw=True)
+        except JobError:
+            return None
+        if code != 200 or not isinstance(mp3, (bytes, bytearray)) or len(mp3) <= 1000:
+            return None
+        eid, kind = uuid.uuid4().hex[:12], "loop" if "Foundation-1" in model else "song"
+        entry = {"id": eid, "created": int(time.time()), "kind": kind, "seconds": 0, "params": {"model": model, "recovered": True},
+                 "sources": [], "outputs": [self.save(f"{eid}-{kind}.mp3", mp3)], "downloads": [], "duration": None, "device": {"music_session": sid}}
+        self.add_history(entry)
+        self.mark_seen(sid)  # the session stays on the Tiiny until the entry is deleted
+        return entry
+
+    def session_ids(self):
+        """Ids of the music sessions on the device now, or None when it can't say."""
+        sessions = self.device_list("/v1/music/sessions", "sessions") if self.settings.url else None
+        return None if sessions is None else {s.get("session_id") for s in sessions}
 
 
 # ---------- kinds ----------
@@ -579,6 +712,7 @@ def run_loop(m, job, req):
     config = {k: req[k] for k in LOOP_CONFIG if req.get(k) not in (None, "")}
     m.ensure_running(job["model"])
     job["message"] = "Generating loop"
+    before = m.session_ids()  # the gateway keeps a session per loop but doesn't say which: it's the one that appears
     # Gateway music route (Tiiny SDK, Oct 2026) works on every link, the USB cable included. Foundation-1
     # still takes its native body ({prompt, config}); older firmware without the route falls back to the port.
     code, res = m.http("POST", f"{m.settings.url}/v1/music/generate/wav", {"model": job["model"], "prompt": prompt, "config": config},
@@ -589,7 +723,11 @@ def run_loop(m, job, req):
     if code != 200 or not isinstance(res, (bytes, bytearray)):
         raise JobError(m.err(res))
     out = m.save(f"{job['id']}-loop.wav", res)
-    return {"kind": "loop", "params": {"model": job["model"], "prompt": prompt, **config, "bpm": req.get("bpm"),
+    after = m.session_ids() if before is not None else None
+    new = sorted(after - before - {None}) if after is not None else []
+    m.mark_seen(*new)
+    device = {"device": {"music_session": new[0]}} if len(new) == 1 else {}
+    return {"kind": "loop", **device, "params": {"model": job["model"], "prompt": prompt, **config, "bpm": req.get("bpm"),
                                        "bars": req.get("bars"), "key": req.get("key")},
             "sources": [], "outputs": [out], "duration": config.get("seconds_total")}
 
@@ -715,7 +853,7 @@ def _song_entry(m, job, req, res, config, sources, route, url):
             fn = m.save(f"{job['id']}-{re.sub(r'[^a-z0-9]+', '_', name.lower())}.wav", base64.b64decode(data))
             outputs.append(fn)
             tracks[fn] = name
-    downloads, resume = [], None
+    downloads, resume, device = [], None, {}
     sid = res.get("session_id")
     if url and sid:
         m.http("DELETE", f"{url}/v1/sessions/{sid}", timeout=15)
@@ -729,12 +867,16 @@ def _song_entry(m, job, req, res, config, sources, route, url):
             pass
         if route == "preview":
             resume = {"session_id": sid}  # a preview can be continued once
+        device = {"music_session": sid}  # the session stays on the Tiiny until this entry is deleted
+        m.mark_seen(sid)
     if req.get("resume_session") and req.get("from_entry") and getattr(m, "edit_history", None):
         m.edit_history(req["from_entry"], lambda e: e.pop("resume", None))
     entry = {"kind": "song", "params": {"model": job["model"], "route": route, **{k: v for k, v in config.items() if k != "reference_audio_base64"}},
              "sources": sources, "outputs": outputs, "tracks": tracks, "duration": res.get("duration"), "downloads": downloads}
     if resume:
         entry["resume"] = resume
+    if device:
+        entry["device"] = device
     return entry
 
 

@@ -6,6 +6,7 @@ use base64::Engine;
 use serde_json::{json, Map, Value};
 
 use super::audio::strip;
+use super::recover::session_ids;
 use super::{decode_uri, ensure_running, err, http, http_bytes, instance_url, json_body, port_open, py_round, running_instance, save};
 use crate::device::truthy;
 use crate::jobs::{Ctx, JobError, JobResult};
@@ -76,6 +77,7 @@ pub async fn run_loop(ctx: Ctx) -> JobResult {
     let model = ctx.model.clone();
     ensure_running(&ctx, &model).await?;
     ctx.update(json!({"message": "Generating loop"}));
+    let before = session_ids(&ctx.state).await; // the gateway keeps a session per loop but doesn't say which: it's the one that appears
     // Gateway music route (Tiiny SDK, Oct 2026) works on every link, the USB cable included. Foundation-1
     // still takes its native body ({prompt, config}); older firmware without the route falls back to the port.
     let gw = format!("{}/v1/music/generate/wav", ctx.state.settings.current().url);
@@ -92,6 +94,12 @@ pub async fn run_loop(ctx: Ctx) -> JobResult {
         Err(v) => return Err(JobError(err(&v))),
     };
     let out = save(&ctx, &format!("{}-loop.wav", ctx.id), &wav);
+    let after = if before.is_some() { session_ids(&ctx.state).await } else { None };
+    let new: Vec<String> = match (&before, after) {
+        (Some(before), Some(after)) => after.difference(before).cloned().collect(),
+        _ => vec![],
+    };
+    ctx.state.store.mark_seen(&new, false);
     let mut params = Map::new();
     params.insert("model".into(), json!(model));
     params.insert("prompt".into(), json!(prompt));
@@ -99,7 +107,11 @@ pub async fn run_loop(ctx: Ctx) -> JobResult {
     for k in ["bpm", "bars", "key"] {
         params.insert(k.into(), req.get(k).cloned().unwrap_or(Value::Null));
     }
-    Ok(json!({"kind": "loop", "params": params, "sources": [], "outputs": [out], "duration": config.get("seconds_total")}))
+    let mut entry = json!({"kind": "loop", "params": params, "sources": [], "outputs": [out], "duration": config.get("seconds_total")});
+    if let [sid] = new.as_slice() {
+        entry["device"] = json!({"music_session": sid});
+    }
+    Ok(entry)
 }
 
 pub async fn run_song(ctx: Ctx) -> JobResult {
@@ -267,7 +279,7 @@ async fn song_entry(ctx: &Ctx, res: &Value, config: &Map<String, Value>, sources
         outputs.push(fname.clone());
         tracks.insert(fname, json!(name));
     }
-    let (mut downloads, mut resume) = (vec![], None);
+    let (mut downloads, mut resume, mut device) = (vec![], None, None);
     let sid = res.get("session_id").filter(|s| truthy(s)).map(show);
     if let (Some(url), Some(sid)) = (&url, &sid) {
         http(ctx, "DELETE", &format!("{url}/v1/sessions/{sid}"), None, 15, false).await?;
@@ -282,6 +294,8 @@ async fn song_entry(ctx: &Ctx, res: &Value, config: &Map<String, Value>, sources
         if route == "preview" {
             resume = Some(json!({"session_id": sid})); // a preview can be continued once
         }
+        device = Some(json!({"music_session": sid})); // the session stays on the Tiiny until this entry is deleted
+        ctx.state.store.mark_seen(&[sid.clone()], false);
     }
     if req.get("resume_session").is_some_and(truthy) {
         if let Some(from) = req.get("from_entry").filter(|f| truthy(f)).and_then(Value::as_str) {
@@ -298,6 +312,9 @@ async fn song_entry(ctx: &Ctx, res: &Value, config: &Map<String, Value>, sources
         "duration": res.get("duration"), "downloads": downloads});
     if let Some(r) = resume {
         entry["resume"] = r;
+    }
+    if let Some(d) = device {
+        entry["device"] = d;
     }
     Ok(entry)
 }

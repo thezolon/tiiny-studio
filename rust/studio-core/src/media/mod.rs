@@ -8,6 +8,7 @@ mod image;
 mod mesh;
 mod music;
 mod ocr;
+pub mod recover;
 mod speech;
 mod transcribe;
 mod video;

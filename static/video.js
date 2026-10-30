@@ -6,8 +6,8 @@ TOOL_TYPES.video = "Text-to-Video";
 const VIDEO_INFO = { canvases: [{ width: 832, height: 480 }, { width: 480, height: 832 }, { width: 1344, height: 768 }, { width: 768, height: 1344 }],
   step_options: [4, 5, 6, 7, 8], default_steps: 7, fps: 24, max_keyframes: 2 };
 const LENGTHS = [[2, "2 s"], [3, "3 s"], [5, "5 s"]];
-const V = { prompt: store.get("video.prompt", ""), size: store.get("video.size", "832x480"), steps: store.get("video.steps", 0),
-  seconds: store.get("video.seconds", 2), first: null, last: null, seed: "", view: null };
+const V = { prompt: store.get("video.prompt", ""), size: store.get("video.size", "832x480"), steps: store.get("video.steps", 4),
+  seconds: store.get("video.seconds", 2), first: null, seed: "", view: null };
 
 const VideoWS = {
   mounted: false,
@@ -77,7 +77,7 @@ const VideoWS = {
         + "(2 s at 480p with 4 steps took 7 minutes). The device does nothing else meanwhile; start small."),
       el("div", { class: "field", style: "margin-top:0" }, el("div", { class: "label" }, "Prompt"), el("div", { class: "prompt-wrap" }, prompt)),
       t.keyframes ? el("div", { class: "field" }, el("div", { class: "label" }, "Start from a picture", el("span", { class: "hint" }, "optional")),
-        el("div", { class: "video-frames" }, frame("first", "First frame"), t.keyframes > 1 && V.first ? frame("last", "Last frame") : null)) : null,
+        el("div", { class: "video-frames" }, frame("first", "First frame"))) : null,
       el("div", { class: "field" }, el("div", { class: "label" }, "Size"), seg(t.canvases.map((c) => [c, sizeLabel(c)]), V.size, (v) => { V.size = v; }, "video.size")),
       el("div", { class: "field" }, el("div", { class: "label" }, "Length", el("span", { class: "hint" }, `${t.fps} fps${t.audio ? " · with sound" : ""}`)),
         seg(LENGTHS, V.seconds, (v) => { V.seconds = v; }, "video.seconds")),
@@ -93,7 +93,7 @@ const VideoWS = {
     readImage(f).then((img) => { V[which] = img; if (S.ws !== "video") setWs("video"); else this.render(); }).catch((e) => toast(e.message, "err"));
     return "video frame";
   },
-  files(files) { return this.take(V.first ? "last" : "first", files.find((x) => x.type.startsWith("image/"))); },
+  files(files) { return this.take("first", files.find((x) => x.type.startsWith("image/"))); },
   async fromImage(url) {
     const blob = await (await fetch(url)).blob();
     this.take("first", new File([blob], url.split("/").pop(), { type: blob.type }));
@@ -104,7 +104,6 @@ const VideoWS = {
     const body = { prompt: V.prompt.trim(), size: V.size, seconds: V.seconds, est: this.estimate() };
     if (V.steps) body.steps = V.steps;
     if (V.first) body.image = V.first.uri;
-    if (V.first && V.last) body.last_image = V.last.uri;
     if (/^\d+$/.test(V.seed)) body.seed = Number(V.seed);
     try {
       const j = await submitJob("video", body, `Video: ${(body.prompt || V.first?.name || "clip").slice(0, 60)}`);
@@ -148,12 +147,12 @@ const VideoWS = {
         el("button", { class: "tb danger", title: "Delete", onclick: () => this.del(e) }, icon("i-trash"))));
     stage.append(el("div", { class: "video-result" },
       el("video", { class: "video-player", src: url, controls: true, autoplay: true, loop: true, playsinline: true }),
-      p.prompt ? el("div", { class: "prompt-echo" }, p.prompt) : null,
+      p.prompt || p.recovered ? el("div", { class: "prompt-echo" }, p.prompt || "Recovered from the Tiiny") : null,
       el("div", { class: "meta-line" },
-        el("span", {}, el("b", {}, `This clip took ${fmtSec(e.seconds)} to render`)),
+        el("span", {}, el("b", {}, p.recovered ? "Saved from the Tiiny after it finished" : `This clip took ${fmtSec(e.seconds)} to render`)),
         el("span", {}, shortName(p.model || "")),
         el("span", {}, p.size), el("span", {}, `${e.duration || p.seconds} s`), el("span", {}, p.steps ? `${p.steps} steps` : "default steps"),
-        e.sources?.length ? el("span", {}, e.sources.length > 1 ? "first and last frame" : "from a picture") : null,
+        e.sources?.length ? el("span", {}, "from a picture") : null,
         p.seed != null ? el("span", {}, "seed " + p.seed) : null)));
   },
   renderStrip() {
@@ -165,8 +164,8 @@ const VideoWS = {
     $("#galBar-video").replaceChildren(galleryBar("video", shown, again));
     for (const e of shown) {
       const t = mediaThumb(e, V.view?.id === e.id, () => { V.view = { id: e.id }; this.renderStage(); this.renderStrip(); }, () => this.del(e));
-      t.title = `${e.params?.prompt || "Video"}
-Took ${fmtSec(e.seconds)} to render · ${e.params?.size || ""}, ${e.params?.steps || "default"} steps`;
+      t.title = `${e.params?.prompt || (e.params?.recovered ? "Recovered from the Tiiny" : "Video")}
+${e.params?.recovered ? "" : `Took ${fmtSec(e.seconds)} to render · `}${e.params?.size || ""}, ${e.params?.steps || "default"} steps`;
       items.push(decorateThumb("video", t, e, again));
     }
     $("#vStrip").replaceChildren(...(items.length ? items : [el("div", { class: "strip-empty" }, "Your videos will collect here.")]));
@@ -174,11 +173,10 @@ Took ${fmtSec(e.seconds)} to render · ${e.params?.size || ""}, ${e.params?.step
   },
   async reuse(e) {
     const p = e.params;
-    Object.assign(V, { prompt: p.prompt || "", size: p.size || V.size, seconds: p.seconds || V.seconds, steps: p.steps || 0, first: null, last: null });
-    for (const [i, which] of [[0, "first"], [1, "last"]]) {
-      if (!e.sources?.[i]) continue;
-      const blob = await (await fetch("/images/" + e.sources[i])).blob();
-      V[which] = await readImage(new File([blob], e.sources[i], { type: blob.type }));
+    Object.assign(V, { prompt: p.prompt || "", size: p.size || V.size, seconds: p.seconds || V.seconds, steps: p.steps || 0, first: null });
+    if (e.sources?.[0]) {
+      const blob = await (await fetch("/images/" + e.sources[0])).blob();
+      V.first = await readImage(new File([blob], e.sources[0], { type: blob.type }));
     }
     this.render();
   },
