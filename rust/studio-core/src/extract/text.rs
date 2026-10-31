@@ -116,7 +116,7 @@ pub fn decode(raw: &[u8]) -> String {
             return s.strip_prefix('\u{feff}').unwrap_or(s).to_string();
         }
     }
-    if raw.len() % 2 == 0 {
+    if raw.len().is_multiple_of(2) {
         let (be, body) = if raw.starts_with(&[0xfe, 0xff]) {
             (true, &raw[2..])
         } else if raw.starts_with(&[0xff, 0xfe]) {

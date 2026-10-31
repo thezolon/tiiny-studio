@@ -7,7 +7,7 @@ use std::time::Duration;
 use base64::Engine;
 use serde_json::{json, Map, Value};
 
-use super::{decode_uri, ensure_running, err, http, http_bytes, json_reply, make_room, multipart, put_back, py_json, py_round, save};
+use super::{decode_uri, ensure_running, err, http, http_bytes, json_reply, make_room, multipart, put_back, py_json, py_round, save, Upload};
 use crate::device::truthy;
 use crate::jobs::{Ctx, JobError, JobResult};
 
@@ -95,9 +95,9 @@ pub fn clean_alpha(data: &[u8]) -> Vec<u8> {
     if reader.next_frame(&mut px).is_err() {
         return data.to_vec();
     }
-    for p in px.chunks_exact_mut(4) {
+    for p in px.as_chunks_mut::<4>().0 {
         if p[3] < 32 {
-            p.copy_from_slice(&[255, 255, 255, 0]);
+            *p = [255, 255, 255, 0];
         }
     }
     let stride = w as usize * 4;
@@ -185,7 +185,7 @@ pub async fn run(ctx: Ctx) -> JobResult {
     ensure_running(&ctx, &model).await?;
     let url = format!("{}/v1/3d", ctx.target.url); // gateway proxy: /v1/3d/tasks -> container /v1/tasks
     // With two 3D models loaded the gateway sends an unnamed request to either one: name it on every call.
-    let mq = format!("?model={}", super::quote(&model));
+    let mq = format!("?model={}", crate::device::quote(&model));
     let (_, caps) = http(&ctx, "GET", &format!("{url}/capabilities{mq}"), None, 30, true).await?;
     let caps = caps.get("data").filter(|d| d.is_object()).cloned().unwrap_or(json!({}));
     let on = |k: &str| req.get(k).is_some_and(truthy);
@@ -252,7 +252,7 @@ pub async fn run(ctx: Ctx) -> JobResult {
             Some(a) => a.iter().filter_map(|x| x.as_str().map(String::from)).collect(),
             None => stage_inputs(stage).iter().map(|s| s.to_string()).collect(),
         };
-        let mut files: Vec<(&str, (&str, &[u8], &str))> = vec![];
+        let mut files: Vec<(&str, Upload)> = vec![];
         let mut inrefs = Map::new();
         for name in &names {
             let field = stage_field(name);
@@ -348,7 +348,7 @@ pub async fn run(ctx: Ctx) -> JobResult {
                     let mut got = (0, Err(json!("Device unreachable")));
                     for _ in 0..5 {
                         // a dropped link shouldn't lose a finished stage
-                        got = match http_bytes(&ctx, "GET", &format!("{url}/tasks/{tid}/artifacts/{}{mq}", super::quote(id)), None, 600, true).await {
+                        got = match http_bytes(&ctx, "GET", &format!("{url}/tasks/{tid}/artifacts/{}{mq}", crate::device::quote(id)), None, 600, true).await {
                             Ok(r) => r,
                             Err(e) => (0, Err(json!({"error": e.0}))),
                         };

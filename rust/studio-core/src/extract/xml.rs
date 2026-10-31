@@ -156,7 +156,7 @@ fn convert(n: Node) -> Elem {
 fn to_text(b: &[u8]) -> Option<String> {
     if b.starts_with(&[0xff, 0xfe]) || b.starts_with(&[0xfe, 0xff]) {
         let be = b[0] == 0xfe;
-        let units: Vec<u16> = b[2..].chunks_exact(2).map(|c| if be { u16::from_be_bytes([c[0], c[1]]) } else { u16::from_le_bytes([c[0], c[1]]) }).collect();
+        let units: Vec<u16> = b[2..].as_chunks::<2>().0.iter().map(|&c| if be { u16::from_be_bytes(c) } else { u16::from_le_bytes(c) }).collect();
         return String::from_utf16(&units).ok();
     }
     let b = b.strip_prefix(&[0xef, 0xbb, 0xbf][..]).unwrap_or(b);

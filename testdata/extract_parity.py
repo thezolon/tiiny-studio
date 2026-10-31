@@ -244,14 +244,14 @@ def first_diff(a, b, path="parts"):
             if d:
                 return d
     elif isinstance(a, list):
-        for i, (x, y) in enumerate(zip(a, b)):
+        for i, (x, y) in enumerate(zip(a, b, strict=False)):
             d = first_diff(x, y, f"{path}[{i}]")
             if d:
                 return d
         if len(a) != len(b):
             return f"{path}: {len(a)} items in python, {len(b)} in rust"
     elif isinstance(a, str) and a != b:
-        i = next((i for i, (x, y) in enumerate(zip(a, b)) if x != y), min(len(a), len(b)))
+        i = next((i for i, (x, y) in enumerate(zip(a, b, strict=False)) if x != y), min(len(a), len(b)))
         return f"{path} differs at char {i}: python {a[max(0, i - 15):i + 25]!r} / rust {b[max(0, i - 15):i + 25]!r}"
     elif a != b:
         return f"{path}: {a!r:.80} vs {b!r:.80}"

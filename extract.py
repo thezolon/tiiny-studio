@@ -666,7 +666,7 @@ def read_parts(name, data):
         try:
             zf = zipfile.ZipFile(io.BytesIO(data))
         except zipfile.BadZipFile:
-            raise ExtractError("This file looks damaged (not a valid document).")
+            raise ExtractError("This file looks damaged (not a valid document).") from None
         doc = Doc(zf)
         kind = ZIP_KINDS.get(ext)
         if kind is None:  # guess from the contents
@@ -678,9 +678,9 @@ def read_parts(name, data):
         try:
             kind(doc)
         except KeyError as e:
-            raise ExtractError(f"This document is missing a part it needs ({e}).")
+            raise ExtractError(f"This document is missing a part it needs ({e}).") from e
         except ET.ParseError:
-            raise ExtractError("This document's contents are damaged.")
+            raise ExtractError("This document's contents are damaged.") from None
         return doc.parts
     doc = Doc()
     if ext == "rtf" or data[:5] == b"{\\rtf":
@@ -698,7 +698,7 @@ def read_parts(name, data):
             dialect = "excel-tab" if ext == "tsv" else csv.Sniffer().sniff(text[:4096], ",;\t|")
         except csv.Error:
             dialect = "excel"
-        doc.add("table", [r for r, _ in zip(csv.reader(io.StringIO(text), dialect), range(MAX_ROWS))])
+        doc.add("table", [r for r, _ in zip(csv.reader(io.StringIO(text), dialect), range(MAX_ROWS), strict=False)])
         doc.flush("Table")
     elif ext == "json":
         text = decode(data).strip()

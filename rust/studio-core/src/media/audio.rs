@@ -187,7 +187,7 @@ fn read_fmt(c: &[u8]) -> Result<(usize, usize, u32), WavError> {
             return Err(WavError::Error(format!("unknown extended format: {a:08x}-{b:04x}-{d:04x}-{}-{}", &tail[..4], &tail[4..])));
         }
     }
-    let sampwidth = (bits + 7) / 8;
+    let sampwidth = bits.div_ceil(8);
     if sampwidth == 0 {
         return Err(err("bad sample width"));
     }
@@ -377,7 +377,7 @@ mod tests {
         assert_eq!(hex(&j[..44]), "524946466c1f000057415645666d74201000000001000200401f0000803e00000200080064617461481f0000");
         assert_eq!((hex(&j[44..48]), hex(&j[j.len() - 4..])), ("008a19a3".to_string(), "00000032".to_string()));
         let one = wav(1, 2, 16000, 3, 1);
-        assert_eq!(join_wavs(&[one.clone()]).unwrap(), one);
+        assert_eq!(join_wavs(std::slice::from_ref(&one)).unwrap(), one);
     }
 
     #[test]

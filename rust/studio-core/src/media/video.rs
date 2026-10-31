@@ -44,6 +44,7 @@ pub async fn run(ctx: Ctx) -> JobResult {
             body.insert(k.into(), json!(v));
         }
     }
+    body.entry("steps").or_insert(json!(4)); // the device's own default (7) makes a 2 s clip take ~12 minutes instead of ~7
     let mut sources = vec![];
     for (i, k) in ["image", "last_image"].iter().enumerate() {
         if s(k).is_empty() {

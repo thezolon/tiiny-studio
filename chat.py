@@ -189,9 +189,9 @@ def stream_completion(m, job, body):
         try:
             raise JobError(m.err(json.loads(e.read())))
         except ValueError:
-            raise JobError(f"The device answered {e.code}")
+            raise JobError(f"The device answered {e.code}") from None
     except (urllib.error.URLError, TimeoutError, OSError) as e:
-        raise JobError(f"Device unreachable: {e}")
+        raise JobError(f"Device unreachable: {e}") from e
     return "".join(content), "".join(reasoning), [calls[i] for i in sorted(calls)], finish
 
 

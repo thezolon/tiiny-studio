@@ -8,7 +8,7 @@ use serde_json::{json, Map, Value};
 use super::audio::strip;
 use super::recover::session_ids;
 use super::{decode_uri, ensure_running, err, http, http_bytes, instance_url, json_body, port_open, py_round, running_instance, save};
-use crate::device::truthy;
+use crate::device::{quote, truthy};
 use crate::jobs::{Ctx, JobError, JobResult};
 
 const LOOP_CONFIG: [&str; 4] = ["seconds_total", "steps", "cfg_scale", "seed"];
@@ -38,11 +38,6 @@ fn pick(req: &Value, keys: &[&str]) -> Map<String, Value> {
             Some(v) => Some((k.to_string(), v.clone())),
         })
         .collect()
-}
-
-/// urllib.parse.quote(s, safe="").
-fn quote(s: &str) -> String {
-    s.bytes().map(|b| if b.is_ascii_alphanumeric() || b"_.-~".contains(&b) { (b as char).to_string() } else { format!("%{b:02X}") }).collect()
 }
 
 /// float(v) of a request value.
@@ -295,7 +290,7 @@ async fn song_entry(ctx: &Ctx, res: &Value, config: &Map<String, Value>, sources
             resume = Some(json!({"session_id": sid})); // a preview can be continued once
         }
         device = Some(json!({"music_session": sid})); // the session stays on the Tiiny until this entry is deleted
-        ctx.state.store.mark_seen(&[sid.clone()], false);
+        ctx.state.store.mark_seen(std::slice::from_ref(sid), false);
     }
     if req.get("resume_session").is_some_and(truthy) {
         if let Some(from) = req.get("from_entry").filter(|f| truthy(f)).and_then(Value::as_str) {

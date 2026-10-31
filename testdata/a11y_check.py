@@ -66,7 +66,7 @@ def main():
             for scheme in ("dark", "light"):  # the theme tokens differ, so every state is scanned in both
                 page = browser.new_page(viewport={"width": 1280, "height": 860}, color_scheme=scheme)
 
-                def scan(state):
+                def scan(state, page=page, scheme=scheme):
                     page.wait_for_timeout(600)
                     page.add_script_tag(content=axe) if not page.evaluate("!!window.axe") else None
                     res = page.evaluate("t => axe.run(document, {runOnly: {type: 'tag', values: t}})", TAGS)

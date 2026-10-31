@@ -61,6 +61,16 @@ pub struct Ctx {
     pub(crate) parent: Option<String>,
 }
 
+/// Stamp a finished job's history entry (id, created, kind, seconds); answers the entry's kind.
+pub(crate) fn stamp(e: &mut Map<String, Value>, id: &str, kind: &str, started: f64) -> String {
+    let k = e.get("kind").and_then(Value::as_str).unwrap_or(kind).to_string();
+    e.insert("id".into(), json!(id));
+    e.insert("created".into(), json!(now() as i64));
+    e.insert("kind".into(), json!(k));
+    e.insert("seconds".into(), json!(((now() - started) * 10.0).round() / 10.0));
+    k
+}
+
 impl Ctx {
     /// `device::call` on this job's device.
     pub async fn call(&self, method: &str, path: &str, body: Option<Value>, timeout: u64) -> (u16, Value) {
@@ -357,13 +367,8 @@ async fn work(ctx: Ctx, kind: String, run: KindFn) {
             };
             match result {
                 Ok(Ok(mut entry)) => {
-                    let e = entry.as_object_mut().map(std::mem::take).unwrap_or_default();
-                    let mut e = e;
-                    let k = e.get("kind").and_then(Value::as_str).unwrap_or(&kind).to_string();
-                    e.insert("id".into(), json!(id));
-                    e.insert("created".into(), json!(now() as i64));
-                    e.insert("kind".into(), json!(k));
-                    e.insert("seconds".into(), json!(((now() - started) * 10.0).round() / 10.0));
+                    let mut e = entry.as_object_mut().map(std::mem::take).unwrap_or_default();
+                    let k = stamp(&mut e, &id, &kind, started);
                     let entry = Value::Object(e);
                     if cancel.load(Ordering::Relaxed) {
                         // stopped while the device was still working: throw the result away

@@ -17,6 +17,7 @@ use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
 
+use crate::device::quote;
 use crate::jobs::{Ctx, JobError, KindFn};
 
 pub use assist::{clean_lyrics, clean_reply};
@@ -45,10 +46,6 @@ fn short(model: &str) -> &str {
 
 // ---------- model juggling: chat tools and helpers load what they need, then put the user's models back ----------
 const LOAD_TIMEOUT: Duration = Duration::from_secs(420); // the biggest models take ~2 minutes to load
-
-fn quote(s: &str) -> String {
-    s.bytes().map(|b| if b.is_ascii_alphanumeric() || b"_.-~".contains(&b) { (b as char).to_string() } else { format!("%{b:02X}") }).collect()
-}
 
 pub async fn running_ids(ctx: &Ctx) -> Vec<String> {
     let (code, run) = ctx.call("GET", "/api/v1/models/running", None, 15).await;
@@ -242,8 +239,11 @@ pub fn json_body(v: &Value) -> Option<(Vec<u8>, String)> {
     Some((v.to_string().into_bytes(), "application/json".into()))
 }
 
+/// A file part of a multipart body: (name, data, content type).
+pub type Upload<'a> = (&'a str, &'a [u8], &'a str);
+
 /// multipart/form-data body and content type (media.py Media.multipart); files are (field, (name, data, type)).
-pub fn multipart(fields: &[(&str, String)], files: &[(&str, (&str, &[u8], &str))]) -> (Vec<u8>, String) {
+pub fn multipart(fields: &[(&str, String)], files: &[(&str, Upload)]) -> (Vec<u8>, String) {
     let b = uuid::Uuid::new_v4().simple().to_string();
     let mut body = vec![];
     for (k, v) in fields {

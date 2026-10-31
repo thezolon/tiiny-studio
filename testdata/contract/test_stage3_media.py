@@ -45,7 +45,7 @@ class Media(ContractCase):
     def files_equal(self, py, rs, key="outputs"):
         p, r = py["entry"][key], rs["entry"][key]
         self.assertEqual(len(p), len(r))
-        for a, b in zip(p, r):
+        for a, b in zip(p, r, strict=True):
             self.assertEqual(a.rsplit("-", 1)[-1], b.rsplit("-", 1)[-1])  # "-0.png", "-src0.png"
             self.assertEqual(request(self.h.py_url, "GET", "/images/" + a).body, request(self.h.rs_url, "GET", "/images/" + b).body)
 

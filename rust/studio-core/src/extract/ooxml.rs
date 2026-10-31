@@ -90,7 +90,9 @@ fn list_style_name(name: &str) -> bool {
     rest.is_some_and(|r| r.is_empty() || (r.len() == 2 && r.starts_with(' ') && r.as_bytes()[1].is_ascii_digit()))
 }
 
-fn docx_styles(doc: &mut Doc) -> R<(HashMap<Key, i64>, HashMap<Key, Option<String>>)> {
+type StyleMaps = (HashMap<Key, i64>, HashMap<Key, Option<String>>); // heading levels, list kinds
+
+fn docx_styles(doc: &mut Doc) -> R<StyleMaps> {
     let (mut heads, mut lists) = (HashMap::new(), HashMap::new());
     if !doc.has("word/styles.xml") {
         return Ok((heads, lists));

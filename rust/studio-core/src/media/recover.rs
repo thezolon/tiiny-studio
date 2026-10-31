@@ -7,9 +7,10 @@ use std::time::Duration;
 
 use serde_json::{json, Value};
 
-use super::{py_round, quote};
+use super::py_round;
 use crate::settings::Target;
-use crate::{device, jobs::now, AppState};
+use crate::device::{self, quote};
+use crate::{jobs::now, AppState};
 
 /// Songs and loops older than this are never pulled from the device.
 const MUSIC_SECONDS: f64 = 24.0 * 3600.0;

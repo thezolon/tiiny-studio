@@ -393,6 +393,11 @@ INFO_ROUTES = {"Text Generation": "/v1/capabilities", "Image-Text-to-Text": "/v1
                "Music Generation": "/v1/music/info", "Image-to-3D": "/v1/3d/capabilities", "Text-to-Video": "/v1/video/info"}
 
 
+def jobs_active(model=None):
+    """Is a job queued or running (on `model`, when given)?"""
+    return any(j["status"] in ("queued", "running") and (model is None or j["model"] == model) for j in list(JOBS.values()))
+
+
 def model_info(mid):
     """What a model reports about its options: chat (thinking, vision), voice (clone, speakers, languages), music
     (config schema and defaults), 3D (stages, params). Only a loaded model answers; info is None otherwise."""
@@ -640,14 +645,14 @@ class Handler(BaseHTTPRequestHandler):
         try:
             return max(0, int(self.headers.get("Content-Length") or 0))
         except ValueError:
-            raise BadBody("The request has a bad Content-Length.")
+            raise BadBody("The request has a bad Content-Length.") from None
 
     def read_json(self):
         """The request body as a JSON object ({} when empty); BadBody (a ValueError) when it is anything else."""
         try:
             body = json.loads(self.rfile.read(self.body_length()) or b"{}")
         except ValueError:
-            raise BadBody("The request body isn't valid JSON.")
+            raise BadBody("The request body isn't valid JSON.") from None
         if not isinstance(body, dict):
             raise BadBody("The request body must be a JSON object.")
         return body
@@ -733,7 +738,7 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_json(400, {"error": {"message": "id required"}})
         path = f"/api/v1/models/{quote(mid, safe='')}/{action}"
         if action == "stop":
-            if any(j["model"] == mid and j["status"] in ("queued", "running") for j in list(JOBS.values())):
+            if jobs_active(mid):
                 return self.send_json(409, {"error": {"message": "That model has a job running; unload after it finishes."}})
             return self.send_json(*device("POST", path, timeout=120))
         # Same call the TiinyOS app makes; it returns once the load is accepted.
@@ -777,11 +782,11 @@ class Handler(BaseHTTPRequestHandler):
             return self.model_action("stop")
         if self.path == "/api/device/shutdown":
             # Same call the TiinyOS app's "Shut down" makes; the device answers and powers off seconds later.
-            if any(j["status"] in ("queued", "running") for j in list(JOBS.values())):
+            if jobs_active():
                 return self.send_json(409, {"error": {"message": "Jobs are still running or queued; power off after they finish."}})
             return self.send_json(*device("POST", "/api/v1/sys/shutdown/", timeout=20))
         if self.path == "/api/model/unload_all":
-            if any(j["status"] in ("queued", "running") for j in list(JOBS.values())):
+            if jobs_active():
                 return self.send_json(409, {"error": {"message": "Jobs are still running or queued; unload after they finish."}})
             # Same call the TiinyOS app's "unload all" makes.
             return self.send_json(*device("POST", "/api/v1/models/unload_all", timeout=180))
@@ -821,7 +826,7 @@ class Handler(BaseHTTPRequestHandler):
         if self.path == "/api/device/recover":
             return self.send_json(200, MEDIA.recover())
         if self.path == "/api/history/delete":
-            return self.delete_entries((self.read_json().get("ids") or []))
+            return self.send_json(200, {"ok": True, "deleted": self.remove_entries(self.read_json().get("ids") or [])})
         m = re.fullmatch(r"/api/history/(\w+)/fav", self.path)
         if m:
             fav = bool(self.read_json().get("fav", True))
@@ -891,7 +896,8 @@ class Handler(BaseHTTPRequestHandler):
         msg = (res.get("error") or {}).get("message") if isinstance(res.get("error"), dict) else res.get("error")
         return self.send_json(200, {"ok": False, "message": msg or f"Unexpected response (HTTP {code})."})
 
-    def delete_entries(self, ids):
+    def remove_entries(self, ids):
+        """Delete the entries and shred their files; the Tiiny's copies go too."""
         ids, sessions = set(ids), []
         with LOCK:
             items = load_history()
@@ -903,8 +909,8 @@ class Handler(BaseHTTPRequestHandler):
                     JOBS.pop(e["id"], None)
                     SEARCH_CACHE.pop(e["id"], None)
             save_history([e for e in items if e["id"] not in ids])
-        MEDIA.delete_device_sessions(sessions)  # the Tiiny's copy goes too
-        self.send_json(200, {"ok": True, "deleted": len(ids)})
+        MEDIA.delete_device_sessions(sessions)
+        return len(ids)
 
     def export_zip(self, ids):
         """Zip the chosen results (files + an info.json of their settings), built in memory, never stored."""
@@ -941,19 +947,19 @@ class Handler(BaseHTTPRequestHandler):
             items = [e for e in load_history() if entry_text(e)]
         try:
             todo = [e for e in items if SEARCH_CACHE.get(e["id"], (None,))[0] != entry_text(e)]
-            for e, v in zip(todo, embed(model, [entry_text(e) for e in todo])):
+            for e, v in zip(todo, embed(model, [entry_text(e) for e in todo]), strict=False):
                 SEARCH_CACHE[e["id"]] = (entry_text(e), v)
             q = embed(model, [query])[0]
         except JobError as e:
             return self.send_json(502, {"error": {"message": str(e)}})
         norm = lambda v: sum(x * x for x in v) ** 0.5 or 1
         qn = norm(q)
-        scored = sorted(((sum(a * b for a, b in zip(q, SEARCH_CACHE[e["id"]][1])) / (qn * norm(SEARCH_CACHE[e["id"]][1])), e["id"]) for e in items), reverse=True)
+        scored = sorted(((sum(a * b for a, b in zip(q, SEARCH_CACHE[e["id"]][1], strict=False)) / (qn * norm(SEARCH_CACHE[e["id"]][1])), e["id"]) for e in items), reverse=True)
         self.send_json(200, {"results": [{"id": i, "score": round(s, 4)} for s, i in scored]})
 
     def wipe_everything(self):
         """Delete every result, source and saved voice (settings are kept)."""
-        if any(j["status"] in ("queued", "running") for j in list(JOBS.values())):
+        if jobs_active():
             return self.send_json(409, {"error": {"message": "Jobs are still running or queued; wipe after they finish."}})
         with LOCK:
             files = [p for p in IMAGES.iterdir() if p.is_file()]
@@ -1013,19 +1019,7 @@ class Handler(BaseHTTPRequestHandler):
         m = re.fullmatch(r"/api/history/(\w+)", self.path)
         if not m:
             return self.send_json(404, {"error": {"message": "not found"}})
-        sessions = []
-        with LOCK:
-            items = load_history()
-            keep = [e for e in items if e["id"] != m.group(1)]
-            for e in items:
-                if e["id"] == m.group(1):
-                    sessions.append((e.get("device") or {}).get("music_session"))
-                    for f in e.get("outputs", []) + e.get("sources", []) + e.get("downloads", []):
-                        shred(IMAGES / f)
-            save_history(keep)
-            SEARCH_CACHE.pop(m.group(1), None)
-            JOBS.pop(m.group(1), None)  # the finished job's in-memory copy (prompt, label) goes too
-        MEDIA.delete_device_sessions(sessions)
+        self.remove_entries([m.group(1)])
         self.send_json(200, {"ok": True})
 
 

@@ -12,7 +12,7 @@ use axum::{
 use rust_embed::RustEmbed;
 use serde_json::{json, Value};
 
-use crate::device;
+use crate::device::{self, quote};
 use crate::settings::{hostname, normalize_url};
 use crate::AppState;
 
@@ -393,11 +393,6 @@ async fn busy(State(state): State<AppState>) -> Json<Value> {
     Json(json!({"busy": state.device_lock.try_lock().is_err()}))
 }
 
-/// urllib.parse.quote(id, safe=""): everything but letters, digits and _.-~ is %-encoded.
-fn quote(id: &str) -> String {
-    id.bytes().map(|b| if b.is_ascii_alphanumeric() || b"_.-~".contains(&b) { (b as char).to_string() } else { format!("%{b:02X}") }).collect()
-}
-
 async fn model_plan(State(state): State<AppState>, Query(q): Query<std::collections::HashMap<String, String>>) -> Response {
     let mid = q.get("id").map(String::as_str).unwrap_or("");
     if mid.is_empty() {
@@ -676,8 +671,4 @@ mod tests {
         assert_eq!(code, StatusCode::BAD_REQUEST);
     }
 
-    #[test]
-    fn quoting() {
-        assert_eq!(quote("Qwen/Qwen3-8B v2"), "Qwen%2FQwen3-8B%20v2");
-    }
 }

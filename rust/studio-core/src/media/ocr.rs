@@ -4,12 +4,8 @@
 use serde_json::{json, Value};
 
 use super::{decode_uri, err, http, port_open, running_instance, short};
+use crate::device::quote;
 use crate::jobs::{Ctx, JobError, JobResult};
-
-/// urllib.parse.quote(s, safe="").
-fn quote(s: &str) -> String {
-    s.bytes().map(|b| if b.is_ascii_alphanumeric() || b"_.-~".contains(&b) { (b as char).to_string() } else { format!("%{b:02X}") }).collect()
-}
 
 pub async fn run(ctx: Ctx) -> JobResult {
     let image = ctx.req.get("image").and_then(Value::as_str).unwrap_or("").to_string();

@@ -171,12 +171,8 @@ user to load {0} from the Models panel (or turn swapping on), then ask again.", 
                 return Err(e);
             }
         };
-        let k = entry.get("kind").and_then(Value::as_str).unwrap_or(kind).to_string();
         let e = entry.as_object_mut().unwrap();
-        e.insert("id".into(), json!(sub.id));
-        e.insert("created".into(), json!(now() as i64));
-        e.insert("kind".into(), json!(k));
-        e.insert("seconds".into(), json!(((now() - started) * 10.0).round() / 10.0));
+        crate::jobs::stamp(e, &sub.id, kind, started);
         e.insert("via".into(), json!("chat"));
         if let Err(e) = ctx.state.store.add_history(entry.clone()) {
             sub.discard_saved();

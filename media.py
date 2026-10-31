@@ -186,7 +186,7 @@ class Media:
             except ValueError:
                 return e.code, {"error": data.decode("utf-8", "replace")[:500]}
         except (urllib.error.URLError, TimeoutError, OSError) as e:
-            raise JobError(f"Device unreachable: {e}")
+            raise JobError(f"Device unreachable: {e}") from e
 
     @staticmethod
     def multipart(fields, files):
@@ -210,7 +210,7 @@ class Media:
         try:
             (self.dir / name).write_bytes(data)
         except OSError as e:
-            raise JobError(f"Couldn't save the result: {reason(e)}")
+            raise JobError(f"Couldn't save the result: {reason(e)}") from e
         self.saved.append(name)
         return name
 
@@ -219,7 +219,7 @@ class Media:
         try:
             self.add_history(entry)
         except OSError as e:
-            raise JobError(f"Couldn't save the result: {reason(e)}")
+            raise JobError(f"Couldn't save the result: {reason(e)}") from e
 
     @staticmethod
     def err(res):
@@ -650,12 +650,12 @@ def to_asr_wav(audio):
     if sw == 4:
         a = array.array("h", (v >> 16 for v in a))
     if channels > 1:
-        a = array.array("h", (sum(s) // channels for s in zip(*(a[c::channels] for c in range(channels)))))
+        a = array.array("h", (sum(s) // channels for s in zip(*(a[c::channels] for c in range(channels)), strict=False)))
     if rate != 16000:
         step = rate / 16000
         if step.is_integer():  # 32/48 kHz: average each group of samples (a simple low-pass)
             k = int(step)
-            a = array.array("h", (sum(g) // k for g in zip(*(a[i::k] for i in range(k)))))
+            a = array.array("h", (sum(g) // k for g in zip(*(a[i::k] for i in range(k)), strict=False)))
         else:  # linear interpolation
             n, last = int(len(a) / step), len(a) - 1
             a = array.array("h", (int(a[int(x)] + (a[min(int(x) + 1, last)] - a[int(x)]) * (x - int(x))) for x in (i * step for i in range(n))))
@@ -994,7 +994,7 @@ def _song_entry(m, job, req, res, config, sources, route, url):
         try:
             m.edit_history(req["from_entry"], lambda e: e.pop("resume", None))
         except OSError as e:
-            raise JobError(f"Couldn't save the result: {reason(e)}")
+            raise JobError(f"Couldn't save the result: {reason(e)}") from e
     entry = {"kind": "song", "params": {"model": job["model"], "route": route, **{k: v for k, v in config.items() if k != "reference_audio_base64"}},
              "sources": sources, "outputs": outputs, "tracks": tracks, "duration": res.get("duration"), "downloads": downloads}
     if resume:
@@ -1192,7 +1192,7 @@ def run_mesh(m, job, req):
             elif use_refs and kind != "mesh_glb" and not kind.endswith("_preview"):
                 continue  # only the model itself comes to the studio
             elif art.get("artifact_id"):  # not inline (TRELLIS.2): fetch it from the task
-                for attempt in range(5):  # a dropped link shouldn't lose a finished stage
+                for _ in range(5):  # a dropped link shouldn't lose a finished stage
                     try:
                         code, data = m.http("GET", f"{url}/tasks/{tid}/artifacts/{quote(art['artifact_id'], safe='')}{mq}", timeout=600,
                                             headers=auth, raw=True)
@@ -1384,6 +1384,7 @@ def run_video(m, job, req):
     for k in ("steps", "seed"):
         if isinstance(req.get(k), int) and not isinstance(req.get(k), bool):
             body[k] = req[k]
+    body.setdefault("steps", 4)  # the device's own default (7) makes a 2 s clip take ~12 minutes instead of ~7
     sources = []
     for i, k in enumerate(("image", "last_image")):
         if req.get(k):
@@ -1419,7 +1420,7 @@ def run_video(m, job, req):
     if st != "completed":
         raise JobError(m.err(v.get("error") or st))
     job["message"] = "Downloading"
-    for attempt in range(5):  # the same: a dropped link shouldn't lose a finished clip
+    for _ in range(5):  # the same: a dropped link shouldn't lose a finished clip
         try:
             code, data = m.http("GET", f"{url}/{vid}/content", headers=auth, timeout=600, raw=True)
         except JobError as e:

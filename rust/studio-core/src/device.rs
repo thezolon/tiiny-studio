@@ -42,6 +42,11 @@ pub async fn call(state: &AppState, method: &str, path: &str, body: Option<Value
     }
 }
 
+/// urllib.parse.quote(s, safe=""): everything but letters, digits and _.-~ is %-encoded (per UTF-8 byte).
+pub(crate) fn quote(s: &str) -> String {
+    s.bytes().map(|b| if b.is_ascii_alphanumeric() || b"_.-~".contains(&b) { (b as char).to_string() } else { format!("%{b:02X}") }).collect()
+}
+
 /// Python truthiness of a JSON value (null, false, 0, "" and empty containers are false).
 pub fn truthy(v: &Value) -> bool {
     match v {
@@ -202,4 +207,18 @@ pub async fn stats(state: &AppState) -> Value {
     v.as_object_mut().unwrap().extend(out);
     *state.stats_cache.lock().unwrap_or_else(|e| e.into_inner()) = Some((Instant::now(), v.clone()));
     v
+}
+
+#[cfg(test)]
+mod tests {
+    use super::quote;
+
+    #[test]
+    fn quoting() {
+        assert_eq!(quote("Qwen/Qwen3-8B v2"), "Qwen%2FQwen3-8B%20v2");
+        assert_eq!(quote("a_b.c-d~e"), "a_b.c-d~e");
+        assert_eq!(quote("a b/c"), "a%20b%2Fc");
+        assert_eq!(quote("é日"), "%C3%A9%E6%97%A5");
+        assert_eq!(quote(""), "");
+    }
 }
