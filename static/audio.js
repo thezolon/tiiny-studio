@@ -169,7 +169,7 @@ const AudioWS = {
     return [...A.voices.map((v) => el("div", { class: "voice-card", "aria-pressed": sp.voiceId === v.id && !sp.clip && !sp.speaker, onclick: () => { sp.voiceId = v.id; sp.clip = null; sp.speaker = null; store.set("audio.voice", v.id); store.set("audio.speaker", null); this.render(); } },
         el("button", { class: "vplay", title: "Preview", onclick: (e) => { e.stopPropagation(); const a = new Audio("/images/" + v.file); if (currentAudio) currentAudio.pause(); currentAudio = a; a.play(); } }, icon("i-play")),
         el("span", { class: "vname" }, v.name),
-        el("button", { class: "vdel", title: "Delete voice", onclick: async (e) => { e.stopPropagation(); if (!confirm(`Delete voice “${v.name}”?`)) return; await api("/api/voices/" + v.id, { method: "DELETE" }); this.loadVoices(); } }, "✕"))),
+        el("button", { class: "vdel", title: "Delete voice", onclick: async (e) => { e.stopPropagation(); if (!confirm(`Delete voice “${v.name}”?`)) return; try { await api("/api/voices/" + v.id, { method: "DELETE" }); } catch (err) { toast(err.message, "err"); } this.loadVoices(); } }, "✕"))),
       el("button", { class: "voice-card add", "aria-pressed": !!sp.clip || (!A.voices.length && !sp.speaker), onclick: () => { sp.clip = sp.clip || { pending: true }; sp.speaker = null; this.render(); } }, "+ New voice")];
   },
   clipEditor() {
@@ -204,7 +204,7 @@ const AudioWS = {
       return this.takeClip(target, blob, "recording");
     }
     try {
-      A.recorder = createRecorder((lv) => { meter.style.width = Math.round(lv * 100) + "%"; });
+      A.recorder = createRecorder((lv) => { const m = document.querySelector(".capture .level"); if (m) m.style.width = Math.round(lv * 100) + "%"; });  // the render below replaces the meter
       A.recFor = target;
       await A.recorder.start();
       this.render();

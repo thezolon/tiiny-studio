@@ -164,10 +164,17 @@ async function chatSend() {
       last_image: latestImage({ messages: conv.messages.slice(0, -1) }), prefs: { size: "1024x1024" } }) });
     C.job = job.id; S.jobs.push(job); renderJobsPill();
     const t0 = Date.now();
+    let fails = 0, failFrom = 0;
     for (;;) {
       await sleep(350);
       let j;
-      try { j = await api(`/api/jobs/${job.id}`); } catch { continue; }
+      try { j = await api(`/api/jobs/${job.id}`); fails = 0; }
+      catch (e) {
+        if (e.status === 404) { reply.error = "The studio restarted and this reply was lost. Send it again."; break; }  // the job is gone for good
+        if (!fails++) failFrom = Date.now();
+        if (Date.now() - failFrom > 60000) { reply.error = "Lost contact with the studio. Check that it is running, then send it again."; break; }
+        continue;
+      }
       reply.text = j.partial?.content || reply.text;
       reply.reasoning = j.partial?.reasoning || reply.reasoning;
       reply.status = j.status === "queued" ? (j.queue_pos ? `Waiting for the device (${j.queue_pos} ahead)` : "Waiting for the device") : (j.tool_message || j.message);
