@@ -50,10 +50,46 @@ Ideas and requests are welcome as [feature requests](https://github.com/thezolon
   and voices, and the others can't see them. Chat memory would be kept per user by the studio, not on the Tiiny.
   This only separates people inside the studio: the Tiiny's own vault still keeps a copy of every chat it receives,
   from any user (see [Privacy](README.md#privacy)).
-- Desktop notifications when a long job finishes.
 - A clearer "Stopping…" message while a cancel is in progress.
 - Code-signed installers (Windows) and a notarized macOS app, then automatic updates.
 - Following TiinyOS updates: the API is snapshotted and checked for drift after each one.
+
+### Next release
+
+- **After a Tiiny restart, say why it doesn't answer:** it stays locked until the TiinyOS app has been opened once
+  ([#46](https://github.com/thezolon/tiiny-studio/issues/46)).
+- **Pick which model a tab uses** when several fit (Hunyuan3D or TRELLIS.2, the song models, voices) ([#44](https://github.com/thezolon/tiiny-studio/issues/44)).
+- **A small notice when a new version is out,** with its release notes, and a Check for updates button ([#45](https://github.com/thezolon/tiiny-studio/issues/45)).
+- Fix the broken model icon on the Video tab ([#43](https://github.com/thezolon/tiiny-studio/issues/43)), and the rest of the panels that should follow the loaded
+  model: image steps and guidance, transcription languages, loops ([#41](https://github.com/thezolon/tiiny-studio/issues/41)).
+
+### Ideas
+
+**Make more with what's already there**
+- **Longer videos by chaining clips:** each clip starts from the last frame of the one before, and the parts are
+  joined into one video, so a 10-20 s video can be made from 2 s pieces in an overnight queue.
+- **Time estimates that learn** from how long jobs really took on your Tiiny, in every tab.
+- **Batches:** one prompt with several seeds, or a small grid of prompts and styles, queued in one click.
+- **Music videos:** a song and video clips joined into one MP4 with the song as the soundtrack.
+- **Read a document aloud:** a PDF or Office file from Text mode, voiced as a long recording.
+- **Subtitles:** transcribe a clip or recording into an `.srt` file.
+
+**Queue and device**
+- **Notifications when a job or the whole queue is done** (or fails): on the desktop, and optionally on your phone.
+- **Start a queue at a set time.**
+- **Energy per job,** from the power the Tiiny reports.
+- **Install and remove models from the studio,** without the TiinyOS app.
+
+**Library**
+- **Projects and tags** instead of one long gallery per tab.
+- **The prompt and settings stored in the files themselves** (PNG text, MP3/MP4 tags), so they travel with them.
+- **Saved presets** per tab.
+
+**Let other tools use it**
+- **An MCP server,** so Claude, Cline or other agents can make images, speech, music and video on your Tiiny through
+  the studio, with its queue and model swapping.
+- **Chat with your documents,** using the Tiiny's embedding model.
+- Later: **a coding-agent tab** for the Tiiny's larger chat models.
 
 ## Known limits
 
