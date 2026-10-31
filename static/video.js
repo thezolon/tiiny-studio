@@ -5,7 +5,8 @@
 TOOL_TYPES.video = "Text-to-Video";
 const VIDEO_INFO = { canvases: [{ width: 832, height: 480 }, { width: 480, height: 832 }, { width: 1344, height: 768 }, { width: 768, height: 1344 }],
   step_options: [4, 5, 6, 7, 8], default_steps: 7, fps: 24, max_keyframes: 2 };
-const LENGTHS = [[2, "2 s"], [3, "3 s"], [5, "5 s"]];
+// MiniMax-H3-Turbo is compiled for clips up to 7 s; 8 s and longer fail at once ("no exported bucket fits", 0.1.38)
+const LENGTHS = [[2, "2 s"], [3, "3 s"], [5, "5 s"], [7, "7 s"]];
 const V = { prompt: store.get("video.prompt", ""), size: store.get("video.size", "832x480"), steps: store.get("video.steps", 4),
   seconds: store.get("video.seconds", 2), first: null, seed: "", view: null };
 
@@ -44,11 +45,12 @@ const VideoWS = {
     return { name: shortName(m?.id || "MiniMax-H3"), canvases, steps, defSteps: i.default_steps || VIDEO_INFO.default_steps,
       fps: i.fps || VIDEO_INFO.fps, keyframes: i.max_keyframes ?? VIDEO_INFO.max_keyframes, audio: !!i.audio || !i.fps };
   },
-  /** Measured on 0.1.38: 2 s at 832x480 took 435 s with 4 steps, over 15 min with 7; 5 s at 1344x768 with 4 steps took 1916 s. */
+  /** Measured on 0.1.38 (4 steps): 2 s at 832x480 435 s, 7 s at 832x480 737 s, 5 s at 1344x768 1916 s; 2 s at 832x480 with
+   *  7 steps just over 15 min. A clip costs ~5 min whatever its length, then ~1 min per second at 480p; pixels cost more
+   *  than linearly (768p is ~5x 480p per second). */
   estimate() {
     const t = this.info(), [w, h] = V.size.split("x").map(Number), steps = V.steps || t.defSteps;
-    // time grows a little less than length x pixels: (5 s at 768p is 6.5x the work of 2 s at 480p, took 4.4x as long)
-    return 75 + 360 * ((V.seconds / 2) * ((w * h) / (832 * 480))) ** 0.875 * (steps / 4) ** 1.6;
+    return (314 + 60.4 * V.seconds * ((w * h) / (832 * 480)) ** 1.75) * (steps / 4) ** 1.4;
   },
   renderFoot() {
     const m = modelForTool("video"), ready = m?.status === "running";
