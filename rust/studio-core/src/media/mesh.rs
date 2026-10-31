@@ -95,9 +95,9 @@ pub fn clean_alpha(data: &[u8]) -> Vec<u8> {
     if reader.next_frame(&mut px).is_err() {
         return data.to_vec();
     }
-    for p in px.chunks_exact_mut(4) {
+    for p in px.as_chunks_mut::<4>().0 {
         if p[3] < 32 {
-            p.copy_from_slice(&[255, 255, 255, 0]);
+            *p = [255, 255, 255, 0];
         }
     }
     let stride = w as usize * 4;

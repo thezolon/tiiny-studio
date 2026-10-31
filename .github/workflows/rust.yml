@@ -79,7 +79,7 @@ jobs:
       - name: Linux desktop libraries (WebKitGTK)
         run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec  # stable branch, 2026-10-16
-        with: { toolchain: stable, components: clippy }
+        with: { toolchain: 1.99.1, components: clippy }   # pinned: a new release brings new lints; bump on purpose
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0  # v2.9.3
         with: { workspaces: rust }
       - name: clippy (no warnings)
