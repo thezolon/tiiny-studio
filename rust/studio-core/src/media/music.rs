@@ -8,7 +8,7 @@ use serde_json::{json, Map, Value};
 use super::audio::strip;
 use super::recover::session_ids;
 use super::{decode_uri, ensure_running, err, http, http_bytes, instance_url, json_body, port_open, py_round, running_instance, save};
-use crate::device::truthy;
+use crate::device::{quote, truthy};
 use crate::jobs::{Ctx, JobError, JobResult};
 
 const LOOP_CONFIG: [&str; 4] = ["seconds_total", "steps", "cfg_scale", "seed"];
@@ -38,11 +38,6 @@ fn pick(req: &Value, keys: &[&str]) -> Map<String, Value> {
             Some(v) => Some((k.to_string(), v.clone())),
         })
         .collect()
-}
-
-/// urllib.parse.quote(s, safe="").
-fn quote(s: &str) -> String {
-    s.bytes().map(|b| if b.is_ascii_alphanumeric() || b"_.-~".contains(&b) { (b as char).to_string() } else { format!("%{b:02X}") }).collect()
 }
 
 /// float(v) of a request value.

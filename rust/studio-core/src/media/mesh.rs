@@ -185,7 +185,7 @@ pub async fn run(ctx: Ctx) -> JobResult {
     ensure_running(&ctx, &model).await?;
     let url = format!("{}/v1/3d", ctx.target.url); // gateway proxy: /v1/3d/tasks -> container /v1/tasks
     // With two 3D models loaded the gateway sends an unnamed request to either one: name it on every call.
-    let mq = format!("?model={}", super::quote(&model));
+    let mq = format!("?model={}", crate::device::quote(&model));
     let (_, caps) = http(&ctx, "GET", &format!("{url}/capabilities{mq}"), None, 30, true).await?;
     let caps = caps.get("data").filter(|d| d.is_object()).cloned().unwrap_or(json!({}));
     let on = |k: &str| req.get(k).is_some_and(truthy);
@@ -348,7 +348,7 @@ pub async fn run(ctx: Ctx) -> JobResult {
                     let mut got = (0, Err(json!("Device unreachable")));
                     for _ in 0..5 {
                         // a dropped link shouldn't lose a finished stage
-                        got = match http_bytes(&ctx, "GET", &format!("{url}/tasks/{tid}/artifacts/{}{mq}", super::quote(id)), None, 600, true).await {
+                        got = match http_bytes(&ctx, "GET", &format!("{url}/tasks/{tid}/artifacts/{}{mq}", crate::device::quote(id)), None, 600, true).await {
                             Ok(r) => r,
                             Err(e) => (0, Err(json!({"error": e.0}))),
                         };
