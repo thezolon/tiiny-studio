@@ -21,7 +21,7 @@ PATTERNS = [
     ("deception", re.compile(r"\b(?:do not|don't|never) (?:tell|inform|reveal to|mention (?:this|it) to) the user\b", re.I)),
     ("tool_request", re.compile(r"\b(?:call|use|invoke|run) the (?:create_image|edit_image|speak|make_loop|make_song)\b|<tool_call>|\"tool_calls\"|\bfunction_call\b", re.I)),
     ("secret_exfiltration", re.compile(r"\b(?:curl|wget)\b[^\n]*(?:key|token|secret|password|credential)", re.I)),
-    ("hidden_text", re.compile("[​-‏‪-‮⁠-⁤⁦-⁩﻿\U000e0000-\U000e007f]")),
+    ("hidden_text", re.compile("[\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066-\u2069\ufeff\U000e0000-\U000e007f]")),
 ]
 
 

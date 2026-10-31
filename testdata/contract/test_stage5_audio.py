@@ -429,7 +429,7 @@ class Video(Jobs):
     def test_video_from_text(self):
         py, rs = self.same_job(self.video(steps=4, seed=7, bogus=1))
         self.assertEqual(py["status"], "done", py.get("error"))
-        self.assertEqual((py["entry"]["kind"], py["entry"]["duration"], py["entry"]["sources"]), ("video", 2.0, []))
+        self.assertEqual((py["entry"]["kind"], py["entry"]["duration"], py["entry"]["sources"]), ("video", 2.3, []))  # 56 frames at 24 fps, like the real device
         self.assertEqual(py["entry"]["params"], {"model": VIDEO, "prompt": "RUST TEST a red apple rolls", "size": "832x480", "seconds": 2, "steps": 4, "seed": 7})
         self.files_equal(py, rs)
         calls = self.calls()

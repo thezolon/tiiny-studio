@@ -1,7 +1,10 @@
 """App icons from the HiDream picture: crop B (dog and painting) for 64 px and up, crop C (dog's face) for the small
 sizes, same rounded corners everywhere. Writes the Tauri icon set (icons/), the web favicon and the header logo.
-To redo: copy crop_B.png to a temp master, run `cargo tauri icon <master> -o icons` in rust/studio-desktop (delete
-icons/android and icons/ios), then `python icon-work/make_icons.py`."""
+Both crops are cut from source.webp here (identical to the hand-made crops they replace).
+To redo: `python icon-work/make_icons.py --master <file.png>` saves crop B as a 1024 px master; run
+`cargo tauri icon <file.png> -o icons` in rust/studio-desktop (delete icons/android and icons/ios), then
+`python icon-work/make_icons.py`."""
+import sys
 from pathlib import Path
 
 from PIL import Image, ImageDraw
@@ -20,8 +23,12 @@ def rounded(im, size):
     return im
 
 
-B = Image.open(W / "crop_B.png")
-C = Image.open(W / "crop_C.png")
+SOURCE = Image.open(W / "source.webp").convert("RGB")
+B = SOURCE.crop((300, 60, 1020, 780)).resize((1024, 1024), Image.LANCZOS)  # dog and painting
+C = SOURCE.crop((540, 110, 870, 440)).resize((1024, 1024), Image.LANCZOS)  # dog's face
+if sys.argv[1:2] == ["--master"]:
+    B.save(sys.argv[2])
+    sys.exit()
 pick = lambda s: rounded(C if s <= SMALL_MAX else B, s)
 
 # PNGs Tauri bundles (Linux/AppImage use these; Windows Store sizes too)

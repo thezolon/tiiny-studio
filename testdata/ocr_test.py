@@ -1,4 +1,5 @@
-"""Load every installed OCR (Image-to-Text) model and read ocr-test.png with each through the studio.
+"""Load every installed OCR (Image-to-Text) model and read ocr-test.png with each through the studio. Reads are
+ephemeral (nothing is saved to the gallery); models this script loaded are unloaded at the end.
 Usage: python ocr_test.py [STUDIO_URL]"""
 import base64
 import difflib
@@ -26,13 +27,13 @@ def call(path, body=None):
         return json.loads(e.read())
 
 
-ocr = [m for m in call("/api/catalog")["models"] if m["type"] == "Image-to-Text"]
+ocr = [m for m in call("/api/catalog")["models"] if m["type"] == "Image-to-Text" and "DocLayout" not in m["id"]]  # layout only, no text
 print("OCR models:", [(m["id"], m["status"], f"{m.get('npu_usage')}% NPU") for m in ocr])
-for m in ocr:
-    if m["status"] != "running":
-        call("/api/model/launch", {"id": m["id"]})
+loaded = [m["id"] for m in ocr if m["status"] != "running"]
+for mid in loaded:
+    call("/api/model/launch", {"id": mid})
 for _ in range(60):
-    st = {m["id"]: m["status"] for m in call("/api/catalog")["models"] if m["type"] == "Image-to-Text"}
+    st = {m["id"]: m["status"] for m in call("/api/catalog")["models"] if m["id"] in {o["id"] for o in ocr}}
     if all(v == "running" for v in st.values()):
         break
     time.sleep(3)
@@ -52,5 +53,6 @@ for m in ocr:
     score = difflib.SequenceMatcher(None, norm(EXPECTED), norm(text)).ratio()
     print(f"\n=== {m['id']}: {j['status']} in {time.time() - t0:.1f}s | {len(e.get('lines', []))} lines | match {score:.1%} {j.get('error') or ''}")
     print(text)
-    in_history = any(x["id"] == job["id"] for x in call("/api/history"))
-    print(f"(saved to gallery: {in_history})")
+for mid in loaded:
+    call("/api/model/stop", {"id": mid})
+print("unloaded:", loaded)

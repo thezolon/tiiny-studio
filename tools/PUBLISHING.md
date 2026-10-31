@@ -22,7 +22,9 @@ installers are **unsigned** (see ROADMAP.md).
 **Started by a tag (`v*`)** everything runs: the Docker image is pushed and the release is created.
 **Started by hand** (`workflow_dispatch`) it's a dry run: the installers are kept as workflow artifacts on the
 run's page, the Docker image is built but **not pushed**, and **no release** is created. `rust.yml` (tests on
-Windows/macOS/Linux, contract tests, document parity) runs on every push that touches the code.
+Windows/macOS/Linux, contract tests, document parity) runs on pull requests and on `main` when they touch the code. The release
+workflow's first job checks that the tag, `VERSION`, `rust/Cargo.toml` and `tauri.conf.json` agree; nothing else runs
+if they don't.
 
 ## 1. Private push and dry run (no tag, nothing public)
 
@@ -70,6 +72,8 @@ gh run watch
 
 ## Later releases
 
-After a TiinyOS update, `python tools/api_snapshot.py --check` and the live tests first. Bump `VERSION` and
-`tauri.conf.json`, add a `## <version>` section to `CHANGELOG.md`, update ROADMAP.md, commit,
-`git tag -a v<version> -m …`, `git push origin main v<version>`.
+After a TiinyOS update, `python tools/api_snapshot.py --check` and the live tests first. `main` only changes through
+pull requests, so a release is one too: on a `release-<version>` branch bump `VERSION`, `rust/Cargo.toml` and
+`tauri.conf.json`, turn `## Unreleased` in `CHANGELOG.md` into `## <version>`, update README and ROADMAP.md, open the
+PR and merge it once CI is green. Then tag the merged commit and push only the tag:
+`git checkout main && git pull`, `git tag -a v<version> -m "Tiiny Studio <version>"`, `git push origin v<version>`.
