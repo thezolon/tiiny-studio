@@ -44,10 +44,11 @@ const VideoWS = {
     return { name: shortName(m?.id || "MiniMax-H3"), canvases, steps, defSteps: i.default_steps || VIDEO_INFO.default_steps,
       fps: i.fps || VIDEO_INFO.fps, keyframes: i.max_keyframes ?? VIDEO_INFO.max_keyframes, audio: !!i.audio || !i.fps };
   },
-  /** Measured on 0.1.38, 2 s at 832x480: 4 steps 435 s, 7 steps over 15 min (more than linear); bigger canvases scale it. */
+  /** Measured on 0.1.38: 2 s at 832x480 took 435 s with 4 steps, over 15 min with 7; 5 s at 1344x768 with 4 steps took 1916 s. */
   estimate() {
     const t = this.info(), [w, h] = V.size.split("x").map(Number), steps = V.steps || t.defSteps;
-    return 75 + 360 * (V.seconds / 2) * (steps / 4) ** 1.6 * ((w * h) / (832 * 480));
+    // time grows a little less than length x pixels: (5 s at 768p is 6.5x the work of 2 s at 480p, took 4.4x as long)
+    return 75 + 360 * ((V.seconds / 2) * ((w * h) / (832 * 480))) ** 0.875 * (steps / 4) ** 1.6;
   },
   renderFoot() {
     const m = modelForTool("video"), ready = m?.status === "running";
