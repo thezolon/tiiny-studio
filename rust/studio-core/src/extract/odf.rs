@@ -50,7 +50,10 @@ fn list_styles(doc: &mut Doc) -> R<Styles> {
             for ls in doc.xml(name)?.iter(Some(text!("list-style"))) {
                 let mut levels = HashMap::new();
                 for l in &ls.kids {
-                    levels.insert(int(l.get(text!("level")), "1")? - 1, l.tag == text!("list-level-style-number"));
+                    levels.insert(
+                        int(l.get(text!("level")), "1")? - 1,
+                        l.tag == text!("list-level-style-number"),
+                    );
                 }
                 out.insert(ls.get(style!("name")).map(str::to_string), levels);
             }
@@ -66,7 +69,14 @@ fn images(doc: &mut Doc, el: &Elem, label: &str) -> R<()> {
     Ok(())
 }
 
-fn walk(doc: &mut Doc, items: &[&Elem], label: &str, styles: &Styles, depth: i64, style: Option<&str>) -> R<()> {
+fn walk(
+    doc: &mut Doc,
+    items: &[&Elem],
+    label: &str,
+    styles: &Styles,
+    depth: i64,
+    style: Option<&str>,
+) -> R<()> {
     for c in items {
         let t = c.tag.as_str();
         let kids: Vec<&Elem> = c.kids.iter().collect();
@@ -78,13 +88,24 @@ fn walk(doc: &mut Doc, items: &[&Elem], label: &str, styles: &Styles, depth: i64
             doc.add(Block::P(inline(c)?));
             images(doc, c, label)?;
         } else if t == text!("list") {
-            let st = c.get(text!("style-name")).filter(|s| !s.is_empty()).or(style);
+            let st = c
+                .get(text!("style-name"))
+                .filter(|s| !s.is_empty())
+                .or(style);
             walk(doc, &kids, label, styles, depth + 1, st)?;
         } else if t == text!("list-item") || t == text!("list-header") {
             for item in &c.kids {
                 if item.tag == text!("p") || item.tag == text!("h") {
-                    let ordered = styles.get(&style.map(str::to_string)).and_then(|m| m.get(&depth.max(0))).copied().unwrap_or(false);
-                    doc.add(Block::Li(depth.max(0), ordered, strip(&inline(item)?).to_string()));
+                    let ordered = styles
+                        .get(&style.map(str::to_string))
+                        .and_then(|m| m.get(&depth.max(0)))
+                        .copied()
+                        .unwrap_or(false);
+                    doc.add(Block::Li(
+                        depth.max(0),
+                        ordered,
+                        strip(&inline(item)?).to_string(),
+                    ));
                     images(doc, item, label)?;
                 } else {
                     walk(doc, &[item], label, styles, depth, style)?;
@@ -94,7 +115,9 @@ fn walk(doc: &mut Doc, items: &[&Elem], label: &str, styles: &Styles, depth: i64
             let mut rows = vec![];
             for row in c.iter(Some(table!("table-row"))) {
                 let mut cells = vec![];
-                for cell in row.kids.iter().filter(|k| k.tag == table!("table-cell") || k.tag == table!("covered-table-cell")) {
+                for cell in row.kids.iter().filter(|k| {
+                    k.tag == table!("table-cell") || k.tag == table!("covered-table-cell")
+                }) {
                     cells.push(paragraphs(cell, true)?);
                 }
                 rows.push(cells);
@@ -103,7 +126,14 @@ fn walk(doc: &mut Doc, items: &[&Elem], label: &str, styles: &Styles, depth: i64
             images(doc, c, label)?;
         } else if t == draw!("frame") || t == draw!("image") {
             if c.desc(draw!("text-box")).is_some() {
-                walk(doc, &c.iter(Some(draw!("text-box"))), label, styles, depth, style)?;
+                walk(
+                    doc,
+                    &c.iter(Some(draw!("text-box"))),
+                    label,
+                    styles,
+                    depth,
+                    style,
+                )?;
             }
             images(doc, c, label)?;
         } else {
@@ -115,7 +145,9 @@ fn walk(doc: &mut Doc, items: &[&Elem], label: &str, styles: &Styles, depth: i64
 
 pub fn odf(doc: &mut Doc) -> R<()> {
     let content = doc.xml("content.xml")?;
-    let Some(body) = content.child(office!("body")) else { return Ok(()) };
+    let Some(body) = content.child(office!("body")) else {
+        return Ok(());
+    };
     let styles = list_styles(doc)?;
     if let Some(pres_) = body.child(office!("presentation")) {
         for (i, page) in pres_.iter(Some(draw!("page"))).into_iter().enumerate() {
@@ -125,7 +157,14 @@ pub fn odf(doc: &mut Doc) -> R<()> {
                     Some("title") => doc.add(Block::H(1, paragraphs(frame, true)?)),
                     Some("outline") => {
                         for b in frame.iter(Some(draw!("text-box"))) {
-                            walk(doc, &b.kids.iter().collect::<Vec<_>>(), &label, &styles, -1, None)?;
+                            walk(
+                                doc,
+                                &b.kids.iter().collect::<Vec<_>>(),
+                                &label,
+                                &styles,
+                                -1,
+                                None,
+                            )?;
                         }
                     }
                     _ => walk(doc, &[frame], &label, &styles, -1, None)?,
@@ -138,9 +177,12 @@ pub fn odf(doc: &mut Doc) -> R<()> {
             let mut rows: Vec<Vec<String>> = vec![];
             for row in t.iter(Some(table!("table-row"))) {
                 let mut cells: Vec<String> = vec![];
-                for c in row.kids.iter().filter(|k| k.tag == table!("table-cell") || k.tag == table!("covered-table-cell")) {
+                for c in row.kids.iter().filter(|k| {
+                    k.tag == table!("table-cell") || k.tag == table!("covered-table-cell")
+                }) {
                     let val = paragraphs(c, false)?;
-                    let n = int(c.get(table!("number-columns-repeated")), "1")?.min(if val.is_empty() { 1 } else { 50 });
+                    let n = int(c.get(table!("number-columns-repeated")), "1")?
+                        .min(if val.is_empty() { 1 } else { 50 });
                     for _ in 0..n.max(0) {
                         cells.push(val.clone());
                     }
@@ -158,10 +200,21 @@ pub fn odf(doc: &mut Doc) -> R<()> {
             if !rows.is_empty() {
                 doc.add(Block::Table(rows));
             }
-            doc.flush(t.get(table!("name")).filter(|n| !n.is_empty()).unwrap_or("Sheet"));
+            doc.flush(
+                t.get(table!("name"))
+                    .filter(|n| !n.is_empty())
+                    .unwrap_or("Sheet"),
+            );
         }
     } else {
-        walk(doc, &body.kids.iter().collect::<Vec<_>>(), "Document", &styles, -1, None)?;
+        walk(
+            doc,
+            &body.kids.iter().collect::<Vec<_>>(),
+            "Document",
+            &styles,
+            -1,
+            None,
+        )?;
         doc.flush("Document");
     }
     Ok(())

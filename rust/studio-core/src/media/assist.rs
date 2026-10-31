@@ -37,15 +37,23 @@ pub fn clean_reply(text: &str) -> String {
     let text = think.replace_all(text, "").trim().to_string();
     let fence = Regex::new(r"^```\w*\n?|\n?```$").unwrap();
     let text = fence.replace_all(&text, "").trim().to_string();
-    text.trim_matches(|c| c == '"' || c == '“' || c == '”').trim().to_string()
+    text.trim_matches(|c| c == '"' || c == '“' || c == '”')
+        .trim()
+        .to_string()
 }
 
 /// Normalise section tags to [verse]/[chorus]/[bridge] lines; error when there are no sections at all.
 pub fn clean_lyrics(text: &str) -> Result<String, JobError> {
-    let tag_re = Regex::new(r"(?i)^\[?\s*(verse|chorus|bridge|intro|outro|pre-chorus|hook)(?:\s*\d+)?\s*\]?\s*:?$").unwrap();
+    let tag_re = Regex::new(
+        r"(?i)^\[?\s*(verse|chorus|bridge|intro|outro|pre-chorus|hook)(?:\s*\d+)?\s*\]?\s*:?$",
+    )
+    .unwrap();
     let mut out: Vec<String> = vec![];
     for line in clean_reply(text).lines() {
-        let line = line.trim().trim_matches(|c| c == '*' || c == '_' || c == '#').trim();
+        let line = line
+            .trim()
+            .trim_matches(|c| c == '*' || c == '_' || c == '#')
+            .trim();
         if let Some(m) = tag_re.captures(line) {
             let t = m[1].to_lowercase();
             let tag = match t.as_str() {
@@ -63,7 +71,9 @@ pub fn clean_lyrics(text: &str) -> Result<String, JobError> {
     }
     let text = out.join("\n");
     if !Regex::new(r"\[(verse|chorus)\]").unwrap().is_match(&text) {
-        return Err(JobError("The model didn't return lyrics with [verse]/[chorus] sections. Try again.".into()));
+        return Err(JobError(
+            "The model didn't return lyrics with [verse]/[chorus] sections. Try again.".into(),
+        ));
     }
     // drop empty intro/outro tags (Python: \[(intro|outro)\]\n(?=\n|$))
     let mut cleaned = text.clone();
@@ -86,7 +96,9 @@ pub fn clean_lyrics(text: &str) -> Result<String, JobError> {
 }
 
 fn safe_name(s: &str) -> bool {
-    !s.is_empty() && s.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '.' || c == '-')
+    !s.is_empty()
+        && s.chars()
+            .all(|c| c.is_alphanumeric() || c == '_' || c == '.' || c == '-')
 }
 
 pub async fn run(ctx: Ctx) -> JobResult {
@@ -100,9 +112,18 @@ pub async fn run(ctx: Ctx) -> JobResult {
         };
         return Err(JobError(format!("unknown helper {shown}")));
     };
-    let text = req.get("text").and_then(Value::as_str).unwrap_or("").trim().to_string();
+    let text = req
+        .get("text")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim()
+        .to_string();
     let user: Value = if task == "describe" {
-        let uri = match req.get("file").and_then(Value::as_str).filter(|f| !f.is_empty()) {
+        let uri = match req
+            .get("file")
+            .and_then(Value::as_str)
+            .filter(|f| !f.is_empty())
+        {
             Some(name) => {
                 let path = ctx.state.store.images.join(name);
                 if !safe_name(name) || !path.is_file() {
@@ -110,7 +131,11 @@ pub async fn run(ctx: Ctx) -> JobResult {
                 }
                 let ext = name.rsplit('.').next().unwrap_or("").to_lowercase();
                 let bytes = std::fs::read(&path).map_err(|e| JobError(e.to_string()))?;
-                format!("data:image/{};base64,{}", if ext == "jpg" { "jpeg" } else { &ext }, base64::engine::general_purpose::STANDARD.encode(bytes))
+                format!(
+                    "data:image/{};base64,{}",
+                    if ext == "jpg" { "jpeg" } else { &ext },
+                    base64::engine::general_purpose::STANDARD.encode(bytes)
+                )
             }
             None => {
                 let image = req.get("image").and_then(Value::as_str).unwrap_or("");
@@ -118,12 +143,22 @@ pub async fn run(ctx: Ctx) -> JobResult {
                 image.to_string()
             }
         };
-        let t = if text.is_empty() { "Describe this image." } else { &text };
+        let t = if text.is_empty() {
+            "Describe this image."
+        } else {
+            &text
+        };
         json!([{"type": "text", "text": t}, {"type": "image_url", "image_url": {"url": uri}}])
     } else if text.is_empty() {
-        return Err(JobError("Nothing to work from: type something first".into()));
+        return Err(JobError(
+            "Nothing to work from: type something first".into(),
+        ));
     } else {
-        match req.get("context").and_then(Value::as_str).filter(|c| !c.is_empty()) {
+        match req
+            .get("context")
+            .and_then(Value::as_str)
+            .filter(|c| !c.is_empty())
+        {
             Some(c) => json!(format!("{}\n\n{text}", c.trim())),
             None => json!(text),
         }
@@ -131,7 +166,14 @@ pub async fn run(ctx: Ctx) -> JobResult {
     let model = ctx.model.clone();
     // With swapping allowed for this section, load the helper's model (making room) and put things back after;
     // otherwise just check it's loaded, for a clear "isn't loaded" error instead of a gateway 4xx.
-    let unloaded = if ctx.state.settings.swap_allowed(if matches!(task, "lyrics" | "tags") { "audio" } else { "image" }) {
+    let unloaded = if ctx
+        .state
+        .settings
+        .swap_allowed(if matches!(task, "lyrics" | "tags") {
+            "audio"
+        } else {
+            "image"
+        }) {
         make_room(&ctx, &model).await?
     } else {
         ensure_running(&ctx, &model).await?;
@@ -144,7 +186,15 @@ pub async fn run(ctx: Ctx) -> JobResult {
     Ok(entry)
 }
 
-async fn call(ctx: &Ctx, task: &str, model: &str, prompt: &str, tokens: u64, message: &str, user: Value) -> JobResult {
+async fn call(
+    ctx: &Ctx,
+    task: &str,
+    model: &str,
+    prompt: &str,
+    tokens: u64,
+    message: &str,
+    user: Value,
+) -> JobResult {
     let mut body = json!({"model": model, "messages": [{"role": "system", "content": prompt}, {"role": "user", "content": user}],
         "max_tokens": tokens, "temperature": if task == "lyrics" { 0.8 } else { 0.6 }, "stream": false});
     let mode = super::thinking_mode(model, super::thinking_of(ctx, model).await.as_ref());
@@ -156,20 +206,40 @@ async fn call(ctx: &Ctx, task: &str, model: &str, prompt: &str, tokens: u64, mes
         body["chat_template_kwargs"] = json!({"enable_thinking": false});
     }
     ctx.update(json!({"message": message}));
-    let (code, res) = ctx.call("POST", "/v1/chat/completions", Some(body), 600).await;
-    if code != 200 || res.get("choices").and_then(Value::as_array).is_none_or(|c| c.is_empty()) {
+    let (code, res) = ctx
+        .call("POST", "/v1/chat/completions", Some(body), 600)
+        .await;
+    if code != 200
+        || res
+            .get("choices")
+            .and_then(Value::as_array)
+            .is_none_or(|c| c.is_empty())
+    {
         return Err(JobError(err(&res)));
     }
-    let reply = res.pointer("/choices/0/message/content").and_then(Value::as_str).unwrap_or("");
-    let mut out = if task == "lyrics" { clean_lyrics(reply)? } else { clean_reply(reply) };
+    let reply = res
+        .pointer("/choices/0/message/content")
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    let mut out = if task == "lyrics" {
+        clean_lyrics(reply)?
+    } else {
+        clean_reply(reply)
+    };
     if task == "tags" {
-        out = Regex::new(r"\s*\n\s*").unwrap().replace_all(&out, ", ").trim_matches(|c| c == ',' || c == ' ').to_string();
+        out = Regex::new(r"\s*\n\s*")
+            .unwrap()
+            .replace_all(&out, ", ")
+            .trim_matches(|c| c == ',' || c == ' ')
+            .to_string();
     }
     if out.is_empty() {
         return Err(JobError("The model returned nothing. Try again.".into()));
     }
-    Ok(json!({"kind": "assist", "params": {"model": model, "task": task}, "sources": [], "outputs": [], "text": out,
-              "usage": res.get("usage").cloned().unwrap_or(Value::Null)}))
+    Ok(
+        json!({"kind": "assist", "params": {"model": model, "task": task}, "sources": [], "outputs": [], "text": out,
+              "usage": res.get("usage").cloned().unwrap_or(Value::Null)}),
+    )
 }
 
 #[cfg(test)]
@@ -178,7 +248,10 @@ mod tests {
 
     #[test]
     fn replies() {
-        assert_eq!(clean_reply("<think>hmm</think>\n```text\n\"A fox\"\n```"), "A fox");
+        assert_eq!(
+            clean_reply("<think>hmm</think>\n```text\n\"A fox\"\n```"),
+            "A fox"
+        );
         assert_eq!(clean_reply("“quoted”"), "quoted");
     }
 
@@ -186,7 +259,10 @@ mod tests {
     fn lyrics() {
         let raw = "**Verse 1:**\nline one\nline two\n\n## Chorus\nsing it\n[Intro]\n\n[Hook]\nhey";
         // same as Python: the dropped empty [intro] leaves its blank line behind
-        assert_eq!(clean_lyrics(raw).unwrap(), "[verse]\nline one\nline two\n\n[chorus]\nsing it\n\n\n[chorus]\nhey");
+        assert_eq!(
+            clean_lyrics(raw).unwrap(),
+            "[verse]\nline one\nline two\n\n[chorus]\nsing it\n\n\n[chorus]\nhey"
+        );
         assert!(clean_lyrics("no sections here").is_err());
     }
 }

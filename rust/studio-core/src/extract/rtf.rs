@@ -26,7 +26,10 @@ impl Out {
         match (self.high, u) {
             (Some(h), 0xdc00..=0xdfff) => {
                 self.high = None;
-                self.s.push(char::from_u32(0x10000 + (((h as u32) - 0xd800) << 10) + (u as u32 - 0xdc00)).unwrap_or('\u{fffd}'));
+                self.s.push(
+                    char::from_u32(0x10000 + (((h as u32) - 0xd800) << 10) + (u as u32 - 0xdc00))
+                        .unwrap_or('\u{fffd}'),
+                );
             }
             (_, 0xd800..=0xdbff) => {
                 self.flush_high();
@@ -54,8 +57,13 @@ fn decode_byte(codepage: &str, b: u8) -> char {
         _ => codepage.to_string(),
     };
     let one = encoding_rs::Encoding::for_label(label.as_bytes())
-        .filter(|e| *e != encoding_rs::UTF_8 && *e != encoding_rs::UTF_16LE && *e != encoding_rs::UTF_16BE)
-        .and_then(|e| e.decode_without_bom_handling_and_without_replacement(&[b]).map(|c| c.into_owned()));
+        .filter(|e| {
+            *e != encoding_rs::UTF_8 && *e != encoding_rs::UTF_16LE && *e != encoding_rs::UTF_16BE
+        })
+        .and_then(|e| {
+            e.decode_without_bom_handling_and_without_replacement(&[b])
+                .map(|c| c.into_owned())
+        });
     if let Some(s) = one {
         let mut it = s.chars();
         if let (Some(c), None) = (it.next(), it.next()) {
@@ -66,8 +74,20 @@ fn decode_byte(codepage: &str, b: u8) -> char {
 }
 
 const DESTINATIONS: [&str; 14] = [
-    "fonttbl", "colortbl", "stylesheet", "info", "pict", "header", "footer", "object", "themedata", "datastore", "listtable",
-    "listoverridetable", "rsidtbl", "generator",
+    "fonttbl",
+    "colortbl",
+    "stylesheet",
+    "info",
+    "pict",
+    "header",
+    "footer",
+    "object",
+    "themedata",
+    "datastore",
+    "listtable",
+    "listoverridetable",
+    "rsidtbl",
+    "generator",
 ];
 
 pub fn rtf_text(raw: &[u8]) -> String {
@@ -82,13 +102,21 @@ pub fn rtf_text(raw: &[u8]) -> String {
         let c = b[i];
         if c == b'\\' {
             let q = i + 1;
-            let letters = b[q.min(n)..].iter().take(32).take_while(|c| c.is_ascii_alphabetic()).count();
+            let letters = b[q.min(n)..]
+                .iter()
+                .take(32)
+                .take_while(|c| c.is_ascii_alphabetic())
+                .count();
             if letters > 0 {
                 // \word, optional number, one optional trailing space
                 let word = String::from_utf8_lossy(&b[q..q + letters]).to_lowercase();
                 let mut j = q + letters;
                 let a = j + (b.get(j) == Some(&b'-')) as usize;
-                let digits = b[a.min(n)..].iter().take(10).take_while(|c| c.is_ascii_digit()).count();
+                let digits = b[a.min(n)..]
+                    .iter()
+                    .take(10)
+                    .take_while(|c| c.is_ascii_digit())
+                    .count();
                 let arg: Option<&str> = (digits > 0).then(|| {
                     let s = std::str::from_utf8(&b[j..a + digits]).unwrap();
                     j = a + digits;
@@ -115,7 +143,8 @@ pub fn rtf_text(raw: &[u8]) -> String {
                     pending_skip = uc;
                 }
             } else if b.get(q) == Some(&b'\'') && hex(q + 1) && hex(q + 2) {
-                let byte = u8::from_str_radix(std::str::from_utf8(&b[q + 1..q + 3]).unwrap(), 16).unwrap();
+                let byte =
+                    u8::from_str_radix(std::str::from_utf8(&b[q + 1..q + 3]).unwrap(), 16).unwrap();
                 i = q + 3;
                 if pending_skip != 0 {
                     pending_skip -= 1;
@@ -147,7 +176,10 @@ pub fn rtf_text(raw: &[u8]) -> String {
                 i += 1;
             }
         } else {
-            let end = b[i..].iter().position(|c| matches!(c, b'\\' | b'{' | b'}' | b'\r' | b'\n')).map_or(n, |p| i + p);
+            let end = b[i..]
+                .iter()
+                .position(|c| matches!(c, b'\\' | b'{' | b'}' | b'\r' | b'\n'))
+                .map_or(n, |p| i + p);
             let mut plain = &b[i..end];
             i = end;
             if !skip {
@@ -193,7 +225,10 @@ mod tests {
     #[test]
     fn decodes_hex_unicode_and_paragraphs() {
         let rtf = br"{\rtf1\ansi\ansicpg1252{\fonttbl{\f0 Arial;}}\f0 Caf\'e9 costs 4\u8364? today.\par\tab Next\~line}";
-        assert_eq!(rtf_text(rtf), "Caf\u{e9} costs 4\u{20ac} today.\n\tNext\u{a0}line");
+        assert_eq!(
+            rtf_text(rtf),
+            "Caf\u{e9} costs 4\u{20ac} today.\n\tNext\u{a0}line"
+        );
     }
 
     #[test]

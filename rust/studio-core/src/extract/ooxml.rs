@@ -12,7 +12,10 @@ pub struct Rels(Vec<(Option<String>, String)>);
 
 impl Rels {
     fn get(&self, id: &str) -> Option<&str> {
-        self.0.iter().find(|(k, _)| k.as_deref() == Some(id)).map(|(_, v)| v.as_str())
+        self.0
+            .iter()
+            .find(|(k, _)| k.as_deref() == Some(id))
+            .map(|(_, v)| v.as_str())
     }
 
     fn insert(&mut self, id: Option<String>, target: String) {
@@ -33,7 +36,10 @@ fn rels(doc: &mut Doc, part: &str) -> R<Rels> {
     }
     for e in doc.xml(&path)?.iter(Some(rel!("Relationship"))) {
         if e.get("TargetMode") != Some("External") {
-            out.insert(e.get("Id").map(str::to_string), normpath(&join(&d, e.get("Target").unwrap_or(""))));
+            out.insert(
+                e.get("Id").map(str::to_string),
+                normpath(&join(&d, e.get("Target").unwrap_or(""))),
+            );
         }
     }
     Ok(out)
@@ -51,7 +57,10 @@ fn runs(el: &Elem, pics: &mut Vec<String>) -> String {
         } else if t == w!("br") || t == w!("cr") || t == a!("br") {
             out.push('\n');
         } else if t == a!("blip") || t == v!("imagedata") {
-            let rid = node.get(r!("embed")).filter(|s| !s.is_empty()).or(node.get(r!("id")));
+            let rid = node
+                .get(r!("embed"))
+                .filter(|s| !s.is_empty())
+                .or(node.get(r!("id")));
             if let Some(rid) = rid.filter(|s| !s.is_empty()) {
                 pics.push(rid.to_string());
             }
@@ -86,8 +95,12 @@ struct Styles {
 
 /// `re.fullmatch(r"list (bullet|number)( \d)?", name)`
 fn list_style_name(name: &str) -> bool {
-    let rest = name.strip_prefix("list bullet").or_else(|| name.strip_prefix("list number"));
-    rest.is_some_and(|r| r.is_empty() || (r.len() == 2 && r.starts_with(' ') && r.as_bytes()[1].is_ascii_digit()))
+    let rest = name
+        .strip_prefix("list bullet")
+        .or_else(|| name.strip_prefix("list number"));
+    rest.is_some_and(|r| {
+        r.is_empty() || (r.len() == 2 && r.starts_with(' ') && r.as_bytes()[1].is_ascii_digit())
+    })
 }
 
 type StyleMaps = (HashMap<Key, i64>, HashMap<Key, Option<String>>); // heading levels, list kinds
@@ -100,11 +113,16 @@ fn docx_styles(doc: &mut Doc) -> R<StyleMaps> {
     for st in doc.xml("word/styles.xml")?.iter(Some(w!("style"))) {
         let sid = st.get(w!("styleId")).map(str::to_string);
         let name = match st.child(w!("name")) {
-            Some(n) => n.get(w!("val")).ok_or(Fail::Other("AttributeError"))?.to_lowercase(),
+            Some(n) => n
+                .get(w!("val"))
+                .ok_or(Fail::Other("AttributeError"))?
+                .to_lowercase(),
             None => String::new(),
         };
         let lvl = st.path(&[w!("pPr"), w!("outlineLvl")]);
-        let level = name.strip_prefix("heading ").filter(|d| d.len() == 1 && d.as_bytes()[0].is_ascii_digit());
+        let level = name
+            .strip_prefix("heading ")
+            .filter(|d| d.len() == 1 && d.as_bytes()[0].is_ascii_digit());
         if let Some(d) = level {
             heads.insert(sid.clone(), d.parse::<i64>().unwrap());
         } else if name == "title" {
@@ -118,7 +136,17 @@ fn docx_styles(doc: &mut Doc) -> R<StyleMaps> {
         if let Some(num) = st.path(&[w!("pPr"), w!("numPr"), w!("numId")]) {
             lists.insert(sid, num.get(w!("val")).map(str::to_string));
         } else if list_style_name(&name) {
-            lists.insert(sid, Some(if name.contains("bullet") { "bullet" } else { "number" }.to_string()));
+            lists.insert(
+                sid,
+                Some(
+                    if name.contains("bullet") {
+                        "bullet"
+                    } else {
+                        "number"
+                    }
+                    .to_string(),
+                ),
+            );
         }
     }
     Ok((heads, lists))
@@ -132,8 +160,16 @@ fn docx_numbering(doc: &mut Doc) -> R<HashMap<(Key, Key), bool>> {
     let mut abstract_: HashMap<(Key, Key), bool> = HashMap::new();
     for a in root.iter(Some(w!("abstractNum"))) {
         for lvl in a.iter(Some(w!("lvl"))) {
-            let ordered = lvl.child(w!("numFmt")).is_some_and(|f| !matches!(f.get(w!("val")), Some("bullet" | "none")));
-            abstract_.insert((a.get(w!("abstractNumId")).map(str::to_string), lvl.get(w!("ilvl")).map(str::to_string)), ordered);
+            let ordered = lvl
+                .child(w!("numFmt"))
+                .is_some_and(|f| !matches!(f.get(w!("val")), Some("bullet" | "none")));
+            abstract_.insert(
+                (
+                    a.get(w!("abstractNumId")).map(str::to_string),
+                    lvl.get(w!("ilvl")).map(str::to_string),
+                ),
+                ordered,
+            );
         }
     }
     let mut out = HashMap::new();
@@ -141,7 +177,10 @@ fn docx_numbering(doc: &mut Doc) -> R<HashMap<(Key, Key), bool>> {
         if let Some(aid) = n.child(w!("abstractNumId")) {
             for ((a, ilvl), ordered) in &abstract_ {
                 if a.as_deref() == aid.get(w!("val")) {
-                    out.insert((n.get(w!("numId")).map(str::to_string), ilvl.clone()), *ordered);
+                    out.insert(
+                        (n.get(w!("numId")).map(str::to_string), ilvl.clone()),
+                        *ordered,
+                    );
                 }
             }
         }
@@ -156,7 +195,10 @@ fn docx_body(doc: &mut Doc, root: &Elem, rel: &Rels, label: &str, st: &Styles) -
             let mut pics = vec![];
             let text = runs(el, &mut pics);
             let ppr = el.child(w!("pPr"));
-            let style: Key = ppr.and_then(|p| p.child(w!("pStyle"))).and_then(|s| s.get(w!("val"))).map(str::to_string);
+            let style: Key = ppr
+                .and_then(|p| p.child(w!("pStyle")))
+                .and_then(|s| s.get(w!("val")))
+                .map(str::to_string);
             let num = ppr.and_then(|p| p.child(w!("numPr")));
             let olvl = ppr.and_then(|p| p.child(w!("outlineLvl")));
             let olvl_ok = match olvl {
@@ -170,14 +212,19 @@ fn docx_body(doc: &mut Doc, root: &Elem, rel: &Rels, label: &str, st: &Styles) -
                 let level = match st.heads.get(&style).copied().filter(|&l| l != 0) {
                     Some(l) => l,
                     None => {
-                        let val = olvl.ok_or(Fail::Other("AttributeError"))?.get(w!("val")).ok_or(Fail::Other("TypeError"))?;
+                        let val = olvl
+                            .ok_or(Fail::Other("AttributeError"))?
+                            .get(w!("val"))
+                            .ok_or(Fail::Other("TypeError"))?;
                         py_int(val).ok_or(Fail::Other("ValueError"))? + 1
                     }
                 };
                 doc.add(Block::H(level, strip(&text).to_string()));
             } else if num.is_some() || st.lists.contains_key(&style) {
                 let ilvl = num.and_then(|n| n.child(w!("ilvl")));
-                let depth = ilvl.map_or("0", |e| e.get(w!("val")).unwrap_or("0")).to_string();
+                let depth = ilvl
+                    .map_or("0", |e| e.get(w!("val")).unwrap_or("0"))
+                    .to_string();
                 let nid: Option<String> = match num.and_then(|n| n.child(w!("numId"))) {
                     Some(e) => e.get(w!("val")).map(str::to_string),
                     None => st.lists.get(&style).cloned().flatten(),
@@ -186,8 +233,21 @@ fn docx_body(doc: &mut Doc, root: &Elem, rel: &Rels, label: &str, st: &Styles) -
                     // numbering switched off for this paragraph
                     doc.add(Block::P(text));
                 } else {
-                    let ordered = nid.as_deref() == Some("number") || st.numbering.get(&(nid, Some(depth.clone()))).copied().unwrap_or(false);
-                    doc.add(Block::Li(if is_digit(&depth) { py_int(&depth).unwrap_or(0) } else { 0 }, ordered, strip(&text).to_string()));
+                    let ordered = nid.as_deref() == Some("number")
+                        || st
+                            .numbering
+                            .get(&(nid, Some(depth.clone())))
+                            .copied()
+                            .unwrap_or(false);
+                    doc.add(Block::Li(
+                        if is_digit(&depth) {
+                            py_int(&depth).unwrap_or(0)
+                        } else {
+                            0
+                        },
+                        ordered,
+                        strip(&text).to_string(),
+                    ));
                 }
             } else {
                 doc.add(Block::P(text));
@@ -199,7 +259,11 @@ fn docx_body(doc: &mut Doc, root: &Elem, rel: &Rels, label: &str, st: &Styles) -
                 rows.push(
                     tr.children(w!("tc"))
                         .map(|tc| {
-                            let cell: Vec<String> = tc.iter(Some(w!("p"))).into_iter().map(|p| strip(&runs(p, &mut pics)).to_string()).collect();
+                            let cell: Vec<String> = tc
+                                .iter(Some(w!("p")))
+                                .into_iter()
+                                .map(|p| strip(&runs(p, &mut pics)).to_string())
+                                .collect();
                             strip(&cell.join(" ")).to_string()
                         })
                         .collect::<Vec<_>>(),
@@ -216,13 +280,28 @@ fn docx_body(doc: &mut Doc, root: &Elem, rel: &Rels, label: &str, st: &Styles) -
 
 pub fn docx(doc: &mut Doc) -> R<()> {
     let (heads, lists) = docx_styles(doc)?;
-    let st = Styles { heads, lists, numbering: docx_numbering(doc)? };
+    let st = Styles {
+        heads,
+        lists,
+        numbering: docx_numbering(doc)?,
+    };
     let root = doc.xml("word/document.xml")?;
     let body = root.child(w!("body"));
     let rel = rels(doc, "word/document.xml")?;
-    docx_body(doc, body.ok_or(Fail::Other("TypeError"))?, &rel, "Document", &st)?;
+    docx_body(
+        doc,
+        body.ok_or(Fail::Other("TypeError"))?,
+        &rel,
+        "Document",
+        &st,
+    )?;
     doc.flush("Document");
-    let mut notes: Vec<String> = doc.names().iter().filter(|n| *n == "word/footnotes.xml" || *n == "word/endnotes.xml").cloned().collect();
+    let mut notes: Vec<String> = doc
+        .names()
+        .iter()
+        .filter(|n| *n == "word/footnotes.xml" || *n == "word/endnotes.xml")
+        .cloned()
+        .collect();
     notes.sort();
     for name in notes {
         let root = doc.xml(&name)?;
@@ -241,7 +320,12 @@ pub fn docx(doc: &mut Doc) -> R<()> {
 
 /// Names matching `<prefix><digits>.xml`, in numeric order.
 fn numbered(names: &[String], prefix: &str) -> Vec<String> {
-    let num = |n: &str| n.strip_prefix(prefix).and_then(|r| r.strip_suffix(".xml")).filter(|d| is_digit(d)).map(|d| d.parse::<u128>().unwrap_or(u128::MAX));
+    let num = |n: &str| {
+        n.strip_prefix(prefix)
+            .and_then(|r| r.strip_suffix(".xml"))
+            .filter(|d| is_digit(d))
+            .map(|d| d.parse::<u128>().unwrap_or(u128::MAX))
+    };
     let mut v: Vec<&String> = names.iter().filter(|n| num(n).is_some()).collect();
     v.sort_by_key(|n| num(n));
     v.into_iter().cloned().collect()
@@ -255,16 +339,21 @@ fn pptx_shapes(doc: &mut Doc, tree: &Elem, rel: &Rels, label: &str) -> R<()> {
         } else if t == p!("sp") {
             let ph = el.path(&[p!("nvSpPr"), p!("nvPr"), p!("ph")]);
             let kind = ph.map(|ph| ph.get("type").unwrap_or("body"));
-            let Some(body) = el.child(p!("txBody")) else { continue };
+            let Some(body) = el.child(p!("txBody")) else {
+                continue;
+            };
             for para in body.children(a!("p")) {
                 let text = strip(&runs(para, &mut vec![])).to_string();
                 let ppr = para.child(a!("pPr"));
                 let depth = match ppr {
-                    Some(pp) => py_int(pp.get("lvl").unwrap_or("0")).ok_or(Fail::Other("ValueError"))?,
+                    Some(pp) => {
+                        py_int(pp.get("lvl").unwrap_or("0")).ok_or(Fail::Other("ValueError"))?
+                    }
                     None => 0,
                 };
                 let has = |tag: &str| ppr.is_some_and(|pp| pp.child(tag).is_some());
-                let (bullet_off, auto, char_) = (has(a!("buNone")), has(a!("buAutoNum")), has(a!("buChar")));
+                let (bullet_off, auto, char_) =
+                    (has(a!("buNone")), has(a!("buAutoNum")), has(a!("buChar")));
                 if matches!(kind, Some("title" | "ctrTitle")) {
                     doc.add(Block::H(1, text));
                 } else if !bullet_off && (auto || char_ || matches!(kind, Some("body" | "obj"))) {
@@ -277,7 +366,11 @@ fn pptx_shapes(doc: &mut Doc, tree: &Elem, rel: &Rels, label: &str) -> R<()> {
             for tbl in el.iter(Some(a!("tbl"))) {
                 let rows = tbl
                     .children(a!("tr"))
-                    .map(|tr| tr.children(a!("tc")).map(|tc| strip(&runs(tc, &mut vec![])).to_string()).collect::<Vec<_>>())
+                    .map(|tr| {
+                        tr.children(a!("tc"))
+                            .map(|tc| strip(&runs(tc, &mut vec![])).to_string())
+                            .collect::<Vec<_>>()
+                    })
                     .collect();
                 doc.add(Block::Table(rows));
             }
@@ -301,7 +394,10 @@ pub fn pptx(doc: &mut Doc) -> R<()> {
         }
         doc.flush(&format!("Slide {i}"));
         for (_, note) in &rel.0 {
-            let is_note = note.strip_prefix("ppt/notesSlides/notesSlide").and_then(|r| r.strip_suffix(".xml")).is_some_and(is_digit);
+            let is_note = note
+                .strip_prefix("ppt/notesSlides/notesSlide")
+                .and_then(|r| r.strip_suffix(".xml"))
+                .is_some_and(is_digit);
             if is_note && doc.has(note) {
                 for sp in doc.xml(note)?.iter(Some(p!("sp"))) {
                     let ph = sp.path(&[p!("nvSpPr"), p!("nvPr"), p!("ph")]);
@@ -342,33 +438,55 @@ pub fn xlsx(doc: &mut Doc) -> R<()> {
     let mut shared: Vec<String> = vec![];
     if doc.has("xl/sharedStrings.xml") {
         for si in doc.xml("xl/sharedStrings.xml")?.iter(Some(s!("si"))) {
-            shared.push(si.iter(Some(s!("t"))).iter().map(|t| t.text.as_str()).collect());
+            shared.push(
+                si.iter(Some(s!("t")))
+                    .iter()
+                    .map(|t| t.text.as_str())
+                    .collect(),
+            );
         }
     }
     let rel = rels(doc, "xl/workbook.xml")?;
     let book = doc.xml("xl/workbook.xml")?;
     for sheet in book.iter(Some(s!("sheet"))) {
-        let Some(target) = sheet.get(r!("id")).and_then(|id| rel.get(id)).filter(|t| !t.is_empty() && doc.has(t)) else { continue };
+        let Some(target) = sheet
+            .get(r!("id"))
+            .and_then(|id| rel.get(id))
+            .filter(|t| !t.is_empty() && doc.has(t))
+        else {
+            continue;
+        };
         let mut rows: Vec<Vec<String>> = vec![];
         for row in doc.xml(target)?.iter(Some(s!("row"))) {
             let mut cells: HashMap<usize, String> = HashMap::new();
             for c in row.iter(Some(s!("c"))) {
                 let (kind, vel) = (c.get("t"), c.child(s!("v")));
                 let vtext = vel.map(|v| v.text.as_str()).filter(|t| !t.is_empty());
-                let shared_idx = vtext.filter(|t| is_digit(t) && kind == Some("s")).and_then(|t| t.parse::<usize>().ok()).filter(|&n| n < shared.len());
+                let shared_idx = vtext
+                    .filter(|t| is_digit(t) && kind == Some("s"))
+                    .and_then(|t| t.parse::<usize>().ok())
+                    .filter(|&n| n < shared.len());
                 let val = if let Some(n) = shared_idx {
                     shared[n].clone()
                 } else if kind == Some("inlineStr") {
-                    c.iter(Some(s!("t"))).iter().map(|t| t.text.as_str()).collect()
+                    c.iter(Some(s!("t")))
+                        .iter()
+                        .map(|t| t.text.as_str())
+                        .collect()
                 } else {
                     vtext.unwrap_or("").to_string()
                 };
-                if let (false, Some(cell)) = (val.is_empty(), c.get("r").filter(|r| !r.is_empty())) {
+                if let (false, Some(cell)) = (val.is_empty(), c.get("r").filter(|r| !r.is_empty()))
+                {
                     cells.insert(col_index(cell)?, val.replace('\t', " "));
                 }
             }
             if let Some(&max) = cells.keys().max() {
-                rows.push((0..=max).map(|i| cells.get(&i).cloned().unwrap_or_default()).collect());
+                rows.push(
+                    (0..=max)
+                        .map(|i| cells.get(&i).cloned().unwrap_or_default())
+                        .collect(),
+                );
             }
             if rows.len() >= MAX_ROWS {
                 break;
@@ -377,7 +495,12 @@ pub fn xlsx(doc: &mut Doc) -> R<()> {
         if !rows.is_empty() {
             doc.add(Block::Table(rows));
         }
-        doc.flush(sheet.get("name").filter(|n| !n.is_empty()).unwrap_or("Sheet"));
+        doc.flush(
+            sheet
+                .get("name")
+                .filter(|n| !n.is_empty())
+                .unwrap_or("Sheet"),
+        );
     }
     Ok(())
 }

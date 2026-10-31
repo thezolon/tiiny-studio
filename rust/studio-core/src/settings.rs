@@ -51,7 +51,13 @@ fn yes() -> bool {
 
 impl Default for Swap {
     fn default() -> Self {
-        Swap { on: true, chat: true, image: true, audio: true, mesh: true }
+        Swap {
+            on: true,
+            chat: true,
+            image: true,
+            audio: true,
+            mesh: true,
+        }
     }
 }
 
@@ -105,7 +111,10 @@ pub fn normalize_url(url: &str) -> String {
 pub fn hostname(url: &str) -> String {
     let rest = url.split_once("://").map(|(_, r)| r).unwrap_or("");
     let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
-    let authority = authority.rsplit_once('@').map(|(_, h)| h).unwrap_or(authority);
+    let authority = authority
+        .rsplit_once('@')
+        .map(|(_, h)| h)
+        .unwrap_or(authority);
     let host = if let Some(v6) = authority.strip_prefix('[') {
         v6.split(']').next().unwrap_or("")
     } else {
@@ -135,12 +144,22 @@ fn new_id() -> String {
 }
 
 fn now() -> u64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
 }
 
 fn hint(key: &str) -> String {
     if key.chars().count() >= 8 {
-        let tail: String = key.chars().rev().take(4).collect::<Vec<_>>().into_iter().rev().collect();
+        let tail: String = key
+            .chars()
+            .rev()
+            .take(4)
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .collect();
         format!("…{tail}")
     } else {
         String::new()
@@ -149,37 +168,79 @@ fn hint(key: &str) -> String {
 
 impl State {
     fn current(&self) -> Option<&Device> {
-        self.devices.iter().find(|d| Some(&d.id) == self.active.as_ref()).or(self.devices.first())
+        self.devices
+            .iter()
+            .find(|d| Some(&d.id) == self.active.as_ref())
+            .or(self.devices.first())
     }
 }
 
 impl Settings {
     pub fn load(data_dir: &std::path::Path, lan_access: bool, password: bool, app: bool) -> Self {
         let path = data_dir.join("config.json");
-        let saved: Value = std::fs::read_to_string(&path).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or(json!({}));
+        let saved: Value = std::fs::read_to_string(&path)
+            .ok()
+            .and_then(|s| serde_json::from_str(&s).ok())
+            .unwrap_or(json!({}));
         let mut st = State::default();
-        if let Some(devices) = saved.get("devices").and_then(|d| serde_json::from_value::<Vec<Device>>(d.clone()).ok()) {
+        if let Some(devices) = saved
+            .get("devices")
+            .and_then(|d| serde_json::from_value::<Vec<Device>>(d.clone()).ok())
+        {
             st.devices = devices;
-            st.active = saved.get("active").and_then(Value::as_str).map(String::from);
+            st.active = saved
+                .get("active")
+                .and_then(Value::as_str)
+                .map(String::from);
             st.auto = saved.get("auto").and_then(Value::as_bool).unwrap_or(true);
             st.source = "file";
         } else {
             // older single-device config, or env vars
             let env = |k: &str| std::env::var(k).unwrap_or_default();
-            let s = |k: &str| saved.get(k).and_then(Value::as_str).filter(|v| !v.is_empty()).map(String::from);
+            let s = |k: &str| {
+                saved
+                    .get(k)
+                    .and_then(Value::as_str)
+                    .filter(|v| !v.is_empty())
+                    .map(String::from)
+            };
             let url = normalize_url(&s("url").unwrap_or_else(|| env("TIINY_URL")));
             let key = s("key").unwrap_or_else(|| env("TIINY_KEY"));
             if !url.is_empty() {
-                st.devices.push(Device { id: new_id(), name: default_device_name(&url), url: url.clone(), key });
+                st.devices.push(Device {
+                    id: new_id(),
+                    name: default_device_name(&url),
+                    url: url.clone(),
+                    key,
+                });
             }
             st.active = st.devices.first().map(|d| d.id.clone());
             st.auto = true;
             let file = saved.as_object().is_some_and(|o| !o.is_empty());
-            st.source = if file { "file" } else if !url.is_empty() { "env" } else { "none" };
+            st.source = if file {
+                "file"
+            } else if !url.is_empty() {
+                "env"
+            } else {
+                "none"
+            };
         }
-        st.swap = saved.get("swap").and_then(|v| serde_json::from_value(v.clone()).ok()).unwrap_or_default();
-        st.helper_model = saved.get("helper_model").and_then(Value::as_str).unwrap_or("").to_string();
-        Settings { path, lan_access, password, app, state: Mutex::new(st) }
+        st.swap = saved
+            .get("swap")
+            .and_then(|v| serde_json::from_value(v.clone()).ok())
+            .unwrap_or_default();
+        st.helper_model = saved
+            .get("helper_model")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string();
+        Settings {
+            path,
+            lan_access,
+            password,
+            app,
+            state: Mutex::new(st),
+        }
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, State> {
@@ -188,7 +249,14 @@ impl Settings {
 
     pub fn current(&self) -> Target {
         let st = self.lock();
-        st.current().map(|d| Target { id: Some(d.id.clone()), name: d.name.clone(), url: d.url.clone(), key: d.key.clone() }).unwrap_or_default()
+        st.current()
+            .map(|d| Target {
+                id: Some(d.id.clone()),
+                name: d.name.clone(),
+                url: d.url.clone(),
+                key: d.key.clone(),
+            })
+            .unwrap_or_default()
     }
 
     pub fn active(&self) -> Option<String> {
@@ -206,7 +274,10 @@ impl Settings {
     pub fn public(&self) -> Value {
         let st = self.lock();
         let cur = st.current().cloned();
-        let (url, key) = cur.as_ref().map(|d| (d.url.clone(), d.key.clone())).unwrap_or_default();
+        let (url, key) = cur
+            .as_ref()
+            .map(|d| (d.url.clone(), d.key.clone()))
+            .unwrap_or_default();
         json!({
             "devices": st.devices.iter().map(|d| json!({
                 "id": d.id, "name": d.name, "url": d.url, "host": hostname(&d.url),
@@ -225,7 +296,11 @@ impl Settings {
     fn save(&self, st: &mut State) {
         let body = json!({"devices": st.devices, "active": st.active, "auto": st.auto, "swap": st.swap, "helper_model": st.helper_model});
         let tmp = self.path.with_extension("tmp");
-        let written = std::fs::write(&tmp, serde_json::to_string_pretty(&body).unwrap_or_default()).and_then(|_| {
+        let written = std::fs::write(
+            &tmp,
+            serde_json::to_string_pretty(&body).unwrap_or_default(),
+        )
+        .and_then(|_| {
             #[cfg(unix)]
             {
                 use std::os::unix::fs::PermissionsExt;
@@ -243,7 +318,13 @@ impl Settings {
         self.lock().save_error.take()
     }
 
-    pub fn upsert(&self, did: Option<&str>, name: &str, url: &str, key: &str) -> Result<String, String> {
+    pub fn upsert(
+        &self,
+        did: Option<&str>,
+        name: &str,
+        url: &str,
+        key: &str,
+    ) -> Result<String, String> {
         let url = normalize_url(url);
         if url.is_empty() {
             return Err("Enter the device address, e.g. http://192.168.1.50".into());
@@ -264,7 +345,16 @@ impl Settings {
                 d.id.clone()
             }
             None => {
-                let d = Device { id: new_id(), name: if name.is_empty() { default_device_name(&url) } else { name }, url, key: key.into() };
+                let d = Device {
+                    id: new_id(),
+                    name: if name.is_empty() {
+                        default_device_name(&url)
+                    } else {
+                        name
+                    },
+                    url,
+                    key: key.into(),
+                };
                 let id = d.id.clone();
                 st.devices.push(d);
                 id
@@ -301,13 +391,14 @@ impl Settings {
 
     pub fn swap_allowed(&self, section: &str) -> bool {
         let sw = &self.lock().swap;
-        sw.on && match section {
-            "chat" => sw.chat,
-            "image" => sw.image,
-            "audio" => sw.audio,
-            "mesh" => sw.mesh,
-            _ => false,
-        }
+        sw.on
+            && match section {
+                "chat" => sw.chat,
+                "image" => sw.image,
+                "audio" => sw.audio,
+                "mesh" => sw.mesh,
+                _ => false,
+            }
     }
 
     pub fn remove(&self, did: &str) {
@@ -336,17 +427,25 @@ impl Settings {
         if reason.is_none() {
             st.pinned = Some(did.into()); // chosen by hand: keep it while it answers
         }
-        let Some(target) = st.devices.iter().find(|d| d.id == did).cloned() else { return };
+        let Some(target) = st.devices.iter().find(|d| d.id == did).cloned() else {
+            return;
+        };
         if st.active.as_deref() == Some(did) {
             return;
         }
         let before = st.current().map(|d| d.name.clone());
         st.active = Some(did.into());
         if let Some(r) = &reason {
-            st.last_switch = Some(json!({"to": target.name, "from": before, "t": now(), "reason": r}));
+            st.last_switch =
+                Some(json!({"to": target.name, "from": before, "t": now(), "reason": r}));
         }
         self.save(&mut st);
-        println!("Device: {} ({}){}", target.name, target.url, reason.map(|r| format!(" — {r}")).unwrap_or_default());
+        println!(
+            "Device: {} ({}){}",
+            target.name,
+            target.url,
+            reason.map(|r| format!(" — {r}")).unwrap_or_default()
+        );
     }
 
     pub fn set_auto(&self, on: bool) {
@@ -360,17 +459,34 @@ impl Settings {
 
     pub async fn probe(client: reqwest::Client, url: String) -> Probe {
         let t0 = Instant::now();
-        match client.get(format!("{url}/")).timeout(Duration::from_secs(2)).send().await {
-            Ok(_) => Probe { ok: true, ms: Some(t0.elapsed().as_millis() as u64) },
-            Err(_) => Probe { ok: false, ms: None },
+        match client
+            .get(format!("{url}/"))
+            .timeout(Duration::from_secs(2))
+            .send()
+            .await
+        {
+            Ok(_) => Probe {
+                ok: true,
+                ms: Some(t0.elapsed().as_millis() as u64),
+            },
+            Err(_) => Probe {
+                ok: false,
+                ms: None,
+            },
         }
     }
 
     /// Probe every saved device in parallel; with auto-switch on, use the first one that answers.
     pub async fn check(&self, client: &reqwest::Client) {
         let devices = self.devices();
-        let probes = futures_join(devices.iter().map(|d| Self::probe(client.clone(), d.url.clone()))).await;
-        let results: HashMap<String, Probe> = devices.iter().map(|d| d.id.clone()).zip(probes).collect();
+        let probes = futures_join(
+            devices
+                .iter()
+                .map(|d| Self::probe(client.clone(), d.url.clone())),
+        )
+        .await;
+        let results: HashMap<String, Probe> =
+            devices.iter().map(|d| d.id.clone()).zip(probes).collect();
         let switch = {
             let mut st = self.lock();
             st.status.extend(results.clone());
@@ -388,7 +504,11 @@ impl Settings {
             let best = devices.iter().find(|d| ok(&d.id) && !d.key.is_empty());
             match (best, cur) {
                 (Some(b), Some(c)) if b.id != c.id => {
-                    let reason = if !ok(&c.id) { format!("{} isn't answering", c.name) } else { format!("{} is back", b.name) };
+                    let reason = if !ok(&c.id) {
+                        format!("{} isn't answering", c.name)
+                    } else {
+                        format!("{} is back", b.name)
+                    };
                     Some((b.id.clone(), reason))
                 }
                 _ => None,
@@ -401,7 +521,9 @@ impl Settings {
 }
 
 /// Run futures concurrently and collect their results in order (no extra crate needed).
-async fn futures_join<F: std::future::Future + Send + 'static>(futs: impl Iterator<Item = F>) -> Vec<F::Output>
+async fn futures_join<F: std::future::Future + Send + 'static>(
+    futs: impl Iterator<Item = F>,
+) -> Vec<F::Output>
 where
     F::Output: Send + 'static,
 {
@@ -425,7 +547,10 @@ mod tests {
         assert_eq!(hostname("http://User@Tiiny.Local:8080/x"), "tiiny.local");
         assert_eq!(hostname("http://[::1]:80"), "::1");
         assert_eq!(default_device_name("http://172.17.0.9"), "USB cable");
-        assert_eq!(default_device_name("http://192.168.1.50"), "Tiiny (192.168.1.50)");
+        assert_eq!(
+            default_device_name("http://192.168.1.50"),
+            "Tiiny (192.168.1.50)"
+        );
         assert_eq!(hint("abcdefgh1234"), "…1234");
         assert_eq!(hint("short"), "");
     }
@@ -436,7 +561,9 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let s = Settings::load(&dir, false, false, false);
         let a = s.upsert(None, "", "192.168.1.50", "key-aaaa-1111").unwrap();
-        let b = s.upsert(None, "Hotspot", "http://192.168.1.60", "key-bbbb-2222").unwrap();
+        let b = s
+            .upsert(None, "Hotspot", "http://192.168.1.60", "key-bbbb-2222")
+            .unwrap();
         assert_eq!(s.active().as_deref(), Some(a.as_str()));
         // a new host without a key drops the old key
         s.upsert(Some(&a), "", "http://192.168.1.70", "").unwrap();

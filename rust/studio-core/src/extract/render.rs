@@ -72,14 +72,22 @@ pub fn md_escape(s: &str) -> String {
 
 /// Line breaks inside a paragraph become Markdown hard breaks.
 pub fn md_lines(s: &str) -> String {
-    s.split('\n').filter(|l| !strip(l).is_empty()).map(|l| md_escape(strip(l))).collect::<Vec<_>>().join("  \n")
+    s.split('\n')
+        .filter(|l| !strip(l).is_empty())
+        .map(|l| md_escape(strip(l)))
+        .collect::<Vec<_>>()
+        .join("  \n")
 }
 
 pub fn md_table(rows: &[Vec<String>]) -> String {
     let width = rows.iter().map(Vec::len).max().unwrap_or(0);
     let cell = |c: &str| {
         let t = md_escape(c).replace('|', "\\|").replace('\n', "<br>");
-        if strip(&t).is_empty() { " ".to_string() } else { strip(&t).to_string() }
+        if strip(&t).is_empty() {
+            " ".to_string()
+        } else {
+            strip(&t).to_string()
+        }
     };
     let rows: Vec<Vec<String>> = rows
         .iter()
@@ -89,7 +97,10 @@ pub fn md_table(rows: &[Vec<String>]) -> String {
             v
         })
         .collect();
-    let mut lines = vec![format!("| {} |", rows[0].join(" | ")), format!("|{}", " --- |".repeat(width))];
+    let mut lines = vec![
+        format!("| {} |", rows[0].join(" | ")),
+        format!("|{}", " --- |".repeat(width)),
+    ];
     lines.extend(rows[1..].iter().map(|r| format!("| {} |", r.join(" | "))));
     lines.join("\n")
 }
@@ -107,7 +118,12 @@ pub fn render(blocks: &[Block]) -> (String, String) {
         match b {
             Block::H(level, t) => {
                 text.push(t.clone());
-                md.push(format!("{}{} {}", nl(&md), "#".repeat((*level).max(0) as usize), md_escape(&t.replace('\n', " "))));
+                md.push(format!(
+                    "{}{} {}",
+                    nl(&md),
+                    "#".repeat((*level).max(0) as usize),
+                    md_escape(&t.replace('\n', " "))
+                ));
             }
             Block::P(t) => {
                 text.push(t.clone());
@@ -120,18 +136,49 @@ pub fn render(blocks: &[Block]) -> (String, String) {
                 let n = *n;
                 let pad = (*depth).max(0) as usize;
                 let flat = t.replace('\n', " ");
-                text.push(format!("{}{}{flat}", "  ".repeat(pad), if *ordered { format!("{n}. ") } else { "• ".into() }));
+                text.push(format!(
+                    "{}{}{flat}",
+                    "  ".repeat(pad),
+                    if *ordered {
+                        format!("{n}. ")
+                    } else {
+                        "• ".into()
+                    }
+                ));
                 let new_list = !prev_li || (*depth == 0 && Some(*ordered) != prev_ordered); // a bullet list then a numbered one
                 let lead = if !md.is_empty() && new_list { "\n" } else { "" };
-                md.push(format!("{lead}{}{}{}", "   ".repeat(pad), if *ordered { format!("{n}. ") } else { "- ".into() }, md_escape(&flat)));
+                md.push(format!(
+                    "{lead}{}{}{}",
+                    "   ".repeat(pad),
+                    if *ordered {
+                        format!("{n}. ")
+                    } else {
+                        "- ".into()
+                    },
+                    md_escape(&flat)
+                ));
                 if *depth == 0 {
                     prev_ordered = Some(*ordered);
                 }
             }
             Block::Table(rows) => {
-                let rows: Vec<Vec<String>> = rows.iter().filter(|r| r.iter().any(|c| !strip(c).is_empty())).cloned().collect();
+                let rows: Vec<Vec<String>> = rows
+                    .iter()
+                    .filter(|r| r.iter().any(|c| !strip(c).is_empty()))
+                    .cloned()
+                    .collect();
                 if !rows.is_empty() {
-                    text.push(rows.iter().map(|r| r.iter().map(|c| c.replace('\n', " ")).collect::<Vec<_>>().join("\t")).collect::<Vec<_>>().join("\n"));
+                    text.push(
+                        rows.iter()
+                            .map(|r| {
+                                r.iter()
+                                    .map(|c| c.replace('\n', " "))
+                                    .collect::<Vec<_>>()
+                                    .join("\t")
+                            })
+                            .collect::<Vec<_>>()
+                            .join("\n"),
+                    );
                     md.push(format!("{}{}", nl(&md), md_table(&rows)));
                 }
             }
@@ -142,7 +189,10 @@ pub fn render(blocks: &[Block]) -> (String, String) {
         }
         prev_li = matches!(b, Block::Li(..));
     }
-    (strip(&text.join("\n")).to_string(), strip(&md.join("\n")).to_string())
+    (
+        strip(&text.join("\n")).to_string(),
+        strip(&md.join("\n")).to_string(),
+    )
 }
 
 #[cfg(test)]
@@ -157,7 +207,10 @@ mod tests {
     fn escapes_inline_and_line_start_syntax() {
         assert_eq!(md_escape("a *b* [c] <d> `e`"), r"a \*b\* \[c\] \<d> \`e\`");
         assert_eq!(md_escape("# not a heading"), "\\# not a heading");
-        assert_eq!(md_escape("1. not a list\n  - nor this\n2) or this"), "1\\. not a list\n  \\- nor this\n2\\) or this");
+        assert_eq!(
+            md_escape("1. not a list\n  - nor this\n2) or this"),
+            "1\\. not a list\n  \\- nor this\n2\\) or this"
+        );
         assert_eq!(md_escape("-5 and #tag"), "-5 and #tag");
     }
 
@@ -178,13 +231,22 @@ mod tests {
             Block::Li(0, false, "bullet".into()),
         ];
         let (text, md) = render(&blocks);
-        assert_eq!(text, "1. one\n  1. inner\n2. two\nbreak\n1. again\n• bullet");
-        assert_eq!(md, "1. one\n   1. inner\n2. two\n\nbreak\n\n1. again\n\n- bullet");
+        assert_eq!(
+            text,
+            "1. one\n  1. inner\n2. two\nbreak\n1. again\n• bullet"
+        );
+        assert_eq!(
+            md,
+            "1. one\n   1. inner\n2. two\n\nbreak\n\n1. again\n\n- bullet"
+        );
     }
 
     #[test]
     fn headings_and_code() {
-        let (text, md) = render(&[Block::H(2, "Title".into()), Block::Pre("json".into(), "{}".into())]);
+        let (text, md) = render(&[
+            Block::H(2, "Title".into()),
+            Block::Pre("json".into(), "{}".into()),
+        ]);
         assert_eq!(text, "Title\n{}");
         assert_eq!(md, "## Title\n\n```json\n{}\n```");
     }

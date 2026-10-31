@@ -7,23 +7,53 @@ use serde_json::{json, Map, Value};
 
 use super::audio::strip;
 use super::recover::session_ids;
-use super::{decode_uri, ensure_running, err, http, http_bytes, instance_url, json_body, port_open, py_round, running_instance, save};
+use super::{
+    decode_uri, ensure_running, err, http, http_bytes, instance_url, json_body, port_open,
+    py_round, running_instance, save,
+};
 use crate::device::{quote, truthy};
 use crate::jobs::{Ctx, JobError, JobResult};
 
 const LOOP_CONFIG: [&str; 4] = ["seconds_total", "steps", "cfg_scale", "seed"];
-const SONG_CONFIG: [&str; 9] = ["caption", "lyrics", "generation_type", "seconds_total", "seed", "steps", "temperature", "top_k", "top_p"];
+const SONG_CONFIG: [&str; 9] = [
+    "caption",
+    "lyrics",
+    "generation_type",
+    "seconds_total",
+    "seed",
+    "steps",
+    "temperature",
+    "top_k",
+    "top_p",
+];
 const FULL_SONG_SECONDS: f64 = 240.0; // at or above this, the gateway path renders the model's full-length arrangement
 
 /// AceStep's own settings, sent nested as config.ace_step (at the top level it answers "Extra inputs are not permitted").
-const ACE_STEP_KEYS: [&str; 5] = ["bpm", "key_scale", "time_signature", "vocal_language", "negative_prompt"];
+const ACE_STEP_KEYS: [&str; 5] = [
+    "bpm",
+    "key_scale",
+    "time_signature",
+    "vocal_language",
+    "negative_prompt",
+];
 
 /// True for song models that only take the gateway's plain /generate, with no preview, resume or own-port API (AceStep,
 /// YuE2: "... preview generation is not implemented"); false for SongGeneration. Read from the model's music service
 /// (/v1/music/info, 0.1.38); by its id when the device doesn't say.
 async fn plain_song_model(ctx: &Ctx, model: &str) -> bool {
-    let (code, info) = ctx.call("GET", &format!("/v1/music/info?model={}", quote(model)), None, 15).await;
-    match info.get("service_name").and_then(Value::as_str).filter(|_| code == 200) {
+    let (code, info) = ctx
+        .call(
+            "GET",
+            &format!("/v1/music/info?model={}", quote(model)),
+            None,
+            15,
+        )
+        .await;
+    match info
+        .get("service_name")
+        .and_then(Value::as_str)
+        .filter(|_| code == 200)
+    {
         Some(service) => !service.starts_with("SongGeneration"),
         None => model.starts_with("ACE-Step/"),
     }
@@ -45,8 +75,14 @@ fn to_float(v: &Value) -> Result<f64, JobError> {
     match v {
         Value::Number(n) => Ok(n.as_f64().unwrap_or(0.0)),
         Value::Bool(b) => Ok(*b as u8 as f64),
-        Value::String(s) => s.trim().parse().map_err(|_| JobError(format!("ValueError: could not convert string to float: '{s}'"))),
-        _ => Err(JobError("TypeError: float() argument must be a string or a real number".into())),
+        Value::String(s) => s.trim().parse().map_err(|_| {
+            JobError(format!(
+                "ValueError: could not convert string to float: '{s}'"
+            ))
+        }),
+        _ => Err(JobError(
+            "TypeError: float() argument must be a string or a real number".into(),
+        )),
     }
 }
 
@@ -73,15 +109,23 @@ pub async fn run_loop(ctx: Ctx) -> JobResult {
     ensure_running(&ctx, &model).await?;
     ctx.update(json!({"message": "Generating loop"}));
     let before = session_ids(&ctx.state, &ctx.target).await; // the gateway keeps a session per loop but doesn't say which: it's the one that appears
-    // Gateway music route (Tiiny SDK, Oct 2026) works on every link, the USB cable included. Foundation-1
-    // still takes its native body ({prompt, config}); older firmware without the route falls back to the port.
+                                                             // Gateway music route (Tiiny SDK, Oct 2026) works on every link, the USB cable included. Foundation-1
+                                                             // still takes its native body ({prompt, config}); older firmware without the route falls back to the port.
     let gw = format!("{}/v1/music/generate/wav", ctx.target.url);
     let body = json!({"model": model, "prompt": prompt, "config": config});
     let (mut code, mut res) = http_bytes(&ctx, "POST", &gw, json_body(&body), 3600, true).await?;
     if code == 404 && res.as_ref().is_err_and(|v| v.get("detail").is_some()) {
         let url = instance_url(&ctx, &model).await?;
         let body = json!({"prompt": prompt, "config": config});
-        (code, res) = http_bytes(&ctx, "POST", &format!("{url}/v1/generate/wav"), json_body(&body), 3600, false).await?;
+        (code, res) = http_bytes(
+            &ctx,
+            "POST",
+            &format!("{url}/v1/generate/wav"),
+            json_body(&body),
+            3600,
+            false,
+        )
+        .await?;
     }
     let wav = match res {
         Ok(w) if code == 200 => w,
@@ -89,7 +133,11 @@ pub async fn run_loop(ctx: Ctx) -> JobResult {
         Err(v) => return Err(JobError(err(&v))),
     };
     let out = save(&ctx, &format!("{}-loop.wav", ctx.id), &wav)?;
-    let after = if before.is_some() { session_ids(&ctx.state, &ctx.target).await } else { None };
+    let after = if before.is_some() {
+        session_ids(&ctx.state, &ctx.target).await
+    } else {
+        None
+    };
     let new: Vec<String> = match (&before, after) {
         (Some(before), Some(after)) => after.difference(before).cloned().collect(),
         _ => vec![],
@@ -113,13 +161,20 @@ pub async fn run_song(ctx: Ctx) -> JobResult {
     let req = &ctx.req;
     let model = ctx.model.clone();
     let mut config = pick(req, &SONG_CONFIG);
-    if config.get("generation_type") != Some(&json!("bgm")) && strip(config.get("lyrics").and_then(Value::as_str).unwrap_or("")).is_empty() {
-        return Err(JobError("A song with vocals needs lyrics (or switch to Instrumental)".into()));
+    if config.get("generation_type") != Some(&json!("bgm"))
+        && strip(config.get("lyrics").and_then(Value::as_str).unwrap_or("")).is_empty()
+    {
+        return Err(JobError(
+            "A song with vocals needs lyrics (or switch to Instrumental)".into(),
+        ));
     }
     let mut sources = vec![];
     if req.get("reference_audio").is_some_and(truthy) {
         let (_, reference) = decode_uri(text(req, "reference_audio"))?;
-        config.insert("reference_audio_base64".into(), json!(base64::engine::general_purpose::STANDARD.encode(&reference)));
+        config.insert(
+            "reference_audio_base64".into(),
+            json!(base64::engine::general_purpose::STANDARD.encode(&reference)),
+        );
         sources.push(save(&ctx, &format!("{}-styleref.wav", ctx.id), &reference)?);
     }
     let ace = req.get("ace_step").cloned().unwrap_or(Value::Null);
@@ -133,19 +188,33 @@ pub async fn run_song(ctx: Ctx) -> JobResult {
     let host = cur.host();
     let gw = format!("{}/v1/music/generate", cur.url);
     let port = inst.get("port").and_then(Value::as_u64);
-    let direct = !plain && port_open(&host, port).await && !req.get("preview").is_some_and(truthy) && !req.get("resume_session").is_some_and(truthy);
+    let direct = !plain
+        && port_open(&host, port).await
+        && !req.get("preview").is_some_and(truthy)
+        && !req.get("resume_session").is_some_and(truthy);
     let direct_url = direct.then(|| format!("http://{host}:{}", port.unwrap_or(0)));
     let progress = tokio::spawn(song_progress(ctx.clone(), direct_url));
     let composed = compose(&ctx, &mut config, &inst, direct, plain, &gw, &host).await;
     progress.abort();
     let (code, res, route, url) = composed?;
-    if code != 200 || !res.get("success").is_some_and(truthy) || !res.get("audio_data").is_some_and(truthy) {
+    if code != 200
+        || !res.get("success").is_some_and(truthy)
+        || !res.get("audio_data").is_some_and(truthy)
+    {
         return Err(JobError(err(&res)));
     }
     song_entry(&ctx, &res, &config, sources, route, url).await
 }
 
-async fn compose(ctx: &Ctx, config: &mut Map<String, Value>, inst: &Value, direct: bool, plain: bool, gw: &str, host: &str) -> Result<(u16, Value, &'static str, Option<String>), JobError> {
+async fn compose(
+    ctx: &Ctx,
+    config: &mut Map<String, Value>,
+    inst: &Value,
+    direct: bool,
+    plain: bool,
+    gw: &str,
+    host: &str,
+) -> Result<(u16, Value, &'static str, Option<String>), JobError> {
     let req = &ctx.req;
     let model = &ctx.model;
     let post = |path: &str, config: Value, session: Option<Value>| {
@@ -158,7 +227,9 @@ async fn compose(ctx: &Ctx, config: &mut Map<String, Value>, inst: &Value, direc
     if plain {
         // AceStep (0.1.36+) and YuE2 (0.1.38): the gateway's plain /generate composes the whole song at seconds_total
         // on every link; they have no preview or resume. A preview request becomes an 8-second song.
-        if req.get("preview").is_some_and(truthy) && !config.get("seconds_total").is_some_and(truthy) {
+        if req.get("preview").is_some_and(truthy)
+            && !config.get("seconds_total").is_some_and(truthy)
+        {
             config.insert("seconds_total".into(), json!(8));
         }
         ctx.update(json!({"message": "Composing"}));
@@ -185,9 +256,20 @@ async fn compose(ctx: &Ctx, config: &mut Map<String, Value>, inst: &Value, direc
     }
     if direct {
         // Direct to the model's port (Wi-Fi/LAN): composes a complete song at exactly seconds_total.
-        let url = format!("http://{host}:{}", inst.get("port").and_then(Value::as_u64).unwrap_or(0));
+        let url = format!(
+            "http://{host}:{}",
+            inst.get("port").and_then(Value::as_u64).unwrap_or(0)
+        );
         ctx.update(json!({"message": "Composing"}));
-        let (code, res) = http(ctx, "POST", &format!("{url}/v1/generate"), Some(json!({"config": config})), 3600, false).await?;
+        let (code, res) = http(
+            ctx,
+            "POST",
+            &format!("{url}/v1/generate"),
+            Some(json!({"config": config})),
+            3600,
+            false,
+        )
+        .await?;
         return Ok((code, res, "direct", Some(url)));
     }
     // Over links that only expose the gateway (the USB cable). Its plain /generate fails ("Session not
@@ -233,7 +315,11 @@ async fn song_progress(ctx: Ctx, direct_url: Option<String>) {
         let polled = match &direct_url {
             Some(u) => http(&ctx, "GET", &format!("{u}/v1/sessions"), None, 5, false).await,
             None => {
-                let url = format!("{}/v1/music/sessions?model={}", ctx.target.url, quote(&ctx.model));
+                let url = format!(
+                    "{}/v1/music/sessions?model={}",
+                    ctx.target.url,
+                    quote(&ctx.model)
+                );
                 http(&ctx, "GET", &url, None, 5, true).await
             }
         };
@@ -243,7 +329,12 @@ async fn song_progress(ctx: Ctx, direct_url: Option<String>) {
             .and_then(Value::as_array)
             .into_iter()
             .flatten()
-            .filter(|s| !matches!(s.get("status").and_then(Value::as_str), Some("completed" | "failed" | "cancelled")))
+            .filter(|s| {
+                !matches!(
+                    s.get("status").and_then(Value::as_str),
+                    Some("completed" | "failed" | "cancelled")
+                )
+            })
             .filter_map(|s| s.get("progress").and_then(Value::as_f64))
             .fold(None, |m: Option<f64>, p| Some(m.map_or(p, |m| m.max(p))));
         if let Some(p) = best.filter(|p| *p > 0.0) {
@@ -253,15 +344,38 @@ async fn song_progress(ctx: Ctx, direct_url: Option<String>) {
 }
 
 fn b64(s: &str) -> Result<Vec<u8>, JobError> {
-    base64::engine::general_purpose::STANDARD.decode(s).map_err(|e| JobError(format!("Error: {e}")))
+    base64::engine::general_purpose::STANDARD
+        .decode(s)
+        .map_err(|e| JobError(format!("Error: {e}")))
 }
 
-async fn song_entry(ctx: &Ctx, res: &Value, config: &Map<String, Value>, sources: Vec<String>, route: &str, url: Option<String>) -> JobResult {
+async fn song_entry(
+    ctx: &Ctx,
+    res: &Value,
+    config: &Map<String, Value>,
+    sources: Vec<String>,
+    route: &str,
+    url: Option<String>,
+) -> JobResult {
     let req = &ctx.req;
-    let mut outputs = vec![save(ctx, &format!("{}-song.wav", ctx.id), &b64(text(res, "audio_data"))?)?];
+    let mut outputs = vec![save(
+        ctx,
+        &format!("{}-song.wav", ctx.id),
+        &b64(text(res, "audio_data"))?,
+    )?];
     let mut tracks = Map::new();
-    for (name, data) in res.get("audio_outputs").and_then(Value::as_object).into_iter().flatten() {
-        let Some(data) = data.as_str().filter(|d| d.chars().count() > 1000 && name.to_lowercase() != "mixed") else { continue }; // "mixed" duplicates the main file
+    for (name, data) in res
+        .get("audio_outputs")
+        .and_then(Value::as_object)
+        .into_iter()
+        .flatten()
+    {
+        let Some(data) = data
+            .as_str()
+            .filter(|d| d.chars().count() > 1000 && name.to_lowercase() != "mixed")
+        else {
+            continue;
+        }; // "mixed" duplicates the main file
         let mut slug = String::new();
         for c in name.to_lowercase().chars() {
             if c.is_ascii_lowercase() || c.is_ascii_digit() {
@@ -277,10 +391,22 @@ async fn song_entry(ctx: &Ctx, res: &Value, config: &Map<String, Value>, sources
     let (mut downloads, mut resume, mut device) = (vec![], None, None);
     let sid = res.get("session_id").filter(|s| truthy(s)).map(show);
     if let (Some(url), Some(sid)) = (&url, &sid) {
-        http(ctx, "DELETE", &format!("{url}/v1/sessions/{}", quote(sid)), None, 15, false).await?;
+        http(
+            ctx,
+            "DELETE",
+            &format!("{url}/v1/sessions/{}", quote(sid)),
+            None,
+            15,
+            false,
+        )
+        .await?;
     } else if let Some(sid) = &sid {
         // Gateway songs can also be fetched as MP3 from their session.
-        let dl = format!("{}/v1/music/sessions/{}/download?format=mp3", ctx.target.url, quote(sid));
+        let dl = format!(
+            "{}/v1/music/sessions/{}/download?format=mp3",
+            ctx.target.url,
+            quote(sid)
+        );
         if let Ok((200, Ok(mp3))) = http_bytes(ctx, "GET", &dl, None, 120, true).await {
             if mp3.len() > 1000 {
                 downloads.push(save(ctx, &format!("{}-song.mp3", ctx.id), &mp3)?);
@@ -293,17 +419,28 @@ async fn song_entry(ctx: &Ctx, res: &Value, config: &Map<String, Value>, sources
         ctx.state.store.mark_seen(std::slice::from_ref(sid), false);
     }
     if req.get("resume_session").is_some_and(truthy) {
-        if let Some(from) = req.get("from_entry").filter(|f| truthy(f)).and_then(Value::as_str) {
-            ctx.state.store.edit_history(from, |e| {
-                e.remove("resume");
-            })
-            .map_err(|e| JobError(format!("Couldn't save the result: {e}")))?;
+        if let Some(from) = req
+            .get("from_entry")
+            .filter(|f| truthy(f))
+            .and_then(Value::as_str)
+        {
+            ctx.state
+                .store
+                .edit_history(from, |e| {
+                    e.remove("resume");
+                })
+                .map_err(|e| JobError(format!("Couldn't save the result: {e}")))?;
         }
     }
     let mut params = Map::new();
     params.insert("model".into(), json!(ctx.model));
     params.insert("route".into(), json!(route));
-    params.extend(config.iter().filter(|(k, _)| *k != "reference_audio_base64").map(|(k, v)| (k.clone(), v.clone())));
+    params.extend(
+        config
+            .iter()
+            .filter(|(k, _)| *k != "reference_audio_base64")
+            .map(|(k, v)| (k.clone(), v.clone())),
+    );
     let mut entry = json!({"kind": "song", "params": params, "sources": sources, "outputs": outputs, "tracks": tracks,
         "duration": res.get("duration"), "downloads": downloads});
     if let Some(r) = resume {

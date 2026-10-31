@@ -53,7 +53,12 @@ pub struct AppState {
 impl AppState {
     pub fn new(config: Config) -> Self {
         let _ = std::fs::create_dir_all(&config.data_dir);
-        let settings = Settings::load(&config.data_dir, config.lan_access, !config.password.is_empty(), config.app);
+        let settings = Settings::load(
+            &config.data_dir,
+            config.lan_access,
+            !config.password.is_empty(),
+            config.app,
+        );
         let config_dir = config.data_dir.clone();
         AppState {
             settings: Arc::new(settings),
@@ -98,13 +103,18 @@ pub async fn serve(listener: tokio::net::TcpListener, config: Config) -> std::io
     });
     // the client address decides a few things (e.g. only this computer may open the results folder)
     let jobs = state.clone();
-    axum::serve(listener, routes::router(state).into_make_service_with_connect_info::<std::net::SocketAddr>())
-        .with_graceful_shutdown(async move {
-            shutdown_signal().await;
-            // tell the Tiiny to stop what we started: it keeps rendering if we just disappear
-            jobs.jobs.cancel_running(&jobs, std::time::Duration::from_secs(20)).await;
-        })
-        .await
+    axum::serve(
+        listener,
+        routes::router(state).into_make_service_with_connect_info::<std::net::SocketAddr>(),
+    )
+    .with_graceful_shutdown(async move {
+        shutdown_signal().await;
+        // tell the Tiiny to stop what we started: it keeps rendering if we just disappear
+        jobs.jobs
+            .cancel_running(&jobs, std::time::Duration::from_secs(20))
+            .await;
+    })
+    .await
 }
 
 /// Ctrl+C, or SIGTERM (`docker stop`) on Unix.
@@ -114,7 +124,8 @@ async fn shutdown_signal() {
     };
     #[cfg(unix)]
     let term = async {
-        if let Ok(mut s) = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
+        if let Ok(mut s) = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+        {
             s.recv().await;
         }
     };

@@ -42,8 +42,10 @@ const IMAGE_TYPES: [(&str, &str); 8] = [
     ("tif", "image/tiff"),
     ("tiff", "image/tiff"),
 ];
-const TEXT_EXT: [&str; 16] =
-    ["txt", "md", "markdown", "csv", "tsv", "json", "xml", "log", "ini", "yaml", "yml", "srt", "vtt", "py", "js", "css"];
+const TEXT_EXT: [&str; 16] = [
+    "txt", "md", "markdown", "csv", "tsv", "json", "xml", "log", "ini", "yaml", "yml", "srt",
+    "vtt", "py", "js", "css",
+];
 
 /// What the user sees when a document can't be read. For the failures Python's ExtractError covers the text
 /// is identical; for the ones server.py reports as "Couldn't read this file (…)" it is that sentence.
@@ -77,8 +79,14 @@ impl From<Fail> for ExtractError {
         ExtractError(match f {
             Fail::Extract(m) => m,
             Fail::Key(name) => {
-                let msg = format!("There is no item named {} in the archive", text::py_repr(&name));
-                format!("This document is missing a part it needs ({}).", text::py_repr(&msg))
+                let msg = format!(
+                    "There is no item named {} in the archive",
+                    text::py_repr(&name)
+                );
+                format!(
+                    "This document is missing a part it needs ({}).",
+                    text::py_repr(&msg)
+                )
             }
             Fail::Parse => "This document's contents are damaged.".into(),
             Fail::Other(name) => format!("Couldn't read this file ({name})."),
@@ -103,7 +111,13 @@ pub(crate) struct Doc<'a> {
 
 impl<'a> Doc<'a> {
     fn new(zip: Option<Zip<'a>>) -> Self {
-        Doc { zip, parts: vec![], blocks: vec![], images: 0, total: 0 }
+        Doc {
+            zip,
+            parts: vec![],
+            blocks: vec![],
+            images: 0,
+            total: 0,
+        }
     }
 
     fn zip(&self) -> &Zip<'a> {
@@ -119,9 +133,16 @@ impl<'a> Doc<'a> {
     }
 
     fn size(&mut self, name: &str) -> R<u64> {
-        let i = *self.zip().index.get(name).ok_or_else(|| Fail::Key(name.to_string()))?;
+        let i = *self
+            .zip()
+            .index
+            .get(name)
+            .ok_or_else(|| Fail::Key(name.to_string()))?;
         let z = self.zip.as_mut().expect("zip document");
-        Ok(z.ar.by_index_raw(i).map_err(|_| Fail::Other("BadZipFile"))?.size())
+        Ok(z.ar
+            .by_index_raw(i)
+            .map_err(|_| Fail::Other("BadZipFile"))?
+            .size())
     }
 
     pub fn read(&mut self, name: &str) -> R<Vec<u8>> {
@@ -134,7 +155,10 @@ impl<'a> Doc<'a> {
         let z = self.zip.as_mut().expect("zip document");
         let mut f = z.ar.by_index(i).map_err(|_| Fail::Other("RuntimeError"))?;
         let mut buf = Vec::new();
-        f.by_ref().take(MAX_MEMBER + 1).read_to_end(&mut buf).map_err(|_| Fail::Other("BadZipFile"))?;
+        f.by_ref()
+            .take(MAX_MEMBER + 1)
+            .read_to_end(&mut buf)
+            .map_err(|_| Fail::Other("BadZipFile"))?;
         buf.truncate(MAX_MEMBER as usize);
         Ok(buf)
     }
@@ -146,7 +170,9 @@ impl<'a> Doc<'a> {
     pub fn add(&mut self, block: Block) {
         let keep = match &block {
             Block::Table(_) => true,
-            Block::H(_, t) | Block::P(t) | Block::Li(_, _, t) | Block::Pre(_, t) => !text::strip(t).is_empty(),
+            Block::H(_, t) | Block::P(t) | Block::Li(_, _, t) | Block::Pre(_, t) => {
+                !text::strip(t).is_empty()
+            }
         };
         if keep {
             self.blocks.push(block);
@@ -156,14 +182,17 @@ impl<'a> Doc<'a> {
     pub fn flush(&mut self, label: &str) {
         let (text, md) = render::render(&self.blocks);
         if !text.is_empty() {
-            self.parts.push(json!({"label": label, "text": text, "md": md}));
+            self.parts
+                .push(json!({"label": label, "text": text, "md": md}));
         }
         self.blocks.clear();
     }
 
     pub fn image(&mut self, name: &str, label: &str) -> R<()> {
         let ext = name.rsplit('.').next().unwrap_or("").to_lowercase();
-        let Some(mime) = IMAGE_TYPES.iter().find(|(e, _)| *e == ext).map(|(_, m)| *m) else { return Ok(()) };
+        let Some(mime) = IMAGE_TYPES.iter().find(|(e, _)| *e == ext).map(|(_, m)| *m) else {
+            return Ok(());
+        };
         if self.images >= MAX_IMAGES || !self.has(name) || self.size(name)? < MIN_IMAGE {
             return Ok(());
         }
@@ -205,7 +234,13 @@ pub fn extract(filename: &str, data: &[u8]) -> Result<Value, ExtractError> {
             }
         }
     }
-    let keep = |p: &Value| ["image", "text"].iter().any(|k| p.get(*k).and_then(Value::as_str).is_some_and(|s| !s.is_empty()));
+    let keep = |p: &Value| {
+        ["image", "text"].iter().any(|k| {
+            p.get(*k)
+                .and_then(Value::as_str)
+                .is_some_and(|s| !s.is_empty())
+        })
+    };
     parts.retain(keep);
     Ok(Value::Array(parts))
 }
@@ -213,9 +248,15 @@ pub fn extract(filename: &str, data: &[u8]) -> Result<Value, ExtractError> {
 /// `<!doctype html` or `<html` at the start (after whitespace), any case.
 fn looks_like_html(data: &[u8]) -> bool {
     let head = &data[..data.len().min(200)];
-    let rest = &head[head.iter().take_while(|b| matches!(b, b' ' | b'\t' | b'\n' | b'\r' | 0x0c | 0x0b)).count()..];
-    let Some(rest) = rest.strip_prefix(b"<") else { return false };
-    let starts = |p: &str| rest.len() >= p.len() && rest[..p.len()].eq_ignore_ascii_case(p.as_bytes());
+    let rest = &head[head
+        .iter()
+        .take_while(|b| matches!(b, b' ' | b'\t' | b'\n' | b'\r' | 0x0c | 0x0b))
+        .count()..];
+    let Some(rest) = rest.strip_prefix(b"<") else {
+        return false;
+    };
+    let starts =
+        |p: &str| rest.len() >= p.len() && rest[..p.len()].eq_ignore_ascii_case(p.as_bytes());
     starts("!doctype html") || starts("html")
 }
 
@@ -237,7 +278,11 @@ fn read_parts(name: &str, data: &[u8]) -> Result<Vec<Value>, ExtractError> {
         let mut index = HashMap::new();
         let mut ar = ar;
         for i in 0..ar.len() {
-            let n = ar.by_index_raw(i).map_err(|_| ExtractError("Couldn't read this file (BadZipFile).".into()))?.name().to_string();
+            let n = ar
+                .by_index_raw(i)
+                .map_err(|_| ExtractError("Couldn't read this file (BadZipFile).".into()))?
+                .name()
+                .to_string();
             index.insert(n.clone(), i); // a repeated name resolves to the last entry, as in Python
             names.push(n);
         }
@@ -258,7 +303,9 @@ fn read_parts(name: &str, data: &[u8]) -> Result<Vec<Value>, ExtractError> {
                 } else if has("META-INF/container.xml") {
                     Kind::Epub
                 } else {
-                    return Err(ExtractError("That zip file isn't a document the studio can read.".into()));
+                    return Err(ExtractError(
+                        "That zip file isn't a document the studio can read.".into(),
+                    ));
                 }
             }
         };
@@ -291,7 +338,9 @@ fn read_parts(name: &str, data: &[u8]) -> Result<Vec<Value>, ExtractError> {
         text::text_blocks(&mut doc, text::strip(&text::decode(data)));
         doc.flush("Text");
     } else {
-        return Err(ExtractError("The studio can't read this kind of file.".into()));
+        return Err(ExtractError(
+            "The studio can't read this kind of file.".into(),
+        ));
     }
     Ok(doc.parts)
 }

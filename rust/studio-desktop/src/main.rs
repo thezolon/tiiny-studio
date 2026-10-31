@@ -60,7 +60,12 @@ async fn device_goes_off(port: u16) -> bool {
     let until = std::time::Instant::now() + std::time::Duration::from_secs(60);
     while std::time::Instant::now() < until {
         tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-        let up = http.get(format!("http://127.0.0.1:{port}/api/models")).send().await.map(|r| r.status().is_success()).unwrap_or(false);
+        let up = http
+            .get(format!("http://127.0.0.1:{port}/api/models"))
+            .send()
+            .await
+            .map(|r| r.status().is_success())
+            .unwrap_or(false);
         if !up {
             return true;
         }
@@ -78,7 +83,10 @@ fn unique_path(dir: &std::path::Path, name: &str) -> std::path::PathBuf {
         Some((s, e)) if !s.is_empty() => (s.to_string(), format!(".{e}")),
         _ => (name.to_string(), String::new()),
     };
-    (2..10_000).map(|n| dir.join(format!("{stem} ({n}){ext}"))).find(|p| !p.exists()).unwrap_or(first)
+    (2..10_000)
+        .map(|n| dir.join(format!("{stem} ({n}){ext}")))
+        .find(|p| !p.exists())
+        .unwrap_or(first)
 }
 
 fn main() {
@@ -96,11 +104,16 @@ fn main() {
 
     tauri::Builder::default()
         // a second launch just brings the running window forward
-        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| show_main(app)))
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            show_main(app)
+        }))
         .plugin(tauri_plugin_window_state::Builder::default().build())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
-        .plugin(tauri_plugin_autostart::init(tauri_plugin_autostart::MacosLauncher::LaunchAgent, None))
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            None,
+        ))
         .setup(move |app| {
             tauri::async_runtime::spawn(async move {
                 let listener = tokio::net::TcpListener::from_std(listener).expect("listener");
@@ -109,7 +122,9 @@ fn main() {
                 }
             });
             std::thread::spawn(move || keep_awake(port));
-            let url = format!("http://127.0.0.1:{port}/").parse().expect("local url");
+            let url = format!("http://127.0.0.1:{port}/")
+                .parse()
+                .expect("local url");
             let handle = app.handle().clone();
             WebviewWindowBuilder::new(app, "main", WebviewUrl::External(url))
                 // links that open a new window (the guide, the credit link) go to the system browser instead
@@ -126,9 +141,16 @@ fn main() {
                                 .file_name()
                                 .map(|n| n.to_string_lossy().into_owned())
                                 .filter(|n| !n.is_empty())
-                                .or_else(|| url.path_segments().and_then(|mut s| s.next_back().map(String::from)))
+                                .or_else(|| {
+                                    url.path_segments()
+                                        .and_then(|mut s| s.next_back().map(String::from))
+                                })
                                 .unwrap_or_else(|| "download".into());
-                            let dir = webview.app_handle().path().download_dir().unwrap_or_else(|_| std::env::temp_dir());
+                            let dir = webview
+                                .app_handle()
+                                .path()
+                                .download_dir()
+                                .unwrap_or_else(|_| std::env::temp_dir());
                             *destination = unique_path(&dir, &name);
                         }
                         tauri::webview::DownloadEvent::Finished { path, success, .. } => {
@@ -138,7 +160,11 @@ fn main() {
                                 (false, _) => "The download didn't finish".into(),
                             };
                             let kind = if success { "" } else { "err" };
-                            let js = format!("typeof toast === 'function' && toast({}, {})", serde_json::json!(msg), serde_json::json!(kind));
+                            let js = format!(
+                                "typeof toast === 'function' && toast({}, {})",
+                                serde_json::json!(msg),
+                                serde_json::json!(kind)
+                            );
                             let _ = webview.eval(&js);
                         }
                         _ => {}
@@ -152,12 +178,23 @@ fn main() {
 
             let open = MenuItem::with_id(app, "open", "Open Tiiny Studio", true, None::<&str>)?;
             let folder = MenuItem::with_id(app, "folder", "Open data folder", true, None::<&str>)?;
-            let power = MenuItem::with_id(app, "power", "Power off the Tiiny…", true, None::<&str>)?;
+            let power =
+                MenuItem::with_id(app, "power", "Power off the Tiiny…", true, None::<&str>)?;
             let at_login = app.autolaunch().is_enabled().unwrap_or(false);
-            let login = CheckMenuItem::with_id(app, "login", "Start at login", true, at_login, None::<&str>)?;
+            let login = CheckMenuItem::with_id(
+                app,
+                "login",
+                "Start at login",
+                true,
+                at_login,
+                None::<&str>,
+            )?;
             let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
             let sep = || PredefinedMenuItem::separator(app);
-            let menu = Menu::with_items(app, &[&open, &folder, &login, &sep()?, &power, &sep()?, &quit])?;
+            let menu = Menu::with_items(
+                app,
+                &[&open, &folder, &login, &sep()?, &power, &sep()?, &quit],
+            )?;
             let login_item = login.clone();
             let data = data_dir.clone();
             TrayIconBuilder::with_id("tray")
@@ -174,7 +211,11 @@ fn main() {
                     "login" => {
                         // off by default; the menu tick follows what the OS actually has
                         let auto = app.autolaunch();
-                        let _ = if auto.is_enabled().unwrap_or(false) { auto.disable() } else { auto.enable() };
+                        let _ = if auto.is_enabled().unwrap_or(false) {
+                            auto.disable()
+                        } else {
+                            auto.enable()
+                        };
                         let _ = login_item.set_checked(auto.is_enabled().unwrap_or(false));
                     }
                     "quit" => app.exit(0),
@@ -205,14 +246,29 @@ static QUITTING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::
 /// While jobs are queued or running (a night of videos), keep the computer from going to sleep: a sleeping PC stops the
 /// queue. Checked every 20 s through the studio's own API; the screen may still turn off.
 fn keep_awake(port: u16) {
-    let Ok(rt) = tokio::runtime::Builder::new_current_thread().enable_all().build() else { return };
+    let Ok(rt) = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+    else {
+        return;
+    };
     let http = reqwest::Client::new();
     let mut awake = Awake::default();
     loop {
         let busy = rt.block_on(async {
-            let jobs = http.get(format!("http://127.0.0.1:{port}/api/jobs")).timeout(std::time::Duration::from_secs(10)).send().await.ok()?;
+            let jobs = http
+                .get(format!("http://127.0.0.1:{port}/api/jobs"))
+                .timeout(std::time::Duration::from_secs(10))
+                .send()
+                .await
+                .ok()?;
             let jobs = jobs.json::<serde_json::Value>().await.ok()?;
-            Some(jobs.as_array()?.iter().any(|j| matches!(j.get("status").and_then(|s| s.as_str()), Some("queued" | "running"))))
+            Some(jobs.as_array()?.iter().any(|j| {
+                matches!(
+                    j.get("status").and_then(|s| s.as_str()),
+                    Some("queued" | "running")
+                )
+            }))
         });
         awake.set(busy.unwrap_or(false));
         std::thread::sleep(std::time::Duration::from_secs(20));
@@ -236,8 +292,14 @@ impl Awake {
         self.on = on;
         #[cfg(windows)]
         unsafe {
-            use windows_sys::Win32::System::Power::{SetThreadExecutionState, ES_CONTINUOUS, ES_SYSTEM_REQUIRED};
-            SetThreadExecutionState(if on { ES_CONTINUOUS | ES_SYSTEM_REQUIRED } else { ES_CONTINUOUS });
+            use windows_sys::Win32::System::Power::{
+                SetThreadExecutionState, ES_CONTINUOUS, ES_SYSTEM_REQUIRED,
+            };
+            SetThreadExecutionState(if on {
+                ES_CONTINUOUS | ES_SYSTEM_REQUIRED
+            } else {
+                ES_CONTINUOUS
+            });
         }
         #[cfg(not(windows))]
         {
@@ -248,10 +310,19 @@ impl Awake {
             if on {
                 let pid = std::process::id().to_string();
                 let cmd = if cfg!(target_os = "macos") {
-                    std::process::Command::new("caffeinate").args(["-i", "-w", &pid]).spawn()
+                    std::process::Command::new("caffeinate")
+                        .args(["-i", "-w", &pid])
+                        .spawn()
                 } else {
                     std::process::Command::new("systemd-inhibit")
-                        .args(["--what=sleep:idle", "--who=Tiiny Studio", "--why=Jobs are running on the Tiiny", "--mode=block", "sleep", "infinity"])
+                        .args([
+                            "--what=sleep:idle",
+                            "--who=Tiiny Studio",
+                            "--why=Jobs are running on the Tiiny",
+                            "--mode=block",
+                            "sleep",
+                            "infinity",
+                        ])
                         .spawn()
                 };
                 self.child = cmd.ok();
@@ -272,14 +343,26 @@ async fn stop_running_jobs(port: u16) {
             .filter_map(|j| j["id"].as_str().map(String::from))
             .collect()
     };
-    let list = || async { http.get(format!("{base}/api/jobs")).send().await.ok()?.json::<serde_json::Value>().await.ok() };
+    let list = || async {
+        http.get(format!("{base}/api/jobs"))
+            .send()
+            .await
+            .ok()?
+            .json::<serde_json::Value>()
+            .await
+            .ok()
+    };
     let Some(jobs) = list().await else { return };
     let ids = running(&jobs);
     if ids.is_empty() {
         return;
     }
     for id in &ids {
-        let _ = http.post(format!("{base}/api/jobs/{id}/cancel")).body("{}").send().await;
+        let _ = http
+            .post(format!("{base}/api/jobs/{id}/cancel"))
+            .body("{}")
+            .send()
+            .await;
     }
     let until = std::time::Instant::now() + std::time::Duration::from_secs(20);
     while std::time::Instant::now() < until {
