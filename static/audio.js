@@ -61,24 +61,23 @@ const A = {
 };
 
 const AudioWS = {
+  ...mediaWS({ kind: "audio", p: "a", st: A, title: "Audio library", empty: "Your audio will collect here.", fresh: true,
+    own: (e) => AUDIO_KINDS.has(e.kind) && e.params?.name !== "voice reference",
+    jobs: (j) => AUDIO_KINDS.has(j.kind === "transcribe" ? "transcript" : j.kind) && A.pendingRefText !== j.id,
+    queued: (j) => ({ label: j.status === "running" ? `${j.progress || "…"}${j.progress ? "%" : ""}` : "queued", run: j.status === "running", title: j.label }),
+    gate: () => [A.tool, TOOLS.find((x) => x.id === A.tool).what],
+    early(j) {
+      if (A.pendingRefText !== j.id) return false;
+      A.pendingRefText = null;
+      if (j.status === "done" && A.speech.clip) { A.speech.clipText = j.entry.text; toast("Transcript filled in — check it, then save the voice"); }
+      AudioWS.render(); return true;
+    } }),
   mounted: false,
   mount(root) {
-    root.replaceChildren(
-      el("aside", { class: "composer" },
-        el("div", { class: "composer-scroll" },
-          el("div", { class: "seg tool-seg", role: "group", "aria-label": "Audio tool", id: "aTools" }),
-          el("div", { id: "aGate" }),
-          el("div", { id: "aPanel" })),
-        el("div", { class: "composer-foot" },
-          el("button", { class: "go", id: "aGo" }, icon("i-spark"), el("span", { id: "aGoLabel" }, "Speak"), el("span", { class: "est", id: "aGoEst" })),
-          el("div", { class: "foot-meta" }, el("span", { id: "aMeta" }, ""), el("span", {}, el("kbd", {}, "Ctrl"), " ", el("kbd", {}, "Enter"))))),
-      el("section", { class: "stage-col" },
-        el("div", { class: "stage-head", id: "aHead" }),
-        el("div", { class: "stage", id: "aStage" }),
-        el("div", { class: "strip-wrap" },
-          el("div", { class: "strip-head" }, "Audio library ", el("span", { class: "count", id: "aCount" }), el("span", { id: "galBar-audio" }), el("span", { class: "spacer" }), el("span", { class: "hint", style: "color:var(--faint);font-weight:450" }, el("kbd", {}, "Space"), " play/pause")),
-          el("div", { class: "strip", id: "aStrip" }))));
-    $("#aGo").onclick = () => this.submit();
+    this.shell(root, { ico: "i-spark", label: el("span", { id: "aGoLabel" }, "Speak"), est: "aGoEst",
+      top: [el("div", { class: "seg tool-seg", role: "group", "aria-label": "Audio tool", id: "aTools" })],
+      foot: [el("span", { id: "aMeta" }, ""), el("span", {}, el("kbd", {}, "Ctrl"), " ", el("kbd", {}, "Enter"))],
+      bar: [el("span", { class: "spacer" }), el("span", { class: "hint", style: "color:var(--faint);font-weight:450" }, el("kbd", {}, "Space"), " play/pause")] });
     root.addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); this.submit(); } });
     this.loadVoices();
   },
@@ -91,21 +90,14 @@ const AudioWS = {
     $("#aPanel").replaceChildren(...{ speech: () => this.speechPanel(), loop: () => this.loopPanel(), song: () => this.songPanel(), transcribe: () => this.transcribePanel() }[A.tool]().filter(Boolean));  // hidden parts are null
     this.renderFoot(); this.renderStage(); this.renderStrip();
   },
-  renderGate() {
-    const t = TOOLS.find((x) => x.id === A.tool);
-    const g = modelGate(A.tool, t.what);
-    $("#aGate").replaceChildren(...(g ? [g] : []));
-    this.renderFoot();
-  },
   renderFoot() {
-    const m = modelForTool(A.tool), ready = m?.status === "running";
+    const { ready } = this.footModel(A.tool);
     const p = this.payload(true);
     const labels = { speech: "Speak", loop: "Make loop", song: "Compose", transcribe: "Transcribe" };
     $("#aGoLabel").textContent = labels[A.tool];
     $("#aGoEst").textContent = p.ok ? "~" + fmtSec(p.est) : "";
     $("#aGo").disabled = !ready || !p.ok;
     $("#aGo").title = !ready ? "Load the model first" : p.why || "";
-    $("#aMeta").textContent = m ? `${shortName(m.id)}${ready ? "" : " · not loaded"}` : "";
   },
 
   /* ---------- Voice ---------- */
@@ -276,18 +268,13 @@ const AudioWS = {
         el("div", { class: "adv-body" },
           this.numField("Steps", L.steps, 8, 200, (v) => { L.steps = v; }),
           this.numField("Guidance (CFG)", L.cfg, 1, 12, (v) => { L.cfg = v; }, 0.5),
-          this.seedField(L))),
+          seedField(L))),
     ];
   },
   numField(label, val, min, max, set, step = 1) {
     const out = el("output", {}, String(val));
     return el("div", { class: "field" }, el("div", { class: "label" }, label),
       el("div", { class: "slider-row" }, el("input", { type: "range", min, max, step, value: val, oninput: (e) => { set(Number(e.target.value)); out.textContent = e.target.value; this.renderFoot(); } }), out));
-  },
-  seedField(obj) {
-    const inp = el("input", { class: "input", inputmode: "numeric", placeholder: "random", value: obj.seed, oninput: (e) => { obj.seed = e.target.value.replace(/\D/g, ""); e.target.value = obj.seed; } });
-    return el("div", { class: "field" }, el("div", { class: "label" }, "Seed", el("span", { class: "hint" }, "blank = new each run")),
-      el("div", { class: "seed-row" }, inp, el("button", { class: "toggle-btn", title: "Roll", onclick: () => { obj.seed = String(Math.floor(Math.random() * 2 ** 31)); inp.value = obj.seed; } }, icon("i-dice"))));
   },
 
   /* ---------- Song ---------- */
@@ -324,7 +311,7 @@ const AudioWS = {
       !SONG_STYLE_REF ? null : el("div", { class: "field" }, el("div", { class: "label" }, "Style reference", el("span", { class: "hint" }, "optional · 10–30 s of a song to borrow the feel from")),
         this.captureRow("song", G.ref), G.ref ? el("button", { class: "btn-sm ghost", style: "margin-top:6px", onclick: () => { G.ref = null; rerender(); } }, "Remove reference") : null),
       el("details", { class: "adv" }, el("summary", {}, icon("i-chev"), "Advanced", el("span", { class: "sum" }, "model defaults")),
-        el("div", { class: "adv-body" }, this.seedField(G),
+        el("div", { class: "adv-body" }, seedField(G),
           // defaults and limits from the loaded model (/v1/music/info); SongGeneration's when it doesn't say
           el("div", { class: "field" }, el("div", { class: "label" }, "Decoder steps", el("span", { class: "hint" }, `default ${num(sm.steps) || "10"}${sm.maxSteps ? `, up to ${sm.maxSteps}` : ""}`)),
             el("input", { class: "input", inputmode: "numeric", placeholder: num(sm.steps) || "10", value: G.steps, oninput: (e) => { G.steps = e.target.value; } })),
@@ -493,36 +480,18 @@ const AudioWS = {
       this.renderStage(); this.renderStrip();
     } catch (e) { toast(e.message, "err"); }
   },
-  jobDone(j) {
-    if (A.pendingRefText === j.id) {
-      A.pendingRefText = null;
-      if (j.status === "done" && A.speech.clip) { A.speech.clipText = j.entry.text; toast("Transcript filled in — check it, then save the voice"); }
-      this.render(); return;
-    }
-    if (A.view?.job === j.id) A.view = j.status === "done" ? { id: j.entry.id, fresh: true } : null;
-    if (this.mounted && S.ws === "audio") { this.renderStage(); this.renderStrip(); }
-  },
-  renderJobs() {
-    if (A.view?.job) this.renderStage();
-    this.renderStrip();
-  },
 
   /* ---------- stage ---------- */
-  audioHistory() { return S.history.filter((e) => AUDIO_KINDS.has(e.kind) && e.params?.name !== "voice reference"); },
   renderStage() {
     const head = $("#aHead"), stage = $("#aStage");
     head.replaceChildren(); stage.replaceChildren();
-    if (A.view?.job) {
-      const j = S.jobs.find((x) => x.id === A.view.job);
-      if (j && (j.status === "queued" || j.status === "running")) {
-        head.append(el("div", { class: "crumb" }, el("b", {}, j.status === "queued" ? "Queued" : "Working"), " · " + (j.label || j.kind)));
-        stage.append(pendingCard(j));
-        return;
-      }
-      A.view = null;
+    const j = this.liveJob();
+    if (j) {
+      head.append(el("div", { class: "crumb" }, el("b", {}, j.status === "queued" ? "Queued" : "Working"), " · " + (j.label || j.kind)));
+      stage.append(pendingCard(j));
+      return;
     }
-    const list = this.audioHistory();
-    const e = (A.view && list.find((x) => x.id === A.view.id)) || (!A.view && list[0]);
+    const e = this.current(this.entries());
     if (!e) return this.renderEmpty(stage);
     A.view = { id: e.id };
     const kindName = { speech: "Voice", loop: "Loop", song: "Song", transcript: "Transcript" }[e.kind];
@@ -579,17 +548,6 @@ const AudioWS = {
       el("p", {}, "Clone a voice from a few seconds of audio, build tempo-locked loops, write a full song, or turn speech into text — all on the Tiiny."),
       el("div", { class: "tool-tiles" }, TOOLS.map((t) => el("button", { class: "tile", onclick: () => { A.tool = t.id; store.set("audio.tool", t.id); this.render(); } }, icon(t.icon), el("b", {}, t.label), el("small", {}, mediaBadges(modelForTool(t.id) || { type: TOOL_TYPES[t.id] }).slice(0, 2).join(" · ")))))));
   },
-  renderStrip() {
-    const items = [];
-    for (const j of S.jobs.filter((x) => AUDIO_KINDS.has(x.kind === "transcribe" ? "transcript" : x.kind) && (x.status === "queued" || x.status === "running") && A.pendingRefText !== x.id))
-      items.push(el("button", { class: "thumb queued" + (j.status === "running" ? " run" : ""), "aria-current": A.view?.job === j.id, title: j.label, onclick: () => { A.view = { job: j.id }; this.renderStage(); this.renderStrip(); } }, j.status === "running" ? `${j.progress || "…"}${j.progress ? "%" : ""}` : "queued"));
-    const list = this.audioHistory();
-    const shown = galleryFilter("audio", list), again = () => this.renderStrip();
-    $("#galBar-audio").replaceChildren(galleryBar("audio", shown, again));
-    for (const e of shown) items.push(decorateThumb("audio", mediaThumb(e, A.view?.id === e.id, () => { A.view = { id: e.id }; this.renderStage(); this.renderStrip(); }, () => this.del(e)), e, again));
-    $("#aStrip").replaceChildren(...(items.length ? items : [el("div", { class: "strip-empty" }, "Your audio will collect here.")]));
-    $("#aCount").textContent = list.length || "";
-  },
 
   /* ---------- actions ---------- */
   async sendToTranscribe(url, name) {
@@ -633,12 +591,5 @@ const AudioWS = {
     }
     this.render();
     if (run) this.submit(); else toast("Settings loaded");
-  },
-  async del(e) {
-    try { await api("/api/history/" + e.id, { method: "DELETE" }); } catch (err) { return toast(err.message, "err"); }
-    const list = this.audioHistory(), i = list.indexOf(e);
-    S.history.splice(S.history.indexOf(e), 1);
-    if (A.view?.id === e.id) { const next = list[i + 1] || list[i - 1]; A.view = next ? { id: next.id } : null; }
-    this.renderStage(); this.renderStrip();
   },
 };

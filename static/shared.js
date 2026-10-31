@@ -442,5 +442,96 @@ function pendingCard(j, onCancel) {
       el("button", { class: "tb cancel", disabled: !!j.stopping, title: j.stopping ? STOPPING : "", ...onPress((b) => onCancel ? onCancel(j) : stopButton(b, j.id)) }, j.stopping ? "Stopping…" : "Cancel")));
 }
 
+/* ---------- panels: Audio, 3D and Video ---------- */
+/** A seed box with a dice button; obj.seed holds the digits ("" = new each run). */
+function seedField(obj) {
+  const inp = el("input", { class: "input", inputmode: "numeric", placeholder: "random", value: obj.seed, oninput: (e) => { obj.seed = e.target.value.replace(/\D/g, ""); e.target.value = obj.seed; } });
+  return el("div", { class: "field" }, el("div", { class: "label" }, "Seed", el("span", { class: "hint" }, "blank = new each run")),
+    el("div", { class: "seed-row" }, inp, el("button", { class: "toggle-btn", title: "Roll", onclick: () => { obj.seed = String(Math.floor(Math.random() * 2 ** 31)); inp.value = obj.seed; } }, icon("i-dice"))));
+}
+/** One picture to drop, paste or browse for, shown with a remove button once set. take gets the files. */
+function imageSlot({ img, clear, cls, key, zone, title, hint, take }) {
+  if (img) return el("div", { class: cls }, el("img", { src: img.uri, alt: "" }), el("button", { class: "x", title: "Remove", onclick: clear }, "✕"));
+  const d = el("button", { class: "drop", onclick: () => { const i = el("input", { type: "file", accept: "image/*" }); i.onchange = () => i.files[0] && take([i.files[0]]); i.click(); } },
+    icon("i-upload"), el("span", {}, el("b", {}, title), hint));
+  return fileZone(d, { key, accept: /^image\//, what: "image", label: zone, take });
+}
+/** What the three panels share, mixed into each workspace object: { ...mediaWS({...}), … }. c: { kind (also the
+ *  workspace and gallery name), p (id prefix), st (its state, st.view = {id} | {job}), title, empty, own(entry),
+ *  jobs(job), queued(job) -> { label, run, title, view() }, gate() -> [tool, what], thumb(el, entry), early(job),
+ *  fresh }. A panel still supplies mount (via shell), render, renderFoot, renderStage, submit. */
+function mediaWS(c) {
+  const { kind, p, st } = c;
+  return {
+    shell(root, { top = [], ico, label, est, foot, bar = [] }) {
+      root.replaceChildren(
+        el("aside", { class: "composer" },
+          el("div", { class: "composer-scroll" }, ...top, el("div", { id: p + "Gate" }), el("div", { id: p + "Panel" })),
+          el("div", { class: "composer-foot" },
+            el("button", { class: "go", id: p + "Go", onclick: () => this.submit() }, icon(ico), typeof label === "string" ? el("span", {}, label) : label, el("span", { class: "est", id: est })),
+            el("div", { class: "foot-meta" }, ...foot))),
+        el("section", { class: "stage-col" },
+          el("div", { class: "stage-head", id: p + "Head" }),
+          el("div", { class: "stage", id: p + "Stage" }),
+          el("div", { class: "strip-wrap" },
+            el("div", { class: "strip-head" }, c.title + " ", el("span", { class: "count", id: p + "Count" }), el("span", { id: "galBar-" + kind }), ...bar),
+            el("div", { class: "strip", id: p + "Strip" }))));
+    },
+    seg(items, val, set, key) { return el("div", { class: "seg small" }, items.map(([v, label]) => el("button", { "aria-pressed": val === v, onclick: () => { set(v); store.set(key, v); this.render(); } }, label))); },
+    renderGate() {
+      const g = modelGate(...c.gate());
+      $(`#${p}Gate`).replaceChildren(...(g ? [g] : []));
+      this.renderFoot();
+    },
+    /** The tool's model and whether it's loaded; also writes the "name · not loaded" line in the footer. */
+    footModel(tool, extra = "") {
+      const m = modelForTool(tool), ready = m?.status === "running";
+      $(`#${p}Meta`).textContent = m ? shortName(m.id) + (ready ? "" : " · not loaded") + extra : "";
+      return { m, ready };
+    },
+    entries() { return S.history.filter(c.own); },
+    /** The queued or running job on show, if any; a finished one drops back to the newest result. */
+    liveJob() {
+      if (!st.view?.job) return null;
+      const j = S.jobs.find((x) => x.id === st.view.job);
+      if (j && (j.status === "queued" || j.status === "running")) return j;
+      st.view = null;
+      return null;
+    },
+    /** The result on show: the chosen one, else the newest when nothing is chosen. */
+    current(list) { return (st.view && list.find((x) => x.id === st.view.id)) || (!st.view && list[0]); },
+    jobDone(j) {
+      if (c.early?.(j)) return;
+      if (st.view?.job === j.id) st.view = j.status === "done" ? { id: j.entry.id, ...(c.fresh && { fresh: true }) } : null;
+      if (this.mounted && S.ws === kind) { this.renderStage(); this.renderStrip(); }
+    },
+    renderJobs() { if (st.view?.job) this.renderStage(); this.renderStrip(); },
+    renderStrip() {
+      const items = [], show = () => { this.renderStage(); this.renderStrip(); };
+      for (const j of S.jobs.filter((x) => c.jobs(x) && (x.status === "queued" || x.status === "running"))) {
+        const q = c.queued(j);
+        items.push(el("button", { class: "thumb queued" + (q.run ? " run" : ""), "aria-current": st.view?.job === j.id, title: q.title, onclick: () => { st.view = q.view?.() || { job: j.id }; show(); } }, q.label));
+      }
+      const list = this.entries(), shown = galleryFilter(kind, list);
+      $("#galBar-" + kind).replaceChildren(galleryBar(kind, shown, () => this.renderStrip()));
+      for (const e of shown) {
+        const t = mediaThumb(e, st.view?.id === e.id, () => { st.view = { id: e.id }; show(); }, () => this.del(e));
+        c.thumb?.(t, e);
+        items.push(decorateThumb(kind, t, e, () => this.renderStrip()));
+      }
+      $(`#${p}Strip`).replaceChildren(...(items.length ? items : [el("div", { class: "strip-empty" }, c.empty)]));
+      $(`#${p}Count`).textContent = list.length || "";
+    },
+    /** Deleting the result on show moves the display to its neighbour (the older one, else the newer), as in Image. */
+    async del(e) {
+      try { await api("/api/history/" + e.id, { method: "DELETE" }); } catch (err) { return toast(err.message, "err"); }
+      const list = this.entries(), i = list.indexOf(e);
+      S.history.splice(S.history.indexOf(e), 1);
+      if (st.view?.id === e.id) { const next = list[i + 1] || list[i - 1]; st.view = next ? { id: next.id } : null; }
+      this.renderStage(); this.renderStrip();
+    },
+  };
+}
+
 // DOMContentLoaded fires after every classic script (audio.js, mesh.js) has run.
 document.addEventListener("DOMContentLoaded", () => { setWs(S.ws); pollJobs(); });
