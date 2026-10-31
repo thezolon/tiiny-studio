@@ -61,24 +61,23 @@ const A = {
 };
 
 const AudioWS = {
+  ...mediaWS({ kind: "audio", p: "a", st: A, title: "Audio library", empty: "Your audio will collect here.", fresh: true,
+    own: (e) => AUDIO_KINDS.has(e.kind) && e.params?.name !== "voice reference",
+    jobs: (j) => AUDIO_KINDS.has(j.kind === "transcribe" ? "transcript" : j.kind) && A.pendingRefText !== j.id,
+    queued: (j) => ({ label: j.status === "running" ? `${j.progress || "…"}${j.progress ? "%" : ""}` : "queued", run: j.status === "running", title: j.label }),
+    gate: () => [A.tool, TOOLS.find((x) => x.id === A.tool).what],
+    early(j) {
+      if (A.pendingRefText !== j.id) return false;
+      A.pendingRefText = null;
+      if (j.status === "done" && A.speech.clip) { A.speech.clipText = j.entry.text; toast("Transcript filled in — check it, then save the voice"); }
+      AudioWS.render(); return true;
+    } }),
   mounted: false,
   mount(root) {
-    root.replaceChildren(
-      el("aside", { class: "composer" },
-        el("div", { class: "composer-scroll" },
-          el("div", { class: "seg tool-seg", role: "group", "aria-label": "Audio tool", id: "aTools" }),
-          el("div", { id: "aGate" }),
-          el("div", { id: "aPanel" })),
-        el("div", { class: "composer-foot" },
-          el("button", { class: "go", id: "aGo" }, icon("i-spark"), el("span", { id: "aGoLabel" }, "Speak"), el("span", { class: "est", id: "aGoEst" })),
-          el("div", { class: "foot-meta" }, el("span", { id: "aMeta" }, ""), el("span", {}, el("kbd", {}, "Ctrl"), " ", el("kbd", {}, "Enter"))))),
-      el("section", { class: "stage-col" },
-        el("div", { class: "stage-head", id: "aHead" }),
-        el("div", { class: "stage", id: "aStage" }),
-        el("div", { class: "strip-wrap" },
-          el("div", { class: "strip-head" }, "Audio library ", el("span", { class: "count", id: "aCount" }), el("span", { id: "galBar-audio" }), el("span", { class: "spacer" }), el("span", { class: "hint", style: "color:var(--faint);font-weight:450" }, el("kbd", {}, "Space"), " play/pause")),
-          el("div", { class: "strip", id: "aStrip" }))));
-    $("#aGo").onclick = () => this.submit();
+    this.shell(root, { ico: "i-spark", label: el("span", { id: "aGoLabel" }, "Speak"), est: "aGoEst",
+      top: [el("div", { class: "seg tool-seg", role: "group", "aria-label": "Audio tool", id: "aTools" })],
+      foot: [el("span", { id: "aMeta" }, ""), el("span", {}, el("kbd", {}, "Ctrl"), " ", el("kbd", {}, "Enter"))],
+      bar: [el("span", { class: "spacer" }), el("span", { class: "hint", style: "color:var(--faint);font-weight:450" }, el("kbd", {}, "Space"), " play/pause")] });
     root.addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); this.submit(); } });
     this.loadVoices();
   },
@@ -91,21 +90,14 @@ const AudioWS = {
     $("#aPanel").replaceChildren(...{ speech: () => this.speechPanel(), loop: () => this.loopPanel(), song: () => this.songPanel(), transcribe: () => this.transcribePanel() }[A.tool]().filter(Boolean));  // hidden parts are null
     this.renderFoot(); this.renderStage(); this.renderStrip();
   },
-  renderGate() {
-    const t = TOOLS.find((x) => x.id === A.tool);
-    const g = modelGate(A.tool, t.what);
-    $("#aGate").replaceChildren(...(g ? [g] : []));
-    this.renderFoot();
-  },
   renderFoot() {
-    const m = modelForTool(A.tool), ready = m?.status === "running";
+    const { ready } = this.footModel(A.tool);
     const p = this.payload(true);
     const labels = { speech: "Speak", loop: "Make loop", song: "Compose", transcribe: "Transcribe" };
     $("#aGoLabel").textContent = labels[A.tool];
     $("#aGoEst").textContent = p.ok ? "~" + fmtSec(p.est) : "";
     $("#aGo").disabled = !ready || !p.ok;
     $("#aGo").title = !ready ? "Load the model first" : p.why || "";
-    $("#aMeta").textContent = m ? `${shortName(m.id)}${ready ? "" : " · not loaded"}` : "";
   },
 
   /* ---------- Voice ---------- */
@@ -143,7 +135,7 @@ const AudioWS = {
         el("div", { class: "prompt-wrap" }, box),
         el("div", { class: "chips" }, DESIGN_CHIPS.map((c) => el("button", { class: "chip", onclick: () => { sp.design = c; box.value = c; this.renderFoot(); } }, c)))));
     } else {
-      const speakerCards = vm.speakers.map((s) => el("div", { class: "voice-card", "aria-pressed": sp.speaker === s && !sp.clip,
+      const speakerCards = vm.speakers.map((s) => el("button", { class: "voice-card", "aria-pressed": sp.speaker === s && !sp.clip,
         onclick: () => { sp.speaker = s; sp.clip = null; store.set("audio.speaker", s); this.render(); } }, el("span", { class: "vname" }, speakerName(s))));
       const voices = el("div", { class: "voice-list" }, ...speakerCards, ...(vm.clone ? this.cloneCards() : []));
       const hint = vm.speakers.length && vm.clone ? "built-in, or cloned from a 3–20 s clip" : vm.speakers.length ? "built into this model" : "cloned from a 3–20 s clip";
@@ -166,10 +158,11 @@ const AudioWS = {
   },
   cloneCards() {
     const sp = A.speech;
-    return [...A.voices.map((v) => el("div", { class: "voice-card", "aria-pressed": sp.voiceId === v.id && !sp.clip && !sp.speaker, onclick: () => { sp.voiceId = v.id; sp.clip = null; sp.speaker = null; store.set("audio.voice", v.id); store.set("audio.speaker", null); this.render(); } },
-        el("button", { class: "vplay", title: "Preview", onclick: (e) => { e.stopPropagation(); const a = new Audio("/images/" + v.file); if (currentAudio) currentAudio.pause(); currentAudio = a; a.play(); } }, icon("i-play")),
-        el("span", { class: "vname" }, v.name),
-        el("button", { class: "vdel", title: "Delete voice", onclick: async (e) => { e.stopPropagation(); if (!confirm(`Delete voice “${v.name}”?`)) return; try { await api("/api/voices/" + v.id, { method: "DELETE" }); } catch (err) { toast(err.message, "err"); } this.loadVoices(); } }, "✕"))),
+    // a card is a group: pick, preview and delete are sibling buttons (a button can't hold buttons)
+    return [...A.voices.map((v) => { const on = sp.voiceId === v.id && !sp.clip && !sp.speaker; return el("div", { class: "voice-card" + (on ? " on" : "") },
+        el("button", { class: "vplay", title: "Preview", "aria-label": `Preview ${v.name}`, onclick: () => { const a = new Audio("/images/" + v.file); if (currentAudio) currentAudio.pause(); currentAudio = a; a.play(); } }, icon("i-play")),
+        el("button", { class: "vpick", "aria-pressed": on, onclick: () => { sp.voiceId = v.id; sp.clip = null; sp.speaker = null; store.set("audio.voice", v.id); store.set("audio.speaker", null); this.render(); } }, el("span", { class: "vname" }, v.name)),
+        el("button", { class: "vdel", title: "Delete voice", "aria-label": `Delete voice ${v.name}`, onclick: async () => { if (!confirm(`Delete voice “${v.name}”?`)) return; try { await api("/api/voices/" + v.id, { method: "DELETE" }); } catch (err) { toast(err.message, "err"); } this.loadVoices(); } }, "✕")); }),
       el("button", { class: "voice-card add", "aria-pressed": !!sp.clip || (!A.voices.length && !sp.speaker), onclick: () => { sp.clip = sp.clip || { pending: true }; sp.speaker = null; this.render(); } }, "+ New voice")];
   },
   clipEditor() {
@@ -268,7 +261,7 @@ const AudioWS = {
           el("div", { class: "seg small" }, [100, 110, 120, 128, 130, 140, 150].map((b) => el("button", { "aria-pressed": L.bpm === b, onclick: () => { L.bpm = b; L.custom = null; rerender(); } }, String(b)))))),
         el("div", { class: "row", style: "margin-top:12px" },
           el("div", {}, el("div", { class: "label" }, "Bars"), el("div", { class: "seg small" }, [4, 8].map((b) => el("button", { "aria-pressed": L.bars === b, onclick: () => { L.bars = b; L.custom = null; rerender(); } }, String(b))))),
-          el("div", { class: "grow" }, el("div", { class: "label" }, "Key"), el("select", { class: "input", onchange: (e) => { L.key = e.target.value; L.custom = null; rerender(); } }, KEYS.map((k) => el("option", { selected: k === L.key }, k)))))),
+          el("div", { class: "grow" }, el("div", { class: "label" }, "Key"), el("select", { class: "input", "aria-label": "Key", onchange: (e) => { L.key = e.target.value; L.custom = null; rerender(); } }, KEYS.map((k) => el("option", { selected: k === L.key }, k)))))),
       el("div", { class: "field" }, el("div", { class: "label" }, "Prompt", el("span", { class: "hint" }, `${secs.toFixed(1)} s loop`, L.custom != null ? el("a", { href: "#", style: "margin-left:8px;color:var(--accent-2)", onclick: (e) => { e.preventDefault(); L.custom = null; rerender(); } }, "reset") : null)),
         el("div", { class: "prompt-wrap" }, el("textarea", { rows: "3", oninput: (e) => { L.custom = e.target.value; this.renderFoot(); } }, this.loopPrompt())),
         el("div", { class: "hint-line" }, "Foundation-1 works best with tag-style prompts at these exact tempos. No drums in this release.")),
@@ -276,18 +269,13 @@ const AudioWS = {
         el("div", { class: "adv-body" },
           this.numField("Steps", L.steps, 8, 200, (v) => { L.steps = v; }),
           this.numField("Guidance (CFG)", L.cfg, 1, 12, (v) => { L.cfg = v; }, 0.5),
-          this.seedField(L))),
+          seedField(L))),
     ];
   },
   numField(label, val, min, max, set, step = 1) {
     const out = el("output", {}, String(val));
     return el("div", { class: "field" }, el("div", { class: "label" }, label),
       el("div", { class: "slider-row" }, el("input", { type: "range", min, max, step, value: val, oninput: (e) => { set(Number(e.target.value)); out.textContent = e.target.value; this.renderFoot(); } }), out));
-  },
-  seedField(obj) {
-    const inp = el("input", { class: "input", inputmode: "numeric", placeholder: "random", value: obj.seed, oninput: (e) => { obj.seed = e.target.value.replace(/\D/g, ""); e.target.value = obj.seed; } });
-    return el("div", { class: "field" }, el("div", { class: "label" }, "Seed", el("span", { class: "hint" }, "blank = new each run")),
-      el("div", { class: "seed-row" }, inp, el("button", { class: "toggle-btn", title: "Roll", onclick: () => { obj.seed = String(Math.floor(Math.random() * 2 ** 31)); inp.value = obj.seed; } }, icon("i-dice"))));
   },
 
   /* ---------- Song ---------- */
@@ -324,7 +312,7 @@ const AudioWS = {
       !SONG_STYLE_REF ? null : el("div", { class: "field" }, el("div", { class: "label" }, "Style reference", el("span", { class: "hint" }, "optional · 10–30 s of a song to borrow the feel from")),
         this.captureRow("song", G.ref), G.ref ? el("button", { class: "btn-sm ghost", style: "margin-top:6px", onclick: () => { G.ref = null; rerender(); } }, "Remove reference") : null),
       el("details", { class: "adv" }, el("summary", {}, icon("i-chev"), "Advanced", el("span", { class: "sum" }, "model defaults")),
-        el("div", { class: "adv-body" }, this.seedField(G),
+        el("div", { class: "adv-body" }, seedField(G),
           // defaults and limits from the loaded model (/v1/music/info); SongGeneration's when it doesn't say
           el("div", { class: "field" }, el("div", { class: "label" }, "Decoder steps", el("span", { class: "hint" }, `default ${num(sm.steps) || "10"}${sm.maxSteps ? `, up to ${sm.maxSteps}` : ""}`)),
             el("input", { class: "input", inputmode: "numeric", placeholder: num(sm.steps) || "10", value: G.steps, oninput: (e) => { G.steps = e.target.value; } })),
@@ -359,7 +347,7 @@ const AudioWS = {
     const close = () => { A.help = null; this.render(); };
     if (h.gate) { const g = modelGate("chat", "chat"); return g ? el("div", { class: "assist-gate", "data-tool": "chat" }, g) : null; }
     return el("div", { class: "assist-note" }, `${h.what} by ${shortName(h.model)}`, el("span", { class: "spacer" }),
-      el("button", { class: "linkish", onclick: () => { h.undo(); close(); } }, "Undo"), el("button", { class: "linkish", onclick: close }, "✕"));
+      el("button", { class: "linkish", onclick: () => { h.undo(); close(); } }, "Undo"), el("button", { class: "linkish", "aria-label": "Dismiss", onclick: close }, "✕"));
   },
   async runHelper(key, task, payload, label, apply) {
     if (A.helpBusy) return;
@@ -493,36 +481,18 @@ const AudioWS = {
       this.renderStage(); this.renderStrip();
     } catch (e) { toast(e.message, "err"); }
   },
-  jobDone(j) {
-    if (A.pendingRefText === j.id) {
-      A.pendingRefText = null;
-      if (j.status === "done" && A.speech.clip) { A.speech.clipText = j.entry.text; toast("Transcript filled in — check it, then save the voice"); }
-      this.render(); return;
-    }
-    if (A.view?.job === j.id) A.view = j.status === "done" ? { id: j.entry.id, fresh: true } : null;
-    if (this.mounted && S.ws === "audio") { this.renderStage(); this.renderStrip(); }
-  },
-  renderJobs() {
-    if (A.view?.job) this.renderStage();
-    this.renderStrip();
-  },
 
   /* ---------- stage ---------- */
-  audioHistory() { return S.history.filter((e) => AUDIO_KINDS.has(e.kind) && e.params?.name !== "voice reference"); },
   renderStage() {
     const head = $("#aHead"), stage = $("#aStage");
     head.replaceChildren(); stage.replaceChildren();
-    if (A.view?.job) {
-      const j = S.jobs.find((x) => x.id === A.view.job);
-      if (j && (j.status === "queued" || j.status === "running")) {
-        head.append(el("div", { class: "crumb" }, el("b", {}, j.status === "queued" ? "Queued" : "Working"), " · " + (j.label || j.kind)));
-        stage.append(pendingCard(j));
-        return;
-      }
-      A.view = null;
+    const j = this.liveJob();
+    if (j) {
+      head.append(el("div", { class: "crumb" }, el("b", {}, j.status === "queued" ? "Queued" : "Working"), " · " + (j.label || j.kind)));
+      stage.append(pendingCard(j));
+      return;
     }
-    const list = this.audioHistory();
-    const e = (A.view && list.find((x) => x.id === A.view.id)) || (!A.view && list[0]);
+    const e = this.current(this.entries());
     if (!e) return this.renderEmpty(stage);
     A.view = { id: e.id };
     const kindName = { speech: "Voice", loop: "Loop", song: "Song", transcript: "Transcript" }[e.kind];
@@ -543,7 +513,7 @@ const AudioWS = {
         (e.downloads || []).find((f) => f.endsWith(".mp3")) ? el("a", { class: "tb", href: "/images/" + e.downloads.find((f) => f.endsWith(".mp3")), download: `tiiny-song-${e.id}.mp3` }, icon("i-down"), el("span", { class: "lbl" }, "MP3")) : null,
         SONG_STYLE_REF && e.kind !== "song" && e.kind !== "speech" ? btn("Use as song style", "i-music", () => this.toSongRef("/images/" + main)) : null].filter(Boolean));
     }
-    tb.append(el("button", { class: "tb danger", title: "Delete", onclick: () => this.del(e) }, icon("i-trash")));
+    tb.append(el("button", { class: "tb danger", title: "Delete", "aria-label": "Delete", onclick: () => this.del(e) }, icon("i-trash")));
     head.append(tb);
 
     const card = el("div", { class: "media-card" + (A.view.fresh ? " fade-in" : "") });
@@ -578,17 +548,6 @@ const AudioWS = {
       el("h2", {}, "Voices, loops, songs and transcripts"),
       el("p", {}, "Clone a voice from a few seconds of audio, build tempo-locked loops, write a full song, or turn speech into text — all on the Tiiny."),
       el("div", { class: "tool-tiles" }, TOOLS.map((t) => el("button", { class: "tile", onclick: () => { A.tool = t.id; store.set("audio.tool", t.id); this.render(); } }, icon(t.icon), el("b", {}, t.label), el("small", {}, mediaBadges(modelForTool(t.id) || { type: TOOL_TYPES[t.id] }).slice(0, 2).join(" · ")))))));
-  },
-  renderStrip() {
-    const items = [];
-    for (const j of S.jobs.filter((x) => AUDIO_KINDS.has(x.kind === "transcribe" ? "transcript" : x.kind) && (x.status === "queued" || x.status === "running") && A.pendingRefText !== x.id))
-      items.push(el("button", { class: "thumb queued" + (j.status === "running" ? " run" : ""), "aria-current": A.view?.job === j.id, title: j.label, onclick: () => { A.view = { job: j.id }; this.renderStage(); this.renderStrip(); } }, j.status === "running" ? `${j.progress || "…"}${j.progress ? "%" : ""}` : "queued"));
-    const list = this.audioHistory();
-    const shown = galleryFilter("audio", list), again = () => this.renderStrip();
-    $("#galBar-audio").replaceChildren(galleryBar("audio", shown, again));
-    for (const e of shown) items.push(decorateThumb("audio", mediaThumb(e, A.view?.id === e.id, () => { A.view = { id: e.id }; this.renderStage(); this.renderStrip(); }, () => this.del(e)), e, again));
-    $("#aStrip").replaceChildren(...(items.length ? items : [el("div", { class: "strip-empty" }, "Your audio will collect here.")]));
-    $("#aCount").textContent = list.length || "";
   },
 
   /* ---------- actions ---------- */
@@ -633,12 +592,5 @@ const AudioWS = {
     }
     this.render();
     if (run) this.submit(); else toast("Settings loaded");
-  },
-  async del(e) {
-    try { await api("/api/history/" + e.id, { method: "DELETE" }); } catch (err) { return toast(err.message, "err"); }
-    const list = this.audioHistory(), i = list.indexOf(e);
-    S.history.splice(S.history.indexOf(e), 1);
-    if (A.view?.id === e.id) { const next = list[i + 1] || list[i - 1]; A.view = next ? { id: next.id } : null; }
-    this.renderStage(); this.renderStrip();
   },
 };

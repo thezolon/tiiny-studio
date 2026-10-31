@@ -39,20 +39,13 @@ function cutoutSize(m, w, h) {
 }
 
 const MeshWS = {
+  ...mediaWS({ kind: "mesh", p: "m", st: M, title: "3D models", empty: "Your 3D models will collect here.",
+    own: (e) => e.kind === "mesh", jobs: (j) => j.kind === "mesh",
+    queued: (j) => ({ label: `${j.progress || 0}%`, run: true, view: () => ({ job: j.id, plan: M.view?.plan }) }),
+    gate: () => ["mesh", "image-to-3D"] }),
   mounted: false,
   mount(root) {
-    root.replaceChildren(
-      el("aside", { class: "composer" },
-        el("div", { class: "composer-scroll" }, el("div", { id: "mGate" }), el("div", { id: "mPanel" })),
-        el("div", { class: "composer-foot" },
-          el("button", { class: "go", id: "mGo", onclick: () => this.submit() }, icon("i-cube"), el("span", {}, "Make 3D model"), el("span", { class: "est", id: "mEst" })),
-          el("div", { class: "foot-meta" }, el("span", { id: "mMeta" }), el("span", { id: "mSteps" })))),
-      el("section", { class: "stage-col" },
-        el("div", { class: "stage-head", id: "mHead" }),
-        el("div", { class: "stage", id: "mStage" }),
-        el("div", { class: "strip-wrap" },
-          el("div", { class: "strip-head" }, "3D models ", el("span", { class: "count", id: "mCount" }), el("span", { id: "galBar-mesh" })),
-          el("div", { class: "strip", id: "mStrip" }))));
+    this.shell(root, { ico: "i-cube", label: "Make 3D model", est: "mEst", foot: [el("span", { id: "mMeta" }), el("span", { id: "mSteps" })] });
     if (!viewerLoaded) {
       viewerLoaded = true;
       document.head.append(el("script", { type: "module", src: "/static/vendor/model-viewer.min.js" }));
@@ -63,11 +56,6 @@ const MeshWS = {
     this.renderGate();
     $("#mPanel").replaceChildren(...this.panel().filter(Boolean));  // hidden parts are null, which append would print
     this.renderFoot(); this.renderStage(); this.renderStrip();
-  },
-  renderGate() {
-    const g = modelGate("mesh", "image-to-3D");
-    $("#mGate").replaceChildren(...(g ? [g] : []));
-    this.renderFoot();
   },
   cuts() { return M.cutout && !!cutoutModel() && !M.clip?.transparent; },
   /** The loaded 3D model's own options (/v1/3d/capabilities): its stages, precisions and qualities. Hunyuan3D's until
@@ -99,11 +87,10 @@ const MeshWS = {
     return cut + 205 * pm * qm + (simp ? 6 : 0) + (tex ? 230 * qm + 60 : 0);
   },
   renderFoot() {
-    const m = modelForTool("mesh"), ready = m?.status === "running", cm = cutoutModel();
-    const cutBlocked = this.cuts() && cm.status !== "running" && !swapOn("mesh");  // the server would refuse
+    const cm = cutoutModel(), cutBlocked = this.cuts() && cm.status !== "running" && !swapOn("mesh");  // the server would refuse
+    const { ready } = this.footModel("mesh", cutBlocked ? ` · ${shortName(cm.id)} not loaded` : "");
     $("#mGo").disabled = !ready || !M.clip || cutBlocked;
     $("#mEst").textContent = M.clip ? "~" + fmtSec(this.estimate()) : "";
-    $("#mMeta").textContent = m ? shortName(m.id) + (ready ? "" : " · not loaded") + (cutBlocked ? ` · ${shortName(cm.id)} not loaded` : "") : "";
     $("#mSteps").textContent = this.plan().join(" → ");
   },
   panel() {
@@ -111,28 +98,23 @@ const MeshWS = {
     if (!t.precisions.some(([v]) => v === M.precision)) M.precision = t.precisions[0]?.[0] || "draft";
     if (!t.qualities.some(([v]) => v === M.quality)) M.quality = t.qualities.find(([v]) => v === "balance")?.[0] || t.qualities[0]?.[0] || "balance";
     const recent = imageHistory().slice(0, 12);
-    const src = M.clip
-      ? el("div", { class: "mesh-src" }, el("img", { src: M.clip.uri, alt: "" }),
-        el("button", { class: "x", title: "Remove", onclick: () => { M.clip = null; rerender(); } }, "✕"))
-      : (() => { const d = el("button", { class: "drop", onclick: () => { const i = el("input", { type: "file", accept: "image/*" }); i.onchange = () => i.files[0] && this.files([i.files[0]]); i.click(); } },
-        icon("i-upload"), el("span", {}, el("b", {}, "Drop, paste (Ctrl+V) or click to browse"), "One object, plain background works best"));
-        return fileZone(d, { key: "mesh-src", accept: /^image\//, what: "image", label: "3D source image", take: (f) => this.files(f) }); })();
-    const seg = (items, val, set, key) => el("div", { class: "seg small" }, items.map(([v, label]) => el("button", { "aria-pressed": val === v, onclick: () => { set(v); store.set(key, v); rerender(); } }, label)));
+    const src = imageSlot({ img: M.clip, clear: () => { M.clip = null; rerender(); }, cls: "mesh-src", key: "mesh-src", zone: "3D source image",
+      title: "Drop, paste (Ctrl+V) or click to browse", hint: "One object, plain background works best", take: (f) => this.files(f) });
     return [
       el("div", { class: "field", style: "margin-top:0" }, el("div", { class: "label" }, "Source image"), src),
       recent.length ? el("div", { class: "field" }, el("div", { class: "label" }, "From your images"),
         el("div", { class: "pick-row" }, recent.map((e) => el("button", { class: "pick", title: e.params.prompt, onclick: () => this.fromImage("/images/" + e.outputs[0]) }, el("img", { src: "/images/" + e.outputs[0], alt: "", loading: "lazy" }))))) : null,
       this.cutoutSwitch(rerender),
-      t.precisions.length ? el("div", { class: "field" }, el("div", { class: "label" }, "Geometry detail", el("span", { class: "hint" }, t.precisionHint)), seg(t.precisions, M.precision, (v) => { M.precision = v; }, "mesh.precision")) : null,
-      t.qualities.length ? el("div", { class: "field" }, el("div", { class: "label" }, "Sampling quality"), seg(t.qualities, M.quality, (v) => { M.quality = v; }, "mesh.quality")) : null,
+      t.precisions.length ? el("div", { class: "field" }, el("div", { class: "label" }, "Geometry detail", el("span", { class: "hint" }, t.precisionHint)), this.seg(t.precisions, M.precision, (v) => { M.precision = v; }, "mesh.precision")) : null,
+      t.qualities.length ? el("div", { class: "field" }, el("div", { class: "label" }, "Sampling quality"), this.seg(t.qualities, M.quality, (v) => { M.quality = v; }, "mesh.quality")) : null,
       t.known && t.assetQualities.length ? el("div", { class: "field" }, el("div", { class: "label" }, "Mesh quality", el("span", { class: "hint" }, "simplify and export")),
-        seg([["", "Default"], ...t.assetQualities], M.asset, (v) => { M.asset = v; }, "mesh.asset")) : null,
-      t.simplify ? el("div", { class: "field" }, el("div", { class: "label" }, "Polygon budget", el("span", { class: "hint" }, "simplify before texturing")), seg(FACES, M.faces, (v) => { M.faces = v; }, "mesh.faces")) : null,
+        this.seg([["", "Default"], ...t.assetQualities], M.asset, (v) => { M.asset = v; }, "mesh.asset")) : null,
+      t.simplify ? el("div", { class: "field" }, el("div", { class: "label" }, "Polygon budget", el("span", { class: "hint" }, "simplify before texturing")), this.seg(FACES, M.faces, (v) => { M.faces = v; }, "mesh.faces")) : null,
       t.texture ? el("label", { class: "switch-row" }, el("input", { type: "checkbox", checked: M.texture, onchange: (e) => { M.texture = e.target.checked; store.set("mesh.texture", M.texture); rerender(); } }),
         el("span", {}, el("b", {}, "PBR texture"), el("small", {}, `Paint color, metal and roughness maps · adds ~${t.family === "trellis2" ? "2.5" : "5"} min`))) : null,
       t.texture && M.texture && !M.faces ? el("div", { class: "hint-line warn" }, "Texturing a full-resolution mesh is slow — a 40k budget is recommended.") : null,
       el("details", { class: "adv" }, el("summary", {}, icon("i-chev"), "Advanced", el("span", { class: "sum" }, M.seed ? "seed " + M.seed : "auto")),
-        el("div", { class: "adv-body" }, AudioWS.seedField(M))),
+        el("div", { class: "adv-body" }, seedField(M))),
     ];
   },
   cutoutSwitch(rerender) {
@@ -170,23 +152,13 @@ const MeshWS = {
       this.renderStage(); this.renderStrip();
     } catch (e) { toast(e.message, "err"); }
   },
-  jobDone(j) {
-    if (M.view?.job === j.id) M.view = j.status === "done" ? { id: j.entry.id } : null;
-    if (this.mounted && S.ws === "mesh") { this.renderStage(); this.renderStrip(); }
-  },
-  renderJobs() { if (M.view?.job) this.renderStage(); this.renderStrip(); },
-  meshHistory() { return S.history.filter((e) => e.kind === "mesh"); },
 
   renderStage() {
     const head = $("#mHead"), stage = $("#mStage");
-    if (M.view?.job) {
-      const j = S.jobs.find((x) => x.id === M.view.job);
-      if (j && (j.status === "queued" || j.status === "running")) return this.renderPending(head, stage, j);
-      M.view = null;
-    }
+    const j = this.liveJob();
+    if (j) return this.renderPending(head, stage, j);
     head.replaceChildren(); stage.replaceChildren();
-    const list = this.meshHistory();
-    const e = (M.view && list.find((x) => x.id === M.view.id)) || (!M.view && list[0]);
+    const e = this.current(this.entries());
     if (!e) {
       stage.append(el("div", { class: "empty" }, el("div", { class: "art" }, icon("i-cube")), el("h2", {}, "Turn a picture into a 3D model"),
         el("p", {}, `${this.model3d().name} builds the shape from one image, then paints physically based textures you can drop into Blender, Unity or Unreal.`),
@@ -200,9 +172,9 @@ const MeshWS = {
         el("a", { class: "tb primary", href: url, download: `tiiny-3d-${e.id}.glb` }, icon("i-down"), el("span", { class: "lbl" }, "Download GLB")),
         e.sources[0] ? el("button", { class: "tb", onclick: () => { setWs("image"); useAsSource("/images/" + e.sources[0]); } }, icon("i-brush"), el("span", { class: "lbl" }, "Edit source")) : null,
         el("button", { class: "tb", onclick: () => this.reuse(e) }, icon("i-copy"), el("span", { class: "lbl" }, "Reuse")),
-        el("button", { class: "tb danger", title: "Delete", onclick: () => this.del(e) }, icon("i-trash"))));
+        el("button", { class: "tb danger", title: "Delete", "aria-label": "Delete", onclick: () => this.del(e) }, icon("i-trash"))));
     const viewer = document.createElement("model-viewer");
-    Object.entries({ src: url, "camera-controls": "", "auto-rotate": "", "shadow-intensity": "1", exposure: "1.05", "environment-image": "neutral", "interaction-prompt": "none", alt: "3D model" })
+    Object.entries({ src: url, "camera-controls": "", ...(REDUCED_MOTION ? {} : { "auto-rotate": "" }), "shadow-intensity": "1", exposure: "1.05", "environment-image": "neutral", "interaction-prompt": "none", alt: "3D model" })
       .forEach(([k, v]) => viewer.setAttribute(k, v));
     viewer.className = "viewer";
     const stats = (e.stages || []).map((s) => s.metadata).filter(Boolean);
@@ -235,26 +207,9 @@ const MeshWS = {
         el("div", { class: "prompt-echo" }, j.est ? `usually about ${fmtSec(j.est)}` : ""),
         el("button", { class: "tb cancel", disabled: !!j.stopping, title: j.stopping ? STOPPING : "", ...onPress((b) => stopButton(b, j.id)) }, j.stopping ? "Stopping…" : "Cancel"))].filter(Boolean));
   },
-  renderStrip() {
-    const items = [];
-    for (const j of S.jobs.filter((x) => x.kind === "mesh" && (x.status === "queued" || x.status === "running")))
-      items.push(el("button", { class: "thumb queued run", "aria-current": M.view?.job === j.id, onclick: () => { M.view = { job: j.id, plan: M.view?.plan }; this.renderStage(); this.renderStrip(); } }, `${j.progress || 0}%`));
-    const list = this.meshHistory();
-    const shown = galleryFilter("mesh", list), again = () => this.renderStrip();
-    $("#galBar-mesh").replaceChildren(galleryBar("mesh", shown, again));
-    for (const e of shown) items.push(decorateThumb("mesh", mediaThumb(e, M.view?.id === e.id, () => { M.view = { id: e.id }; this.renderStage(); this.renderStrip(); }, () => this.del(e)), e, again));
-    $("#mStrip").replaceChildren(...(items.length ? items : [el("div", { class: "strip-empty" }, "Your 3D models will collect here.")]));
-    $("#mCount").textContent = list.length || "";
-  },
   async reuse(e) {
     const p = e.params;
     Object.assign(M, { precision: p.output_precision || M.precision, quality: p.inference_quality || M.quality, texture: !!p.texture, faces: p.faces || 0 });
     if (e.sources[0]) await this.fromImage("/images/" + e.sources[0]); else this.render();
-  },
-  async del(e) {
-    try { await api("/api/history/" + e.id, { method: "DELETE" }); } catch (err) { return toast(err.message, "err"); }
-    S.history.splice(S.history.indexOf(e), 1);
-    if (M.view?.id === e.id) M.view = null;
-    this.renderStage(); this.renderStrip();
   },
 };

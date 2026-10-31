@@ -13,13 +13,21 @@ function setWs(ws) {
   if (!WS[ws]) ws = "image";
   S.ws = ws; store.set("ws", ws);
   for (const [k, v] of Object.entries(WS)) $(v.el).hidden = k !== ws;
-  for (const b of document.querySelectorAll(".ws-tabs [data-ws]")) b.setAttribute("aria-selected", b.dataset.ws === ws);
+  for (const b of document.querySelectorAll(".ws-tabs [data-ws]")) { b.setAttribute("aria-selected", b.dataset.ws === ws); b.tabIndex = b.dataset.ws === ws ? 0 : -1; }  // roving tabindex
   $("#dropveilText").textContent = { image: "Drop to use as source image", audio: "Drop audio to use it here", mesh: "Drop an image to turn into 3D", video: "Drop a picture to start the clip from", chat: "Drop pictures or documents to attach" }[ws];
   const mod = WS[ws].mod?.();
   if (mod) { if (!mod.mounted) { mod.mount($(WS[ws].el)); mod.mounted = true; } mod.render(); }
   renderModelBtn(); renderDrawer();
 }
 for (const b of document.querySelectorAll(".ws-tabs [data-ws]")) b.onclick = () => setWs(b.dataset.ws);
+// WAI-ARIA tabs: arrows move between workspaces (and open them), Home/End jump to the ends
+$(".ws-tabs").addEventListener("keydown", (e) => {
+  const tabs = [...document.querySelectorAll(".ws-tabs [data-ws]")], i = tabs.indexOf(e.target);
+  const to = { ArrowRight: (i + 1) % tabs.length, ArrowLeft: (i + tabs.length - 1) % tabs.length, Home: 0, End: tabs.length - 1 }[e.key];
+  if (i < 0 || to == null || e.ctrlKey || e.metaKey || e.altKey) return;
+  e.preventDefault(); e.stopPropagation();  // the image shortcuts on document also listen to the arrows
+  tabs[to].focus(); setWs(tabs[to].dataset.ws);
+});
 function wsFiles(files) { const mod = WS[S.ws].mod?.(); return mod?.files ? mod.files(files) : false; }
 function onModelsChanged() { for (const k of ["audio", "mesh", "video"]) { const m = WS[k].mod(); if (m?.mounted && S.ws === k) m.renderGate?.(); } WS.chat.mod()?.onModels?.(); renderAssistGates(); }
 function onHistoryLoaded() { for (const k of ["audio", "mesh", "video"]) { const m = WS[k].mod(); if (m?.mounted) m.render(); } }
@@ -54,12 +62,27 @@ async function pollJobs() {
     }
   }
   // after finished results are in history, so a render never shows "nothing selected"
+  announceJobs();
   if (typeof syncImageJobs === "function") syncImageJobs();
   renderJobsPill();
   for (const k of ["audio", "mesh", "video"]) { const m = WS[k].mod(); if (m?.mounted && S.ws === k) m.renderJobs?.(); }
   const active = S.jobs.some((j) => j.status === "queued" || j.status === "running");
   if (active && typeof pollStats === "function" && !statsTimer) pollStats();
   jobTimer = setTimeout(pollJobs, active ? 1500 : 15000);
+}
+const jobNote = new Map();  // job id -> the state last announced
+/** Tell screen readers when a job queues (with its place in line), starts, or moves up the line. Done and failed come
+ *  from onJobDone and the error toast; never the progress ticks. Jobs from before this page loaded stay quiet. */
+function announceJobs() {
+  for (const j of S.jobs) {
+    if (["chat", "assist", "ocr"].includes(j.kind) || (j.status !== "queued" && j.status !== "running")) continue;
+    const key = j.status === "queued" ? `queued ${j.queue_pos || 1}` : "running", was = jobNote.get(j.id), pos = j.queue_pos || 1;
+    if (was === key) continue;
+    jobNote.set(j.id, key);
+    if (j.created * 1000 < PAGE_T0 - 3000) continue;
+    const name = j.label || j.kind;
+    announce(j.status === "running" ? `${name} started` : was ? `${name}: ${pos} in line` : `${name} queued${pos > 1 ? `, ${pos} in line` : ""}`);
+  }
 }
 function onJobDone(j) {
   if (j.kind === "ocr" && typeof showOcrResult === "function") return showOcrResult(j);
@@ -69,6 +92,7 @@ function onJobDone(j) {
   const m = WS[mod]?.mod?.();
   if (m?.mounted) m.jobDone?.(j);
   if (j.status === "done" && mod && S.ws !== mod) toast(`${j.label || j.kind} is ready — open ${{ image: "Image", mesh: "3D", audio: "Audio", video: "Video" }[mod]} to see it`);
+  else if (j.status !== "error" && j.kind !== "chat") announce(`${j.label || j.kind} ${j.status === "done" ? "is done" : "was cancelled"}`);  // the toast above says it otherwise; errors have their own
   if (j.status === "done" && document.hidden && "Notification" in window && Notification.permission === "granted")
     new Notification("Tiiny Studio", { body: `${j.label || j.kind} is ready` });
 }
@@ -80,7 +104,7 @@ function renderJobsPill() {
   const j = act[0];
   const npu = typeof S.stats?.npu_util === "number" ? ` · NPU ${Math.round(S.stats.npu_util)}%` : "";
   pill.replaceChildren(el("span", { class: "dot busy" }), `${act.length} job${act.length > 1 ? "s" : ""} · ${j.label || j.kind}${j.progress ? ` ${j.progress}%` : ""}${npu}`);
-  pill.onclick = (e) => { e.stopPropagation(); toggleJobsMenu(); };
+  pill.onclick = (e) => { e.stopPropagation(); toggleJobsMenu(e.detail === 0); };
   if (!$("#jobsMenu")?.hidden) renderJobsMenu();
 }
 const wsOfJob = (j) => ({ mesh: "mesh", video: "video", image: "image", chat: "chat", assist: S.ws }[j.kind] || "audio");
@@ -99,7 +123,7 @@ function renderJobsMenu() {
   requestAnimationFrame(() => { menu.style.left = `${Math.max(8, Math.min(r.left, innerWidth - menu.offsetWidth - 8))}px`; });  // stay inside the window
   const times = queueTimes(act), waiting = act.filter((j) => j.status === "queued");
   const last = times.get(act[act.length - 1].id);
-  menu.replaceChildren(...act.map((j) => el("div", { class: "jobs-menu-row" },
+  keepFocus(menu, () => menu.replaceChildren(...act.map((j) => el("div", { class: "jobs-menu-row" },
     el("span", { class: "dot " + (j.status === "running" ? "busy" : "") }),
     el("button", { class: "jobs-menu-label", title: "Open its workspace", onclick: () => { menu.hidden = true; setWs(wsOfJob(j)); } },
       el("b", {}, j.label || j.kind), el("small", {}, j.stopping ? STOPPING : (j.status === "running" ? (j.tool_message || j.message || "Working…") + (j.progress ? ` · ${j.progress}%` : "") : `Waiting · #${j.queue_pos || 1} in line`)
@@ -108,7 +132,7 @@ function renderJobsMenu() {
     act.length > 1 || waiting.length ? el("div", { class: "jobs-menu-foot" },
       el("span", {}, last?.end ? `Queue done around ${clock(last.end)}` : "The queue's end time isn't known yet"),
       waiting.length > 1 ? el("button", { class: "btn-sm ghost", ...onPress((b) => { b.disabled = true; b.textContent = "Removing…"; Promise.all(waiting.map((w) => api(`/api/jobs/${w.id}/cancel`, { method: "POST", body: "{}" }).catch(() => {}))).then(pollJobs); }) },
-        `Remove all ${waiting.length} waiting`) : null) : null);
+        `Remove all ${waiting.length} waiting`) : null) : null));
 }
 /** When each job should start and finish, from its estimate (est, seconds) and the jobs ahead of it: a running job's
  *  remaining time, then each queued one in line. Unknown from the first job without an estimate on. */
@@ -129,11 +153,16 @@ function timeNote(j, t) {
   if (!t?.end) return t?.start && j.status === "queued" ? ` · starts ~${clock(t.start)}` : "";
   return j.status === "running" ? ` · done ~${clock(t.end)}` : ` · starts ~${clock(t.start)}, done ~${clock(t.end)}`;
 }
-function toggleJobsMenu() {
+function toggleJobsMenu(byKey) {
   renderJobsMenu();
   const menu = $("#jobsMenu");
   if (menu && S.jobs.some((j) => j.status === "queued" || j.status === "running")) menu.hidden = !menu.hidden;
+  if (byKey && menu && !menu.hidden) menu.querySelector("button")?.focus();  // it sits at the end of the page: bring the keyboard to it
 }
+document.addEventListener("keydown", (e) => {
+  const menu = $("#jobsMenu");
+  if (e.key === "Escape" && menu && !menu.hidden) { menu.hidden = true; if (menu.contains(document.activeElement)) $("#jobsPill").focus(); }
+});
 const STOPPING = "Stopping: the Tiiny finishes its current step, then the result is thrown away";
 /** Cancel from a button: it shows "Stopping…" at once, since a running job ends only when the device answers. */
 function stopButton(btn, id) { btn.disabled = true; btn.textContent = "Stopping…"; btn.title = STOPPING; cancelJob(id); }
@@ -286,7 +315,7 @@ function renderAssistGates() {
 /** A small "Undo" line after a helper replaced text the user wrote. */
 function assistUndo(slot, what, undo) {
   slot.replaceChildren(el("div", { class: "assist-note" }, `${what} by ${shortName(modelForTool("chat")?.id || "")}`, el("span", { class: "spacer" }),
-    el("button", { class: "linkish", onclick: () => { undo(); slot.replaceChildren(); } }, "Undo"), el("button", { class: "linkish", onclick: () => slot.replaceChildren() }, "✕")));
+    el("button", { class: "linkish", onclick: () => { undo(); slot.replaceChildren(); } }, "Undo"), el("button", { class: "linkish", "aria-label": "Dismiss", onclick: () => slot.replaceChildren() }, "✕")));
 }
 
 /* ---------- audio helpers ---------- */
@@ -376,18 +405,30 @@ function drawWave(canvas, peaks, progress = 0) {
 let currentAudio = null;
 function makePlayer(url, { big = false } = {}) {
   const audio = new Audio(url); audio.preload = "metadata";
-  const canvas = el("canvas", { class: "wave" + (big ? " big" : "") });
+  const canvas = el("canvas", { class: "wave" + (big ? " big" : ""), role: "slider", tabindex: "0", "aria-label": "Seek", "aria-valuemin": "0", "aria-valuenow": "0", "aria-valuetext": "0:00" });
   const btn = el("button", { class: "play", title: "Play / pause (space)" }, icon("i-play"));
   const time = el("span", { class: "ptime" }, "0:00");
   const mmss = (s) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
   let peaks = null;
-  const redraw = () => peaks && drawWave(canvas, peaks, audio.duration ? audio.currentTime / audio.duration : 0);
+  const sync = () => {  // the slider's value, updated once a second rather than on every frame
+    const t = Math.floor(audio.currentTime);
+    if (canvas.dataset.t === String(t)) return;
+    canvas.dataset.t = t; canvas.setAttribute("aria-valuenow", t); canvas.setAttribute("aria-valuetext", `${mmss(t)} of ${mmss(audio.duration || 0)}`);
+    if (audio.duration) canvas.setAttribute("aria-valuemax", Math.floor(audio.duration));
+  };
+  const redraw = () => { if (peaks) drawWave(canvas, peaks, audio.duration ? audio.currentTime / audio.duration : 0); sync(); };
   peaksFor(url).then((p) => { peaks = p.peaks; time.textContent = `0:00 / ${mmss(p.duration)}`; redraw(); }).catch(() => {});
   const tick = () => { redraw(); time.textContent = `${mmss(audio.currentTime)} / ${mmss(audio.duration || 0)}`; if (!audio.paused) requestAnimationFrame(tick); };
   audio.onplay = () => { if (currentAudio && currentAudio !== audio) currentAudio.pause(); currentAudio = audio; btn.replaceChildren(icon("i-pause")); tick(); };
   audio.onpause = audio.onended = () => { btn.replaceChildren(icon("i-play")); redraw(); };
   btn.onclick = () => (audio.paused ? audio.play() : audio.pause());
   canvas.onclick = (e) => { if (!audio.duration) return; const r = canvas.getBoundingClientRect(); audio.currentTime = (e.clientX - r.left) / r.width * audio.duration; redraw(); if (audio.paused) audio.play(); };
+  canvas.onkeydown = (e) => {  // keyboard seeking: arrows 5 s, Home/End
+    const d = audio.duration; if (!d || e.ctrlKey || e.metaKey || e.altKey) return;
+    const t = { ArrowLeft: audio.currentTime - 5, ArrowRight: audio.currentTime + 5, Home: 0, End: d }[e.key];
+    if (t == null) return;
+    e.preventDefault(); audio.currentTime = Math.max(0, Math.min(d, t)); redraw();
+  };
   new ResizeObserver(redraw).observe(canvas);
   const node = el("div", { class: "player" + (big ? " big" : "") }, btn, canvas, time);
   node.audio = audio;
@@ -402,31 +443,30 @@ document.addEventListener("keydown", (e) => {
 /* ---------- small shared UI ---------- */
 /** Two-click delete for a gallery thumbnail: first click arms it ("Delete?"), second deletes. */
 function thumbDel(onDelete) {
-  const b = el("span", { class: "thumb-del", role: "button", tabindex: "0", title: "Delete", "aria-label": "Delete" }, "✕");
+  const b = el("button", { class: "thumb-del", type: "button", title: "Delete", "aria-label": "Delete" }, "✕");  // a sibling of the thumbnail button, never inside it
   let timer = null;
   const act = (ev) => {
     ev.stopPropagation(); ev.preventDefault();
     if (!b.classList.contains("armed")) {
-      b.classList.add("armed"); b.textContent = "Delete?";
-      timer = setTimeout(() => { b.classList.remove("armed"); b.textContent = "✕"; }, 3000);
+      b.classList.add("armed"); b.textContent = "Delete?"; b.setAttribute("aria-label", "Delete? Press again to confirm");
+      timer = setTimeout(() => { b.classList.remove("armed"); b.textContent = "✕"; b.setAttribute("aria-label", "Delete"); }, 3000);
       return;
     }
     clearTimeout(timer); b.textContent = "…"; onDelete();
   };
   b.addEventListener("click", act);
-  b.addEventListener("keydown", (ev) => { if (ev.key === "Enter" || ev.key === " ") act(ev); });
   return b;
 }
-function mediaThumb(e, current, onclick, onDelete) {
+function mediaThumb(e, current, onclick) {
   const icons = { speech: "i-voice", loop: "i-wave", song: "i-music", transcript: "i-text", mesh: "i-cube", video: "i-film" };
   const labels = { speech: "VOICE", loop: "LOOP", song: "SONG", transcript: "TEXT", mesh: "3D", video: "VIDEO" };
-  const t = el("button", { class: "thumb media-thumb", "aria-current": current, title: e.params?.text || e.params?.prompt || e.params?.caption || e.text || "", onclick });
+  const title = e.params?.text || e.params?.prompt || e.params?.caption || e.text || "";
+  const t = el("button", { class: "thumb media-thumb", "aria-current": current, title, "aria-label": `${labels[e.kind] || e.kind} ${title}`.trim(), onclick });
   if (e.kind === "mesh" && e.sources?.[0]) t.append(el("img", { src: "/images/" + e.sources[0], alt: "", loading: "lazy" }));
   else if (e.kind === "video") t.append(el("video", { src: "/images/" + e.outputs[0] + "#t=0.5", muted: true, preload: "metadata" }));
   else t.append(icon(icons[e.kind] || "i-wave"));
   t.append(el("span", { class: "badge" }, labels[e.kind] || e.kind));
   if (e.duration) t.append(el("span", { class: "multi" }, fmtSec(e.duration)));
-  if (onDelete) t.append(thumbDel(onDelete));
   return t;
 }
 function pendingCard(j, onCancel) {
@@ -440,6 +480,97 @@ function pendingCard(j, onCancel) {
       el("div", { class: "bar" }, el("i", { style: `width:${pct.toFixed(1)}%` })),
       el("div", { class: "prompt-echo" }, j.label || j.kind),
       el("button", { class: "tb cancel", disabled: !!j.stopping, title: j.stopping ? STOPPING : "", ...onPress((b) => onCancel ? onCancel(j) : stopButton(b, j.id)) }, j.stopping ? "Stopping…" : "Cancel")));
+}
+
+/* ---------- panels: Audio, 3D and Video ---------- */
+/** A seed box with a dice button; obj.seed holds the digits ("" = new each run). */
+function seedField(obj) {
+  const inp = el("input", { class: "input", inputmode: "numeric", placeholder: "random", value: obj.seed, oninput: (e) => { obj.seed = e.target.value.replace(/\D/g, ""); e.target.value = obj.seed; } });
+  return el("div", { class: "field" }, el("div", { class: "label" }, "Seed", el("span", { class: "hint" }, "blank = new each run")),
+    el("div", { class: "seed-row" }, inp, el("button", { class: "toggle-btn", title: "Roll", onclick: () => { obj.seed = String(Math.floor(Math.random() * 2 ** 31)); inp.value = obj.seed; } }, icon("i-dice"))));
+}
+/** One picture to drop, paste or browse for, shown with a remove button once set. take gets the files. */
+function imageSlot({ img, clear, cls, key, zone, title, hint, take }) {
+  if (img) return el("div", { class: cls }, el("img", { src: img.uri, alt: "" }), el("button", { class: "x", title: "Remove", "aria-label": "Remove picture", onclick: clear }, "✕"));
+  const d = el("button", { class: "drop", onclick: () => { const i = el("input", { type: "file", accept: "image/*" }); i.onchange = () => i.files[0] && take([i.files[0]]); i.click(); } },
+    icon("i-upload"), el("span", {}, el("b", {}, title), hint));
+  return fileZone(d, { key, accept: /^image\//, what: "image", label: zone, take });
+}
+/** What the three panels share, mixed into each workspace object: { ...mediaWS({...}), … }. c: { kind (also the
+ *  workspace and gallery name), p (id prefix), st (its state, st.view = {id} | {job}), title, empty, own(entry),
+ *  jobs(job), queued(job) -> { label, run, title, view() }, gate() -> [tool, what], thumb(el, entry), early(job),
+ *  fresh }. A panel still supplies mount (via shell), render, renderFoot, renderStage, submit. */
+function mediaWS(c) {
+  const { kind, p, st } = c;
+  return {
+    shell(root, { top = [], ico, label, est, foot, bar = [] }) {
+      root.replaceChildren(
+        el("aside", { class: "composer" },
+          el("div", { class: "composer-scroll" }, ...top, el("div", { id: p + "Gate" }), el("div", { id: p + "Panel" })),
+          el("div", { class: "composer-foot" },
+            el("button", { class: "go", id: p + "Go", onclick: () => this.submit() }, icon(ico), typeof label === "string" ? el("span", {}, label) : label, el("span", { class: "est", id: est })),
+            el("div", { class: "foot-meta" }, ...foot))),
+        el("section", { class: "stage-col" },
+          el("div", { class: "stage-head", id: p + "Head" }),
+          el("div", { class: "stage", id: p + "Stage" }),
+          el("div", { class: "strip-wrap" },
+            el("div", { class: "strip-head" }, c.title + " ", el("span", { class: "count", id: p + "Count" }), el("span", { id: "galBar-" + kind }), ...bar),
+            el("div", { class: "strip", id: p + "Strip" }))));
+    },
+    seg(items, val, set, key) { return el("div", { class: "seg small" }, items.map(([v, label]) => el("button", { "aria-pressed": val === v, onclick: () => { set(v); store.set(key, v); this.render(); } }, label))); },
+    renderGate() {
+      const g = modelGate(...c.gate());
+      $(`#${p}Gate`).replaceChildren(...(g ? [g] : []));
+      this.renderFoot();
+    },
+    /** The tool's model and whether it's loaded; also writes the "name · not loaded" line in the footer. */
+    footModel(tool, extra = "") {
+      const m = modelForTool(tool), ready = m?.status === "running";
+      $(`#${p}Meta`).textContent = m ? shortName(m.id) + (ready ? "" : " · not loaded") + extra : "";
+      return { m, ready };
+    },
+    entries() { return S.history.filter(c.own); },
+    /** The queued or running job on show, if any; a finished one drops back to the newest result. */
+    liveJob() {
+      if (!st.view?.job) return null;
+      const j = S.jobs.find((x) => x.id === st.view.job);
+      if (j && (j.status === "queued" || j.status === "running")) return j;
+      st.view = null;
+      return null;
+    },
+    /** The result on show: the chosen one, else the newest when nothing is chosen. */
+    current(list) { return (st.view && list.find((x) => x.id === st.view.id)) || (!st.view && list[0]); },
+    jobDone(j) {
+      if (c.early?.(j)) return;
+      if (st.view?.job === j.id) st.view = j.status === "done" ? { id: j.entry.id, ...(c.fresh && { fresh: true }) } : null;
+      if (this.mounted && S.ws === kind) { this.renderStage(); this.renderStrip(); }
+    },
+    renderJobs() { if (st.view?.job) this.renderStage(); this.renderStrip(); },
+    renderStrip() {
+      const items = [], show = () => { this.renderStage(); this.renderStrip(); };
+      for (const j of S.jobs.filter((x) => c.jobs(x) && (x.status === "queued" || x.status === "running"))) {
+        const q = c.queued(j);
+        items.push(el("button", { class: "thumb queued" + (q.run ? " run" : ""), "aria-current": st.view?.job === j.id, title: q.title, "aria-label": `${q.label}: ${q.title}`, onclick: () => { st.view = q.view?.() || { job: j.id }; show(); } }, q.label));
+      }
+      const list = this.entries(), shown = galleryFilter(kind, list);
+      $("#galBar-" + kind).replaceChildren(galleryBar(kind, shown, () => this.renderStrip()));
+      for (const e of shown) {
+        const t = mediaThumb(e, st.view?.id === e.id, () => { st.view = { id: e.id }; show(); });
+        c.thumb?.(t, e);
+        items.push(decorateThumb(kind, t, e, () => this.renderStrip(), thumbDel(() => this.del(e))));
+      }
+      $(`#${p}Strip`).replaceChildren(...(items.length ? items : [el("div", { class: "strip-empty" }, c.empty)]));
+      $(`#${p}Count`).textContent = list.length || "";
+    },
+    /** Deleting the result on show moves the display to its neighbour (the older one, else the newer), as in Image. */
+    async del(e) {
+      try { await api("/api/history/" + e.id, { method: "DELETE" }); } catch (err) { return toast(err.message, "err"); }
+      const list = this.entries(), i = list.indexOf(e);
+      S.history.splice(S.history.indexOf(e), 1);
+      if (st.view?.id === e.id) { const next = list[i + 1] || list[i - 1]; st.view = next ? { id: next.id } : null; }
+      this.renderStage(); this.renderStrip();
+    },
+  };
 }
 
 // DOMContentLoaded fires after every classic script (audio.js, mesh.js) has run.

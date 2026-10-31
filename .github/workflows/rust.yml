@@ -1,5 +1,6 @@
 # Rust port checks on pull requests and on main when they touch it: cargo tests on Windows, macOS and
-# Linux, the contract tests (Python reference vs Rust, against the fake Tiiny) and a desktop app build.
+# Linux, the contract tests (Python reference vs Rust, against the fake Tiiny), a desktop app build and an
+# accessibility check of the web UI (axe-core).
 # Not on tags or other branch pushes: a release's commit is already tested in its PR and on main, and the
 # extra runs held up the release build's runners. Never contacts a real device.
 name: Rust
@@ -7,9 +8,9 @@ name: Rust
 on:
   push:
     branches: [main]
-    paths: ["rust/**", "static/**", "testdata/fake_tiiny.py", "testdata/contract/**", "*.py", ".github/workflows/rust.yml"]
+    paths: ["rust/**", "static/**", "testdata/fake_tiiny.py", "testdata/a11y_check.py", "testdata/contract/**", "*.py", ".github/workflows/rust.yml"]
   pull_request:
-    paths: ["rust/**", "static/**", "testdata/fake_tiiny.py", "testdata/contract/**", "*.py", ".github/workflows/rust.yml"]
+    paths: ["rust/**", "static/**", "testdata/fake_tiiny.py", "testdata/a11y_check.py", "testdata/contract/**", "*.py", ".github/workflows/rust.yml"]
   workflow_dispatch:
 
 permissions:
@@ -55,3 +56,17 @@ jobs:
         run: |
           pip install pillow python-docx
           python testdata/extract_parity.py
+
+  a11y:
+    name: Accessibility (axe-core, WCAG 2.2 AA)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7.1.0
+        with: { python-version: "3.12" }
+      - name: Playwright and Chromium
+        run: |
+          pip install playwright==1.64.1
+          python -m playwright install --with-deps chromium
+      - name: Check every workspace, the drawer and the dialogs (fake Tiiny)
+        run: python testdata/a11y_check.py

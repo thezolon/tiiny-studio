@@ -99,10 +99,10 @@ function deviceList() {
         el("small", {}, `${d.host}${d.key_set ? ` · key ${d.key_hint}` : " · no key"}${st?.ok ? ` · ${st.ms} ms` : st ? " · not answering" : ""}`),
         i.docker && d.host.startsWith("172.17.") && !st?.ok ? el("small", { class: "dev-warn" }, "A USB address in Docker's own network: the studio in Docker can't reach it. Use the Tiiny's Wi-Fi address, the desktop app, or ",
           el("a", { href: "/docs/CONNECTING.md", target: "_blank", rel: "noopener" }, "move Docker's network"), ".") : null),
-      n > 0 ? el("button", { class: "icon-btn sm", type: "button", title: "Move up (higher priority)", onclick: () => act("move", { id: d.id, dir: -1 }) }, "↑") : null,
+      n > 0 ? el("button", { class: "icon-btn sm", type: "button", title: "Move up (higher priority)", "aria-label": `Move ${d.name} up`, onclick: () => act("move", { id: d.id, dir: -1 }) }, "↑") : null,
       active ? null : el("button", { class: "btn-sm", type: "button", disabled: !d.key_set, onclick: () => act("activate", { id: d.id }) }, "Use"),
       el("button", { class: "btn-sm ghost", type: "button", onclick: () => { SET.editing = d.id; refreshSettings(); } }, "Edit"),
-      i.devices.length > 1 ? el("button", { class: "btn-sm ghost dev-del", type: "button", title: "Remove", onclick: () => { if (confirm(`Remove “${d.name}” and its saved key?`)) act("delete", { id: d.id }); } }, "✕") : null);
+      i.devices.length > 1 ? el("button", { class: "btn-sm ghost dev-del", type: "button", title: "Remove", "aria-label": `Remove ${d.name}`, onclick: () => { if (confirm(`Remove “${d.name}” and its saved key?`)) act("delete", { id: d.id }); } }, "✕") : null);
   });
   const auto = el("label", { class: "auto dev-auto" },
     el("input", { type: "checkbox", checked: !!i.auto, onchange: (e) => act("auto", { auto: e.target.checked }) }),
@@ -168,17 +168,17 @@ function openSettings(firstRun = false) {
   SET.editing = null; SET.onClose = null;
   SET.firstRun = firstRun;
   const card = el("div", { class: "modal-card set-card" },
-    el("div", { class: "modal-head" }, el("h3", {}, firstRun ? "Connect your Tiiny" : "Device settings"), el("span", { class: "spacer" }),
-      firstRun ? null : el("button", { class: "icon-btn", title: "Close (Esc)", onclick: closeSettings }, "✕")),
+    el("div", { class: "modal-head" }, el("h3", { id: "settingsTitle" }, firstRun ? "Connect your Tiiny" : "Device settings"), el("span", { class: "spacer" }),
+      firstRun ? null : el("button", { class: "icon-btn", title: "Close (Esc)", "aria-label": "Close", onclick: closeSettings }, "✕")),
     el("div", { class: "set-body", id: "setBody" }, ...settingsBody(firstRun)));
   $("#settingsModal").replaceChildren(card);
-  $("#settingsModal").classList.add("show");
   $("#settingsModal").dataset.locked = firstRun ? "1" : "";
+  openModal($("#settingsModal"));
   if (!firstRun) api("/api/settings/check", { method: "POST", body: "{}" }).then((r) => { SET.info = r; if (!SET.editing) refreshSettings(); }).catch(() => {});
 }
 function refreshSettings() {
   const body = $("#setBody");
-  if (body) body.replaceChildren(...settingsBody(SET.firstRun && !SET.info?.configured));
+  if (body) keepFocus(body, () => body.replaceChildren(...settingsBody(SET.firstRun && !SET.info?.configured)));
 }
 async function wipeEverything() {
   const n = S.history.length;
@@ -222,7 +222,7 @@ async function deviceGoesOff() {
   return false;
 }
 
-function closeSettings() { if (SET.onClose) { const f = SET.onClose; SET.onClose = null; f(); return; } if ($("#settingsModal").dataset.locked === "1" && !SET.info?.configured) return; SET.editing = null; $("#settingsModal").classList.remove("show"); }
+function closeSettings() { if (SET.onClose) { const f = SET.onClose; SET.onClose = null; f(); return; } if ($("#settingsModal").dataset.locked === "1" && !SET.info?.configured) return; SET.editing = null; closeModal($("#settingsModal")); }
 
 $("#settingsBtn").onclick = () => openSettings(false);
 document.addEventListener("keydown", (e) => { if (e.key === "Escape" && $("#settingsModal").classList.contains("show")) { e.stopPropagation(); closeSettings(); } }, true);
