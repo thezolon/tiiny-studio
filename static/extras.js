@@ -132,7 +132,7 @@ async function pollStats() {
   if (S.drawer) { const c = $("#statsCard"); if (c) c.replaceWith(statsCard()); }
   renderJobsPill();
   const busy = (S.jobs || []).some((j) => j.status === "running");
-  if (S.drawer || busy) statsTimer = setTimeout(pollStats, 3000);
+  statsTimer = S.drawer || busy ? setTimeout(pollStats, 3000) : null;
 }
 function statsCard() {
   const s = S.stats || {};
@@ -351,7 +351,8 @@ function textDialog(title, { onClose, models, docName } = {}) {
     a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 5000);
   } });
   const copy = el("button", { class: "btn-sm accent", onclick: () => { navigator.clipboard?.writeText(shown()); toast("Copied"); } });
-  const close = () => { closed = true; $("#settingsModal").classList.remove("show"); onClose?.(); };
+  const close = () => { closed = true; SET.onClose = null; $("#settingsModal").classList.remove("show"); onClose?.(); };
+  SET.onClose = close;  // Escape and the gear close this dialog through the same path (so a running read halts)
   const card = el("div", { class: "modal-card set-card" },
     el("div", { class: "modal-head" }, el("h3", { class: "ocr-title" }, title), el("span", { class: "spacer" }), seg, el("button", { class: "icon-btn", title: "Close", onclick: close }, "✕")),
     el("div", { class: "set-body" }, bar, box,

@@ -1682,8 +1682,8 @@ window.addEventListener("drop", (e) => { e.preventDefault(); dragDepth = 0; $("#
 // keyboard
 document.addEventListener("keydown", (e) => {
   if (e.key === "Escape") { if ($("#annot").classList.contains("show")) closeAnnot(); else if (S.drawer) closeDrawer(); return; }
-  if (e.target.closest("input, textarea, select") || e.ctrlKey || e.metaKey || e.altKey) return;
-  if ($("#annot").classList.contains("show")) return;
+  if (e.target.closest("input, textarea, select, [role=dialog]") || e.ctrlKey || e.metaKey || e.altKey) return;
+  if (document.querySelector(".modal.show")) return;
   if (e.key === "m") { S.drawer ? closeDrawer() : openDrawer(); return; }
   if (S.ws && S.ws !== "image") return;
   const entry = S.view?.id && S.history.find((x) => x.id === S.view.id);

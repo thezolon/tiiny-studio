@@ -165,7 +165,7 @@ function settingsBody(firstRun) {
 }
 
 function openSettings(firstRun = false) {
-  SET.editing = null;
+  SET.editing = null; SET.onClose = null;
   SET.firstRun = firstRun;
   const card = el("div", { class: "modal-card set-card" },
     el("div", { class: "modal-head" }, el("h3", {}, firstRun ? "Connect your Tiiny" : "Device settings"), el("span", { class: "spacer" }),
@@ -189,8 +189,10 @@ async function wipeEverything() {
     for (const k of Object.keys(localStorage)) if (k.startsWith("tiiny.") && !/^tiiny\.(ws|model|aspect|res|timing|mesh\.|audio\.tool|audio\.lang)/.test(k)) { try { localStorage.removeItem(k); } catch {} }
     if (typeof A !== "undefined") { A.view = null; A.voices = []; A.speech.voiceId = null; }
     if (typeof M !== "undefined") M.view = null;
+    if (typeof V !== "undefined") V.view = null;
+    if (typeof C !== "undefined") { C.cur = newChat(); C.attach = []; }
     closeSettings(); renderAll();
-    for (const k of ["audio", "mesh"]) { const m = WS[k].mod(); if (m.mounted) { k === "audio" ? m.loadVoices() : m.render(); } }
+    for (const k of ["audio", "mesh", "video", "chat"]) { const m = WS[k].mod(); if (m?.mounted) { k === "audio" ? m.loadVoices() : k === "chat" ? (m.loadList(), m.render()) : m.render(); } }
     toast(`Deleted ${r.entries} results, ${r.voices} voices and ${r.files} files`);
   } catch (e) { toast(e.message, "err"); }
 }
@@ -220,7 +222,7 @@ async function deviceGoesOff() {
   return false;
 }
 
-function closeSettings() { if ($("#settingsModal").dataset.locked === "1" && !SET.info?.configured) return; SET.editing = null; $("#settingsModal").classList.remove("show"); }
+function closeSettings() { if (SET.onClose) { const f = SET.onClose; SET.onClose = null; f(); return; } if ($("#settingsModal").dataset.locked === "1" && !SET.info?.configured) return; SET.editing = null; $("#settingsModal").classList.remove("show"); }
 
 $("#settingsBtn").onclick = () => openSettings(false);
 document.addEventListener("keydown", (e) => { if (e.key === "Escape" && $("#settingsModal").classList.contains("show")) { e.stopPropagation(); closeSettings(); } }, true);
