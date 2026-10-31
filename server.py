@@ -768,7 +768,9 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(400, {"error": {"message": str(e)}})
         m = re.fullmatch(r"/api/jobs/(\w+)/cancel", self.path)
         if m:
-            return self.send_json(200 if MEDIA.cancel(m.group(1)) else 404, {"ok": True})
+            if not MEDIA.cancel(m.group(1)):
+                return self.send_json(404, {"error": {"message": "no such job"}})
+            return self.send_json(200, {"ok": True})
         if self.path == "/api/voices":
             return self.save_voice()
         m = re.fullmatch(r"/api/chats/(\w+)(/delete)?", self.path)

@@ -977,11 +977,11 @@ def _song_entry(m, job, req, res, config, sources, route, url):
     downloads, resume, device = [], None, {}
     sid = res.get("session_id")
     if url and sid:
-        m.http("DELETE", f"{url}/v1/sessions/{sid}", timeout=15)
+        m.http("DELETE", f"{url}/v1/sessions/{quote(sid, safe='')}", timeout=15)
     elif sid:
         # Gateway songs can also be fetched as MP3 from their session.
         try:
-            code, mp3 = m.http("GET", f"{m.settings.url}/v1/music/sessions/{sid}/download?format=mp3", timeout=120, headers=m.gateway_headers(), raw=True)
+            code, mp3 = m.http("GET", f"{m.settings.url}/v1/music/sessions/{quote(sid, safe='')}/download?format=mp3", timeout=120, headers=m.gateway_headers(), raw=True)
             if code == 200 and isinstance(mp3, (bytes, bytearray)) and len(mp3) > 1000:
                 downloads.append(m.save(f"{job['id']}-song.mp3", mp3))
         except JobError:

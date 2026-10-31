@@ -282,10 +282,10 @@ async fn song_entry(ctx: &Ctx, res: &Value, config: &Map<String, Value>, sources
     let (mut downloads, mut resume, mut device) = (vec![], None, None);
     let sid = res.get("session_id").filter(|s| truthy(s)).map(show);
     if let (Some(url), Some(sid)) = (&url, &sid) {
-        http(ctx, "DELETE", &format!("{url}/v1/sessions/{sid}"), None, 15, false).await?;
+        http(ctx, "DELETE", &format!("{url}/v1/sessions/{}", quote(sid)), None, 15, false).await?;
     } else if let Some(sid) = &sid {
         // Gateway songs can also be fetched as MP3 from their session.
-        let dl = format!("{}/v1/music/sessions/{sid}/download?format=mp3", ctx.target.url);
+        let dl = format!("{}/v1/music/sessions/{}/download?format=mp3", ctx.target.url, quote(sid));
         if let Ok((200, Ok(mp3))) = http_bytes(ctx, "GET", &dl, None, 120, true).await {
             if mp3.len() > 1000 {
                 downloads.push(save(ctx, &format!("{}-song.mp3", ctx.id), &mp3)?);

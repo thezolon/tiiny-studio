@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **Error handling:** a job keeps talking to the device it started on (and sends only that device's key) even if the studio switches devices meanwhile; a result the disk can't hold is reported ("Couldn't save the result") instead of silently missing; a failed or cancelled job leaves no files behind; an answer that isn't JSON, a bad request body or one over 150 MB gets a clear error instead of a crash.
+
 ## 0.4.0 (2026-10-30)
 
 Video with sound, panels that follow the loaded model, and a queue you can leave running overnight.

@@ -124,6 +124,11 @@ class Hardening(Jobs):
             self.assertTrue(r.json["error"]["message"].startswith("Couldn't save your changes: "), r.body)
         self.assertEqual([r.json for r in self.get("/api/voices")], [[], []])  # no half-saved voice
 
+    def test_cancelling_an_unknown_job_is_a_404_with_an_error(self):
+        py, rs = self.post("/api/jobs/nosuchjob/cancel", {})
+        self.same((py, rs))
+        self.assertEqual((py.status, py.json), (404, {"error": {"message": "no such job"}}))
+
     # ---------- files left behind by failed jobs ----------
     def files(self):
         return [sorted(p.name for p in (d / "images").iterdir()) for d in self.h.tmp[-2:]]

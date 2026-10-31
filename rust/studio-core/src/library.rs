@@ -78,8 +78,10 @@ async fn submit_job(State(state): State<AppState>, body: Bytes) -> Response {
 }
 
 async fn cancel_job(State(state): State<AppState>, Path(id): Path<String>) -> Response {
-    let ok = word(&id) && state.jobs.cancel(&state, &id).await;
-    (if ok { StatusCode::OK } else { StatusCode::NOT_FOUND }, Json(json!({"ok": true}))).into_response()
+    if !word(&id) || !state.jobs.cancel(&state, &id).await {
+        return error(StatusCode::NOT_FOUND, "no such job");
+    }
+    Json(json!({"ok": true})).into_response()
 }
 
 async fn history(State(state): State<AppState>) -> Json<Value> {
