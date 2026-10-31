@@ -79,7 +79,7 @@ class Jobs(ContractCase):
     def files_equal(self, py, rs, key="outputs"):
         p, r = py["entry"][key], rs["entry"][key]
         self.assertEqual(len(p), len(r))
-        for a, b in zip(p, r):
+        for a, b in zip(p, r, strict=True):
             self.assertEqual(a.split("-", 1)[-1], b.split("-", 1)[-1])  # "-speech.wav", "-song.wav"
             self.assertEqual(request(self.h.py_url, "GET", "/images/" + a).body, request(self.h.rs_url, "GET", "/images/" + b).body)
 

@@ -645,14 +645,14 @@ class Handler(BaseHTTPRequestHandler):
         try:
             return max(0, int(self.headers.get("Content-Length") or 0))
         except ValueError:
-            raise BadBody("The request has a bad Content-Length.")
+            raise BadBody("The request has a bad Content-Length.") from None
 
     def read_json(self):
         """The request body as a JSON object ({} when empty); BadBody (a ValueError) when it is anything else."""
         try:
             body = json.loads(self.rfile.read(self.body_length()) or b"{}")
         except ValueError:
-            raise BadBody("The request body isn't valid JSON.")
+            raise BadBody("The request body isn't valid JSON.") from None
         if not isinstance(body, dict):
             raise BadBody("The request body must be a JSON object.")
         return body
@@ -947,14 +947,14 @@ class Handler(BaseHTTPRequestHandler):
             items = [e for e in load_history() if entry_text(e)]
         try:
             todo = [e for e in items if SEARCH_CACHE.get(e["id"], (None,))[0] != entry_text(e)]
-            for e, v in zip(todo, embed(model, [entry_text(e) for e in todo])):
+            for e, v in zip(todo, embed(model, [entry_text(e) for e in todo]), strict=False):
                 SEARCH_CACHE[e["id"]] = (entry_text(e), v)
             q = embed(model, [query])[0]
         except JobError as e:
             return self.send_json(502, {"error": {"message": str(e)}})
         norm = lambda v: sum(x * x for x in v) ** 0.5 or 1
         qn = norm(q)
-        scored = sorted(((sum(a * b for a, b in zip(q, SEARCH_CACHE[e["id"]][1])) / (qn * norm(SEARCH_CACHE[e["id"]][1])), e["id"]) for e in items), reverse=True)
+        scored = sorted(((sum(a * b for a, b in zip(q, SEARCH_CACHE[e["id"]][1], strict=False)) / (qn * norm(SEARCH_CACHE[e["id"]][1])), e["id"]) for e in items), reverse=True)
         self.send_json(200, {"results": [{"id": i, "score": round(s, 4)} for s, i in scored]})
 
     def wipe_everything(self):

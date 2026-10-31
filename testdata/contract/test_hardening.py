@@ -1,14 +1,13 @@
 """Hardening contract tests: a job keeps the device it started on, answers that aren't JSON, request bodies, files left
 behind by failed jobs. Both servers run against the fake Tiiny and must answer alike."""
-import base64
 import contextlib
 import json
 import shutil
 import time
 import unittest
 
-from harness import ContractCase, IMAGE as DOCKER, request  # first: puts testdata/ on the path
-from test_stage5_audio import ASR, AUTH, Jobs, MESH, PNG, SONG, TTS, VIDEO, WAV  # noqa: E402
+from harness import IMAGE as DOCKER, request  # first: puts testdata/ on the path
+from test_stage5_audio import ASR, AUTH, Jobs, PNG, SONG, VIDEO, WAV  # noqa: E402
 import fake_tiiny  # noqa: E402
 
 IMAGE_MODEL = "Qwen/Qwen-Image-2.1"
