@@ -52,8 +52,9 @@ pub fn router(state: AppState) -> Router {
         .route("/api/extract", post(extract_document))
         .merge(crate::library::routes())
         .fallback(not_found)
-        // the Python server takes any size (pictures and voice clips arrive as base64 JSON); /api/extract checks its own 100 MB
-        .layer(axum::extract::DefaultBodyLimit::disable())
+        // same cap as server.py (for a body without a Content-Length too); /api/extract checks its own 100 MB
+        .layer(axum::extract::DefaultBodyLimit::max(MAX_BODY))
+        .layer(middleware::from_fn(body_limit))
         .layer(middleware::from_fn_with_state(state.clone(), authorized))
         .layer(middleware::from_fn_with_state(state.clone(), same_site))
         .with_state(state)
@@ -131,12 +132,29 @@ fn reply((code, body): (u16, Value)) -> Response {
     (StatusCode::from_u16(code).unwrap_or(StatusCode::BAD_GATEWAY), Json(body)).into_response()
 }
 
-/// The request body as JSON, like Handler.read_json(): empty means {}.
+/// The request body as a JSON object, like Handler.read_json(): empty means {}; anything else that isn't an object is
+/// an error to answer 400 with (same words as server.py).
 pub(crate) fn read_json(body: &Bytes) -> Result<Value, String> {
     if body.is_empty() {
         return Ok(json!({}));
     }
-    serde_json::from_slice(body).map_err(|e| e.to_string())
+    match serde_json::from_slice::<Value>(body) {
+        Ok(v) if v.is_object() => Ok(v),
+        Ok(_) => Err("The request body must be a JSON object.".into()),
+        Err(_) => Err("The request body isn't valid JSON.".into()),
+    }
+}
+
+/// The largest request body: pictures, voice clips and video frames arrive as base64 JSON; /api/extract checks its own 100 MB.
+const MAX_BODY: usize = 150 << 20;
+const TOO_LARGE: &str = "That request is too large (over 150 MB).";
+
+async fn body_limit(req: Request, next: Next) -> Response {
+    let len = req.headers().get(header::CONTENT_LENGTH).and_then(|v| v.to_str().ok()).and_then(|v| v.trim().parse::<usize>().ok());
+    if len.is_some_and(|n| n > MAX_BODY) {
+        return error(StatusCode::PAYLOAD_TOO_LARGE, TOO_LARGE);
+    }
+    next.run(req).await
 }
 
 pub(crate) fn str_of<'a>(v: &'a Value, k: &str) -> &'a str {
@@ -602,6 +620,26 @@ mod tests {
         let own = req("POST", "/api/privacy/wipe", "127.0.0.1:7860", Some("http://127.0.0.1:7860"));
         assert_eq!(send(app(""), own).await.0, StatusCode::OK);
         assert_eq!(send(app(""), req("POST", "/api/privacy/wipe", "localhost:7860", None)).await.0, StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn unusable_bodies_are_a_400_and_huge_ones_a_413() {
+        let post = |path: &str, body: &'static str, len: Option<usize>| {
+            let mut r = Request::post(path).header(header::CONTENT_TYPE, "application/json");
+            if let Some(n) = len {
+                r = r.header(header::CONTENT_LENGTH, n);
+            }
+            r.body(Body::from(body)).unwrap()
+        };
+        let message = |body: Vec<u8>| serde_json::from_slice::<Value>(&body).unwrap()["error"]["message"].as_str().unwrap().to_string();
+        for path in ["/api/history/delete", "/api/export", "/api/search", "/api/history/abc/fav"] {
+            let (code, _, body) = send(app(""), post(path, "not json", None)).await;
+            assert_eq!((code, message(body).as_str()), (StatusCode::BAD_REQUEST, "The request body isn't valid JSON."), "{path}");
+            let (code, _, body) = send(app(""), post(path, "[1]", None)).await;
+            assert_eq!((code, message(body).as_str()), (StatusCode::BAD_REQUEST, "The request body must be a JSON object."), "{path}");
+        }
+        let (code, _, body) = send(app(""), post("/api/history/delete", "{}", Some(MAX_BODY + 1))).await;
+        assert_eq!((code, message(body).as_str()), (StatusCode::PAYLOAD_TOO_LARGE, TOO_LARGE));
     }
 
     #[test]

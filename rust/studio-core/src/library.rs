@@ -100,8 +100,11 @@ fn forget(state: &AppState, ids: &[String]) {
     }
 }
 
-async fn delete_entries(State(state): State<AppState>, body: Bytes) -> Json<Value> {
-    let req = read_json(&body).unwrap_or(json!({}));
+async fn delete_entries(State(state): State<AppState>, body: Bytes) -> Response {
+    let req = match read_json(&body) {
+        Ok(v) => v,
+        Err(e) => return error(StatusCode::BAD_REQUEST, &e),
+    };
     let mut ids: Vec<String> = req.get("ids").and_then(Value::as_array).into_iter().flatten().filter_map(|v| v.as_str().map(String::from)).collect();
     ids.sort();
     ids.dedup();
@@ -109,7 +112,7 @@ async fn delete_entries(State(state): State<AppState>, body: Bytes) -> Json<Valu
     state.store.delete_entries(&ids);
     forget(&state, &ids);
     crate::media::recover::delete_device_sessions(&state, sessions); // the Tiiny's copy goes too
-    Json(json!({"ok": true, "deleted": ids.len()}))
+    Json(json!({"ok": true, "deleted": ids.len()})).into_response()
 }
 
 async fn delete_entry(State(state): State<AppState>, Path(id): Path<String>) -> Response {
@@ -128,7 +131,10 @@ async fn fav(State(state): State<AppState>, Path(id): Path<String>, body: Bytes)
     if !word(&id) {
         return not_found();
     }
-    let req = read_json(&body).unwrap_or(json!({}));
+    let req = match read_json(&body) {
+        Ok(v) => v,
+        Err(e) => return error(StatusCode::BAD_REQUEST, &e),
+    };
     let fav = req.get("fav").map(device::truthy).unwrap_or(true);
     state.store.edit_history(&id, |e| {
         if fav {
@@ -294,7 +300,10 @@ fn local_stamp(epoch: i64) -> String {
 /// Zip the chosen results (files + an info.json of their settings), built in memory, never stored.
 async fn export(State(state): State<AppState>, body: Bytes) -> Response {
     use std::io::Write;
-    let req = read_json(&body).unwrap_or(json!({}));
+    let req = match read_json(&body) {
+        Ok(v) => v,
+        Err(e) => return error(StatusCode::BAD_REQUEST, &e),
+    };
     let ids: Vec<&str> = req.get("ids").and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_str).collect();
     let items: Vec<Value> = {
         let _g = state.store.lock();
@@ -370,7 +379,10 @@ async fn embed(state: &AppState, model: &str, texts: &[String]) -> Result<Vec<Ve
 
 /// Rank saved results by meaning with the device's embedding model (vectors kept in memory only).
 async fn search(State(state): State<AppState>, body: Bytes) -> Response {
-    let req = read_json(&body).unwrap_or(json!({}));
+    let req = match read_json(&body) {
+        Ok(v) => v,
+        Err(e) => return error(StatusCode::BAD_REQUEST, &e),
+    };
     let query = str_of(&req, "query").trim().to_string();
     let (_, cat) = device::catalog(&state).await;
     let emb: Vec<Value> = cat.get("models").and_then(Value::as_array).into_iter().flatten().filter(|m| str_of(m, "type") == "Text Embedding").cloned().collect();

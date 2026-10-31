@@ -523,6 +523,14 @@ def load_voices():
         return []
 
 
+class BadBody(ValueError):
+    """A request body the routes can't use; the message is what the page is told."""
+
+
+MAX_BODY = 150 << 20  # pictures, voice clips and video frames arrive as base64 JSON; /api/extract checks its own 100 MB
+TOO_LARGE = "That request is too large (over 150 MB)."
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "TiinyStudio/1.0"
 
@@ -618,9 +626,21 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_json(400, {"error": {"message": f"Couldn't read this file ({type(e).__name__})."}})
         return self.send_json(200, {"parts": parts})
 
+    def body_length(self):
+        try:
+            return max(0, int(self.headers.get("Content-Length") or 0))
+        except ValueError:
+            raise BadBody("The request has a bad Content-Length.")
+
     def read_json(self):
-        n = int(self.headers.get("Content-Length") or 0)
-        return json.loads(self.rfile.read(n) or b"{}")
+        """The request body as a JSON object ({} when empty); BadBody (a ValueError) when it is anything else."""
+        try:
+            body = json.loads(self.rfile.read(self.body_length()) or b"{}")
+        except ValueError:
+            raise BadBody("The request body isn't valid JSON.")
+        if not isinstance(body, dict):
+            raise BadBody("The request body must be a JSON object.")
+        return body
 
     def do_GET(self):
         if not self.authorized():
@@ -712,6 +732,15 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         if not self.authorized():
             return
+        try:
+            if self.body_length() > MAX_BODY:
+                self.close_connection = True  # the body is left unread
+                return self.send_json(413, {"error": {"message": TOO_LARGE}})
+            self.route_post()
+        except BadBody as e:  # the routes that need a body answer 400 for one they can't read
+            self.send_json(400, {"error": {"message": str(e)}})
+
+    def route_post(self):
         if self.path == "/api/settings":
             return self.save_settings()
         if self.path == "/api/open-folder":

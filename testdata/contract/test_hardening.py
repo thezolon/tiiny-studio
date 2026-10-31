@@ -63,6 +63,27 @@ class Hardening(Jobs):
         # and inside a job: Media.http / media::http
         self.failed({"kind": "transcribe", "model": ASR, "audio": WAV, "flags": {"html": ["/v1/audio/transcriptions"]}}, "Please log in")
 
+    # ---------- request bodies ----------
+    JSON = {"Content-Type": "application/json"}
+    BODY_ROUTES = ["/api/history/delete", "/api/history/abc123/fav", "/api/export", "/api/search", "/api/jobs", "/api/voices", "/api/chats/abc123",
+                   "/api/settings"]
+
+    def test_bad_json_and_non_object_bodies_are_a_400(self):
+        for path in self.BODY_ROUTES:
+            for body, why in [(b"not json", "isn't valid JSON"), (b"[1, 2]", "must be a JSON object"), (bytes([0xFF, 0xFE]), "isn't valid JSON"), (b"null", "must be a JSON object")]:
+                py, rs = self.post_raw(path, body, self.JSON)
+                self.same((py, rs))
+                self.assertEqual(py.status, 400, (path, body))
+                self.assertIn("bad chat" if path.startswith("/api/chats/") else why, py.json["error"]["message"], (path, body))  # that route has its own words
+        self.assertEqual(self.get("/api/history")[0].json, self.get("/api/history")[1].json)  # nothing was touched
+
+    def test_oversized_request_is_refused_before_it_is_read(self):
+        for path in ("/api/history/delete", "/api/jobs", "/api/export"):
+            py, rs = self.post_raw(path, b"{}", {**self.JSON, "Content-Length": str(151 << 20)})
+            self.same((py, rs))
+            self.assertEqual(py.status, 413)
+            self.assertIn("too large", py.json["error"]["message"])
+
 
 if __name__ == "__main__":
     unittest.main()
