@@ -174,7 +174,7 @@ const MeshWS = {
         el("button", { class: "tb", onclick: () => this.reuse(e) }, icon("i-copy"), el("span", { class: "lbl" }, "Reuse")),
         el("button", { class: "tb danger", title: "Delete", "aria-label": "Delete", onclick: () => this.del(e) }, icon("i-trash"))));
     const viewer = document.createElement("model-viewer");
-    Object.entries({ src: url, "camera-controls": "", "auto-rotate": "", "shadow-intensity": "1", exposure: "1.05", "environment-image": "neutral", "interaction-prompt": "none", alt: "3D model" })
+    Object.entries({ src: url, "camera-controls": "", ...(REDUCED_MOTION ? {} : { "auto-rotate": "" }), "shadow-intensity": "1", exposure: "1.05", "environment-image": "neutral", "interaction-prompt": "none", alt: "3D model" })
       .forEach(([k, v]) => viewer.setAttribute(k, v));
     viewer.className = "viewer";
     const stats = (e.stages || []).map((s) => s.metadata).filter(Boolean);

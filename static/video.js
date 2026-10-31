@@ -121,7 +121,7 @@ ${e.params?.recovered ? "" : `Took ${fmtSec(e.seconds)} to render · `}${e.param
         el("button", { class: "tb", onclick: () => this.reuse(e) }, icon("i-copy"), el("span", { class: "lbl" }, "Reuse")),
         el("button", { class: "tb danger", title: "Delete", "aria-label": "Delete", onclick: () => this.del(e) }, icon("i-trash"))));
     stage.append(el("div", { class: "video-result" },
-      el("video", { class: "video-player", src: url, controls: true, autoplay: true, loop: true, playsinline: true }),
+      el("video", { class: "video-player", src: url, controls: true, autoplay: !REDUCED_MOTION, loop: !REDUCED_MOTION, playsinline: true }),
       p.prompt || p.recovered ? el("div", { class: "prompt-echo" }, p.prompt || "Recovered from the Tiiny") : null,
       el("div", { class: "meta-line" },
         el("span", {}, el("b", {}, p.recovered ? "Saved from the Tiiny after it finished" : `This clip took ${fmtSec(e.seconds)} to render`)),

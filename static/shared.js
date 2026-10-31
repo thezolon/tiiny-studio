@@ -62,12 +62,27 @@ async function pollJobs() {
     }
   }
   // after finished results are in history, so a render never shows "nothing selected"
+  announceJobs();
   if (typeof syncImageJobs === "function") syncImageJobs();
   renderJobsPill();
   for (const k of ["audio", "mesh", "video"]) { const m = WS[k].mod(); if (m?.mounted && S.ws === k) m.renderJobs?.(); }
   const active = S.jobs.some((j) => j.status === "queued" || j.status === "running");
   if (active && typeof pollStats === "function" && !statsTimer) pollStats();
   jobTimer = setTimeout(pollJobs, active ? 1500 : 15000);
+}
+const jobNote = new Map();  // job id -> the state last announced
+/** Tell screen readers when a job queues (with its place in line), starts, or moves up the line. Done and failed come
+ *  from onJobDone and the error toast; never the progress ticks. Jobs from before this page loaded stay quiet. */
+function announceJobs() {
+  for (const j of S.jobs) {
+    if (["chat", "assist", "ocr"].includes(j.kind) || (j.status !== "queued" && j.status !== "running")) continue;
+    const key = j.status === "queued" ? `queued ${j.queue_pos || 1}` : "running", was = jobNote.get(j.id), pos = j.queue_pos || 1;
+    if (was === key) continue;
+    jobNote.set(j.id, key);
+    if (j.created * 1000 < PAGE_T0 - 3000) continue;
+    const name = j.label || j.kind;
+    announce(j.status === "running" ? `${name} started` : was ? `${name}: ${pos} in line` : `${name} queued${pos > 1 ? `, ${pos} in line` : ""}`);
+  }
 }
 function onJobDone(j) {
   if (j.kind === "ocr" && typeof showOcrResult === "function") return showOcrResult(j);
@@ -77,6 +92,7 @@ function onJobDone(j) {
   const m = WS[mod]?.mod?.();
   if (m?.mounted) m.jobDone?.(j);
   if (j.status === "done" && mod && S.ws !== mod) toast(`${j.label || j.kind} is ready — open ${{ image: "Image", mesh: "3D", audio: "Audio", video: "Video" }[mod]} to see it`);
+  else if (j.status !== "error" && j.kind !== "chat") announce(`${j.label || j.kind} ${j.status === "done" ? "is done" : "was cancelled"}`);  // the toast above says it otherwise; errors have their own
   if (j.status === "done" && document.hidden && "Notification" in window && Notification.permission === "granted")
     new Notification("Tiiny Studio", { body: `${j.label || j.kind} is ready` });
 }

@@ -13,6 +13,7 @@ const el = (tag, attrs = {}, ...kids) => {
   return n;
 };
 const icon = (id) => { const s = document.createElementNS("http://www.w3.org/2000/svg", "svg"); s.innerHTML = `<use href="#${id}"/>`; return s; };
+const REDUCED_MOTION = matchMedia("(prefers-reduced-motion: reduce)").matches;  // the CSS stills its own animations; this is for the moving media
 const store = {
   get(k, d) { try { const v = localStorage.getItem("tiiny." + k); return v == null ? d : JSON.parse(v); } catch { return d; } },
   set(k, v) { try { localStorage.setItem("tiiny." + k, JSON.stringify(v)); } catch {} },
@@ -52,6 +53,13 @@ function toast(msg, kind = "") {
   t.append(msg);
   $("#toasts").append(t);
   setTimeout(() => t.remove(), kind === "err" ? 8000 : 3500);
+}
+
+/** A line for screen readers only, in the same polite live region as the toasts (#toasts). */
+function announce(msg) {
+  const n = el("div", { class: "sr" }, msg);
+  $("#toasts").append(n);
+  setTimeout(() => n.remove(), 4000);
 }
 
 /* ---------- API ---------- */

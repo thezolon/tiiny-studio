@@ -818,3 +818,9 @@ details.adv summary .sum { margin-left: auto; color: var(--faint); font-weight: 
   .model-pick select { max-width: 160px; }
   .canvas img, .pending { max-height: 70vh; }
 }
+
+/* prefers-reduced-motion: no lifts, fades, spins, pulses or smooth scrolling; progress bars still advance, without easing */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; scroll-behavior: auto !important; }
+  .thumb:hover, .thumb-cell:hover { transform: none; }
+}
