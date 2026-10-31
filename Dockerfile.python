@@ -1,14 +1,15 @@
 # The previous Python server, kept as the behaviour reference for the contract tests:
 #   docker build -f Dockerfile.python -t tiiny-studio:python .
 # audioop (ASR resampling) was removed in Python 3.13, so stay on 3.12
-FROM python:3.12-slim
+FROM python:3.12-slim-bookworm@sha256:e697c81897302a4c4333bade000d98038fbb21eb064f8ee1fd42d02ebcd9d337
 WORKDIR /app
 COPY server.py media.py extract.py chat.py safety.py VERSION ./
 COPY static ./static
 COPY docs ./docs
 COPY LICENSE NOTICE ./
 # Inside the container the server must listen on all interfaces; compose's port binding
-# (STUDIO_BIND, default 127.0.0.1) decides who can actually reach it.
+# (STUDIO_BIND, default 127.0.0.1) decides who can actually reach it. Like the Rust image it starts as root only
+# to switch to the data folder's owner (or uid 10001).
 ENV PORT=7860 DATA_DIR=/data PYTHONUNBUFFERED=1 HOST=0.0.0.0
 VOLUME /data
 EXPOSE 7860

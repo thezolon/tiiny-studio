@@ -52,24 +52,51 @@ def user_data_dir():
 DATA = Path(os.environ.get("DATA_DIR") or (user_data_dir() if FROZEN else Path(__file__).with_name("data")))
 
 
+UNPRIVILEGED = 10001
+
+
 def run_as_data_owner():
     """Docker on Linux runs us as root, so results in the mounted data folder would belong to root and
     the user couldn't delete them without sudo. Take on the folder's owner instead, and hand back
-    anything an earlier root run left behind. (Docker Desktop on Windows shows the folder as root's: no change.)"""
-    if os.name != "posix" or os.geteuid() != 0 or not DATA.is_dir():
+    anything an earlier root run left behind. A root-owned folder (a named volume, one Docker created,
+    Docker Desktop's view of a Windows folder) goes to an unprivileged user instead: the server never keeps
+    real root. Rootless Docker/Podman is left alone: its "root" is the host user already."""
+    if os.name != "posix" or os.geteuid() != 0 or not real_root():
         return
-    st = DATA.stat()
-    if st.st_uid == 0:
-        return
+    try:
+        DATA.mkdir(parents=True, exist_ok=True)
+        st = DATA.stat()
+    except OSError as e:
+        refuse(f"can't read the data folder: {e}")
+    uid, gid = (UNPRIVILEGED, UNPRIVILEGED) if st.st_uid == 0 else (st.st_uid, st.st_gid)
     for root, dirs, files in os.walk(DATA):
         for path in [root] + [os.path.join(root, n) for n in dirs + files]:
             try:
                 if os.lstat(path).st_uid == 0:
-                    os.lchown(path, st.st_uid, st.st_gid)
+                    os.lchown(path, uid, gid)
             except OSError:
                 pass
-    os.setgid(st.st_gid)
-    os.setuid(st.st_uid)
+    st = DATA.stat()  # some mounts refuse chown (Docker Desktop's Windows folders); they're writable by everyone instead
+    if st.st_uid != uid and not st.st_mode & 0o002:
+        refuse(f"user {uid} can't write to it; give it to your user (sudo chown -R $(id -u):$(id -g) <folder>)")
+    try:  # drop root's supplementary groups first (only root may), then the group, then the user
+        os.setgroups([])
+        os.setgid(gid)
+        os.setuid(uid)
+    except OSError as e:
+        refuse(f"couldn't switch to uid {uid}, gid {gid}: {e}")
+
+
+def real_root():
+    """Root of the whole machine, not of a user namespace (rootless containers map their root to a normal user)."""
+    try:
+        return Path("/proc/self/uid_map").read_text().split() == ["0", "0", "4294967295"]
+    except OSError:
+        return True
+
+
+def refuse(why):
+    sys.exit(f"Not starting as root with the data folder {DATA}: {why}.")
 
 
 run_as_data_owner()
