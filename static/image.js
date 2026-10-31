@@ -385,7 +385,7 @@ function renderStage() {
   const liveJob = S.running || S.queue[0];
   const viewingJob = S.view && S.view.job != null;
   if (liveJob && !viewingJob) {
-    head.append(el("span", { class: "pill live", onclick: () => { S.view = { job: (S.running || S.queue[0]).jid }; renderStage(); } },
+    head.append(el("button", { class: "pill live", onclick: () => { S.view = { job: (S.running || S.queue[0]).jid }; renderStage(); } },
       el("span", { class: "dot busy" }), S.running ? "Generating… " : "Queued", el("span", { id: "liveTimer" })));
   }
 
@@ -452,7 +452,7 @@ function renderStage() {
       el("span", {}, p.size?.replace("x", " × ")),
       p.steps ? el("span", {}, `${p.steps} steps`) : null,
       p.guidance_scale ? el("span", {}, `cfg ${p.guidance_scale}`) : null,
-      p.seed != null ? el("span", { title: "Click to copy seed", style: "cursor:pointer", onclick: () => { navigator.clipboard?.writeText(String(p.seed)); toast("Seed copied"); } }, `seed ${p.seed}`) : null,
+      p.seed != null ? el("button", { class: "seed-copy", title: "Click to copy seed", onclick: () => { navigator.clipboard?.writeText(String(p.seed)); toast("Seed copied"); } }, `seed ${p.seed}`) : null,
       el("span", {}, fmtSec(entry.seconds))));
   const cap = S.captions[entry.outputs[idx]];
   if (cap) wrap.append(el("div", { class: "caption-box" }, el("p", {}, cap),

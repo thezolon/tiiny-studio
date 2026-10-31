@@ -39,11 +39,11 @@
   <header class="topbar">
     <div class="brand"><div class="brand-mark" aria-hidden="true"></div>Tiiny Studio <small id="deviceHost"></small></div>
     <nav class="ws-tabs" role="tablist" aria-label="Workspace">
-      <button role="tab" data-ws="image" aria-selected="true"><svg><use href="#i-spark"/></svg><span>Image</span></button>
-      <button role="tab" data-ws="audio" aria-selected="false"><svg><use href="#i-wave"/></svg><span>Audio</span></button>
-      <button role="tab" data-ws="mesh" aria-selected="false"><svg><use href="#i-cube"/></svg><span>3D</span></button>
-      <button role="tab" data-ws="video" aria-selected="false"><svg><use href="#i-film"/></svg><span>Video</span></button>
-      <button role="tab" data-ws="chat" aria-selected="false"><svg><use href="#i-chat"/></svg><span>Chat</span></button>
+      <button role="tab" id="tabImage" data-ws="image" aria-selected="true" aria-controls="wsImage" tabindex="0"><svg><use href="#i-spark"/></svg><span>Image</span></button>
+      <button role="tab" id="tabAudio" data-ws="audio" aria-selected="false" aria-controls="wsAudio" tabindex="-1"><svg><use href="#i-wave"/></svg><span>Audio</span></button>
+      <button role="tab" id="tabMesh" data-ws="mesh" aria-selected="false" aria-controls="wsMesh" tabindex="-1"><svg><use href="#i-cube"/></svg><span>3D</span></button>
+      <button role="tab" id="tabVideo" data-ws="video" aria-selected="false" aria-controls="wsVideo" tabindex="-1"><svg><use href="#i-film"/></svg><span>Video</span></button>
+      <button role="tab" id="tabChat" data-ws="chat" aria-selected="false" aria-controls="wsChat" tabindex="-1"><svg><use href="#i-chat"/></svg><span>Chat</span></button>
     </nav>
     <div class="spacer"></div>
     <button class="jobs-pill" id="jobsPill" hidden></button>
@@ -55,7 +55,7 @@
     <button class="icon-btn" id="settingsBtn" title="Device settings (address and API key)"><svg><use href="#i-gear"/></svg></button>
   </header>
 
-  <div class="main ws" id="wsImage">
+  <div class="main ws" id="wsImage" role="tabpanel" aria-labelledby="tabImage">
     <!-- ================= composer ================= -->
     <aside class="composer">
       <div class="composer-scroll">
@@ -147,10 +147,10 @@
       </div>
     </section>
   </div>
-  <div class="main ws" id="wsAudio" hidden></div>
-  <div class="main ws" id="wsMesh" hidden></div>
-  <div class="main ws" id="wsVideo" hidden></div>
-  <div class="main ws" id="wsChat" hidden></div>
+  <div class="main ws" id="wsAudio" role="tabpanel" aria-labelledby="tabAudio" hidden></div>
+  <div class="main ws" id="wsMesh" role="tabpanel" aria-labelledby="tabMesh" hidden></div>
+  <div class="main ws" id="wsVideo" role="tabpanel" aria-labelledby="tabVideo" hidden></div>
+  <div class="main ws" id="wsChat" role="tabpanel" aria-labelledby="tabChat" hidden></div>
 </div>
 
 <div class="scrim" id="scrim"></div>

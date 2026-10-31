@@ -13,13 +13,21 @@ function setWs(ws) {
   if (!WS[ws]) ws = "image";
   S.ws = ws; store.set("ws", ws);
   for (const [k, v] of Object.entries(WS)) $(v.el).hidden = k !== ws;
-  for (const b of document.querySelectorAll(".ws-tabs [data-ws]")) b.setAttribute("aria-selected", b.dataset.ws === ws);
+  for (const b of document.querySelectorAll(".ws-tabs [data-ws]")) { b.setAttribute("aria-selected", b.dataset.ws === ws); b.tabIndex = b.dataset.ws === ws ? 0 : -1; }  // roving tabindex
   $("#dropveilText").textContent = { image: "Drop to use as source image", audio: "Drop audio to use it here", mesh: "Drop an image to turn into 3D", video: "Drop a picture to start the clip from", chat: "Drop pictures or documents to attach" }[ws];
   const mod = WS[ws].mod?.();
   if (mod) { if (!mod.mounted) { mod.mount($(WS[ws].el)); mod.mounted = true; } mod.render(); }
   renderModelBtn(); renderDrawer();
 }
 for (const b of document.querySelectorAll(".ws-tabs [data-ws]")) b.onclick = () => setWs(b.dataset.ws);
+// WAI-ARIA tabs: arrows move between workspaces (and open them), Home/End jump to the ends
+$(".ws-tabs").addEventListener("keydown", (e) => {
+  const tabs = [...document.querySelectorAll(".ws-tabs [data-ws]")], i = tabs.indexOf(e.target);
+  const to = { ArrowRight: (i + 1) % tabs.length, ArrowLeft: (i + tabs.length - 1) % tabs.length, Home: 0, End: tabs.length - 1 }[e.key];
+  if (i < 0 || to == null || e.ctrlKey || e.metaKey || e.altKey) return;
+  e.preventDefault(); e.stopPropagation();  // the image shortcuts on document also listen to the arrows
+  tabs[to].focus(); setWs(tabs[to].dataset.ws);
+});
 function wsFiles(files) { const mod = WS[S.ws].mod?.(); return mod?.files ? mod.files(files) : false; }
 function onModelsChanged() { for (const k of ["audio", "mesh", "video"]) { const m = WS[k].mod(); if (m?.mounted && S.ws === k) m.renderGate?.(); } WS.chat.mod()?.onModels?.(); renderAssistGates(); }
 function onHistoryLoaded() { for (const k of ["audio", "mesh", "video"]) { const m = WS[k].mod(); if (m?.mounted) m.render(); } }
@@ -376,18 +384,30 @@ function drawWave(canvas, peaks, progress = 0) {
 let currentAudio = null;
 function makePlayer(url, { big = false } = {}) {
   const audio = new Audio(url); audio.preload = "metadata";
-  const canvas = el("canvas", { class: "wave" + (big ? " big" : "") });
+  const canvas = el("canvas", { class: "wave" + (big ? " big" : ""), role: "slider", tabindex: "0", "aria-label": "Seek", "aria-valuemin": "0", "aria-valuenow": "0", "aria-valuetext": "0:00" });
   const btn = el("button", { class: "play", title: "Play / pause (space)" }, icon("i-play"));
   const time = el("span", { class: "ptime" }, "0:00");
   const mmss = (s) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
   let peaks = null;
-  const redraw = () => peaks && drawWave(canvas, peaks, audio.duration ? audio.currentTime / audio.duration : 0);
+  const sync = () => {  // the slider's value, updated once a second rather than on every frame
+    const t = Math.floor(audio.currentTime);
+    if (canvas.dataset.t === String(t)) return;
+    canvas.dataset.t = t; canvas.setAttribute("aria-valuenow", t); canvas.setAttribute("aria-valuetext", `${mmss(t)} of ${mmss(audio.duration || 0)}`);
+    if (audio.duration) canvas.setAttribute("aria-valuemax", Math.floor(audio.duration));
+  };
+  const redraw = () => { if (peaks) drawWave(canvas, peaks, audio.duration ? audio.currentTime / audio.duration : 0); sync(); };
   peaksFor(url).then((p) => { peaks = p.peaks; time.textContent = `0:00 / ${mmss(p.duration)}`; redraw(); }).catch(() => {});
   const tick = () => { redraw(); time.textContent = `${mmss(audio.currentTime)} / ${mmss(audio.duration || 0)}`; if (!audio.paused) requestAnimationFrame(tick); };
   audio.onplay = () => { if (currentAudio && currentAudio !== audio) currentAudio.pause(); currentAudio = audio; btn.replaceChildren(icon("i-pause")); tick(); };
   audio.onpause = audio.onended = () => { btn.replaceChildren(icon("i-play")); redraw(); };
   btn.onclick = () => (audio.paused ? audio.play() : audio.pause());
   canvas.onclick = (e) => { if (!audio.duration) return; const r = canvas.getBoundingClientRect(); audio.currentTime = (e.clientX - r.left) / r.width * audio.duration; redraw(); if (audio.paused) audio.play(); };
+  canvas.onkeydown = (e) => {  // keyboard seeking: arrows 5 s, Home/End
+    const d = audio.duration; if (!d || e.ctrlKey || e.metaKey || e.altKey) return;
+    const t = { ArrowLeft: audio.currentTime - 5, ArrowRight: audio.currentTime + 5, Home: 0, End: d }[e.key];
+    if (t == null) return;
+    e.preventDefault(); audio.currentTime = Math.max(0, Math.min(d, t)); redraw();
+  };
   new ResizeObserver(redraw).observe(canvas);
   const node = el("div", { class: "player" + (big ? " big" : "") }, btn, canvas, time);
   node.audio = audio;
