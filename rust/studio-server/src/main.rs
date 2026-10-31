@@ -29,19 +29,20 @@ async fn main() {
 
 /// Docker on Linux runs us as root, so results in the mounted data folder would belong to root and the user
 /// couldn't delete them without sudo. Take on the folder's owner instead, and hand back anything an earlier
-/// root run left behind. (Docker Desktop on Windows shows the folder as root's: no change.)
+/// root run left behind. A root-owned folder (a named volume, one Docker created, Docker Desktop's view of a
+/// Windows folder) goes to an unprivileged user (UNPRIVILEGED) instead: the server never keeps real root.
+/// Rootless Docker/Podman is left alone: its "root" is the host user already.
 #[cfg(unix)]
 fn run_as_data_owner(data: &std::path::Path) {
     use std::os::unix::ffi::OsStrExt;
-    use std::os::unix::fs::MetadataExt;
-    if unsafe { libc::geteuid() } != 0 {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+    const UNPRIVILEGED: u32 = 10001;
+    if unsafe { libc::geteuid() } != 0 || !real_root() {
         return;
     }
-    let Ok(st) = std::fs::metadata(data) else { return };
-    if !st.is_dir() || st.uid() == 0 {
-        return;
-    }
-    let (uid, gid) = (st.uid(), st.gid());
+    let _ = std::fs::create_dir_all(data);
+    let Ok(st) = std::fs::metadata(data) else { refuse(data, "can't read the data folder") };
+    let (uid, gid) = if st.uid() == 0 { (UNPRIVILEGED, UNPRIVILEGED) } else { (st.uid(), st.gid()) };
     fn walk(path: &std::path::Path, uid: u32, gid: u32) {
         if let Ok(m) = std::fs::symlink_metadata(path) {
             if m.uid() == 0 {
@@ -57,14 +58,27 @@ fn run_as_data_owner(data: &std::path::Path) {
         }
     }
     walk(data, uid, gid);
-    // drop root's supplementary groups first (only root may), then the group, then the user; say so if any fails
-    // (a rootless container may refuse setgroups) instead of carrying on as root without a word
-    let (groups, group, user) = unsafe { (libc::setgroups(0, std::ptr::null()), libc::setgid(gid), libc::setuid(uid)) };
-    if groups != 0 || group != 0 || user != 0 {
-        eprintln!(
-            "warning: couldn't fully switch to the data folder's owner (uid {uid}, gid {gid}): {}; still running as uid {}",
-            std::io::Error::last_os_error(),
-            unsafe { libc::geteuid() }
-        );
+    // some mounts refuse chown (Docker Desktop's Windows folders); they're writable by everyone instead
+    let writable = std::fs::metadata(data).is_ok_and(|m| m.uid() == uid || m.permissions().mode() & 0o002 != 0);
+    if !writable {
+        refuse(data, &format!("user {uid} can't write to it; give it to your user (sudo chown -R $(id -u):$(id -g) <folder>)"));
     }
+    // drop root's supplementary groups first (only root may), then the group, then the user
+    let (groups, group, user) = unsafe { (libc::setgroups(0, std::ptr::null()), libc::setgid(gid), libc::setuid(uid)) };
+    if groups != 0 || group != 0 || user != 0 || unsafe { libc::geteuid() } == 0 {
+        let e = std::io::Error::last_os_error();
+        refuse(data, &format!("couldn't switch to uid {uid}, gid {gid}: {e}"));
+    }
+}
+
+/// Root of the whole machine, not of a user namespace (rootless containers map their root to a normal user).
+#[cfg(unix)]
+fn real_root() -> bool {
+    std::fs::read_to_string("/proc/self/uid_map").map_or(true, |m| m.split_whitespace().collect::<Vec<_>>() == ["0", "0", "4294967295"])
+}
+
+#[cfg(unix)]
+fn refuse(data: &std::path::Path, why: &str) -> ! {
+    eprintln!("Not starting as root with the data folder {}: {why}.", data.display());
+    std::process::exit(1);
 }

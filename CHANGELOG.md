@@ -3,6 +3,11 @@
 ## Unreleased
 
 - **Error handling:** a job keeps talking to the device it started on (and sends only that device's key) even if the studio switches devices meanwhile; a result the disk can't hold is reported ("Couldn't save the result") instead of silently missing; a failed or cancelled job leaves no files behind; an answer that isn't JSON, a bad request body or one over 150 MB gets a clear error instead of a crash.
+- **Docker:** the server never keeps root. It switches to the data folder's owner as before, and to an unprivileged user
+  (uid 10001) when root owns the folder (a named volume, or one Docker created); if neither works it says so and stops.
+  Rootless Docker/Podman is unchanged.
+- **Release builds:** each job gets only the permissions it needs, the GitHub Actions, Tauri CLI and Docker base images
+  are pinned to exact versions, and a release stops early if the tag, VERSION, Cargo.toml and tauri.conf.json disagree.
 
 ## 0.4.0 (2026-10-30)
 

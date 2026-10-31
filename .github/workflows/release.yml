@@ -10,13 +10,35 @@ on:
     tags: ["v*"]
   workflow_dispatch:
 
+# Read-only by default; only the two jobs that publish get write access (the build jobs run third-party code).
+# Actions are pinned to commits (the comment names the release); update them together, after reading their notes.
 permissions:
-  contents: write   # create the release
-  packages: write   # push the Docker image
+  contents: read
 
 jobs:
+  check:
+    name: Version check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - name: VERSION, Cargo.toml, tauri.conf.json and the tag agree
+        shell: bash
+        run: |
+          v=$(cat VERSION)
+          cargo=$(sed -n 's/^version = "\(.*\)"/\1/p' rust/Cargo.toml | head -1)
+          tauri=$(python3 -c 'import json; print(json.load(open("rust/studio-desktop/tauri.conf.json"))["version"])')
+          ok=1
+          [ "$cargo" = "$v" ] || { echo "::error::rust/Cargo.toml says $cargo, VERSION says $v"; ok=; }
+          [ "$tauri" = "$v" ] || { echo "::error::tauri.conf.json says $tauri, VERSION says $v"; ok=; }
+          # a release tag is exactly v<VERSION>; a test tag (prerelease) is v<VERSION>-<anything>
+          if [[ "$GITHUB_REF" == refs/tags/* && "$GITHUB_REF_NAME" != "v$v" && "$GITHUB_REF_NAME" != "v$v"-* ]]; then
+            echo "::error::tag $GITHUB_REF_NAME doesn't match VERSION ($v)"; ok=
+          fi
+          [ -n "$ok" ]
+
   apps:
     name: Desktop app for ${{ matrix.name }}
+    needs: check
     strategy:
       fail-fast: false
       matrix:
@@ -29,18 +51,19 @@ jobs:
           - { name: Linux ARM, os: ubuntu-22.04-arm, bundles: "deb,appimage" }
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       - name: Linux desktop libraries (WebKitGTK)
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec  # stable branch, 2026-10-16
+        with: { toolchain: stable }   # pinned by commit, so the toolchain can't come from the ref name
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0  # v2.9.3
         with: { workspaces: rust }
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1  # v7.1.0
         with: { node-version: "20" }
       - name: Build the app and its installers
         working-directory: rust/studio-desktop
-        run: npx --yes @tauri-apps/cli@2 build --bundles ${{ matrix.bundles }}
+        run: npx --yes @tauri-apps/cli@2.12.4 build --bundles ${{ matrix.bundles }}
       - name: Smoke test (the bundled server starts and serves the page)
         shell: bash
         env:
@@ -62,7 +85,7 @@ jobs:
           # no spaces: GitHub would turn "Tiiny Studio_…" into "Tiiny.Studio_…" on the release page
           for f in dist/*; do mv "$f" "${f// /-}" 2>/dev/null || true; done
           ls -la dist
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
         with:
           name: app-${{ matrix.os }}
           path: dist/*
@@ -70,9 +93,13 @@ jobs:
 
   docker:
     name: Docker image (amd64 + arm64)
+    needs: check
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write   # push the image
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       - id: meta
         shell: bash
         run: |
@@ -82,19 +109,17 @@ jobs:
           if [[ "$GITHUB_REF" == refs/tags/v*-* ]]; then
             # a test tag (v0.2.0-rc1): its own image tag only, never :latest or the plain version
             v="${GITHUB_REF_NAME#v}"; latest=
-          elif [[ "$GITHUB_REF" == refs/tags/v* && "$GITHUB_REF_NAME" != "v$v" ]]; then
-            echo "::error::tag $GITHUB_REF_NAME doesn't match VERSION ($v)"; exit 1
           fi
           echo "version=$v" >> "$GITHUB_OUTPUT"
           { echo "tags<<EOF"; echo "$image:$v"; if [ -n "$latest" ]; then echo "$image:latest"; fi; echo "EOF"; } >> "$GITHUB_OUTPUT"
-      - uses: docker/setup-qemu-action@v4
-      - uses: docker/setup-buildx-action@v4
-      - uses: docker/login-action@v4
+      - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1  # v4.4.0
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069  # v4.4.1
+      - uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6  # v4.7.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - uses: docker/build-push-action@v7
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc  # v7.4.0
         env:
           DOCKER_BUILD_RECORD_UPLOAD: "false"   # no .dockerbuild artifact (gh run download can't unpack it)
         with:
@@ -109,17 +134,20 @@ jobs:
 
   release:
     name: GitHub release
-    needs: [apps, docker]
-    # still release with the downloads that did build if one platform fails (e.g. a runner label changes)
-    if: ${{ !cancelled() && startsWith(github.ref, 'refs/tags/v') }}
+    needs: [check, apps, docker]
+    # still release with the downloads that did build if one platform fails (e.g. a runner label changes),
+    # but never when the version check failed
+    if: ${{ !cancelled() && needs.check.result == 'success' && startsWith(github.ref, 'refs/tags/v') }}
     runs-on: ubuntu-latest
+    permissions:
+      contents: write   # create the release
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7.1.0
         with:
           python-version: "3.12"
       - run: python tools/release.py
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
         with:
           path: dist
           pattern: app-*
@@ -131,7 +159,7 @@ jobs:
           v=$(cat VERSION)
           awk -v v="## $v" '$0 ~ "^## " { on = index($0, v) == 1 } on' CHANGELOG.md > notes.md
           printf '\n---\n\nShowcase and discussion: [Tiiny Studio on TiinyVerse](https://tiinyverse.com/posts/5abfe45c-3cf0-4f53-88ab-b397741702c3) · [Tiiny Discord](https://discord.com/invite/R5CHUuXy4A) (#project-showcase → Tiiny Studio)\n' >> notes.md
-      - uses: softprops/action-gh-release@v3
+      - uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64  # v3.0.3
         with:
           name: Tiiny Studio ${{ github.ref_name }}
           body_path: notes.md
