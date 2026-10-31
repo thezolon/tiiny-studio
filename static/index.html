@@ -154,17 +154,17 @@
 </div>
 
 <div class="scrim" id="scrim"></div>
-<aside class="drawer" id="drawer" aria-label="Models" aria-hidden="true">
+<aside class="drawer" id="drawer" role="dialog" aria-modal="true" aria-label="Models" inert>
   <div class="drawer-head"><h3>Models</h3><span class="spacer"></span>
-    <button class="icon-btn" id="drawerRefresh" title="Refresh"><svg><use href="#i-refresh"/></svg></button>
-    <button class="icon-btn" id="drawerClose" title="Close (Esc)">✕</button></div>
+    <button class="icon-btn" id="drawerRefresh" title="Refresh" aria-label="Refresh"><svg><use href="#i-refresh"/></svg></button>
+    <button class="icon-btn" id="drawerClose" title="Close (Esc)" aria-label="Close">✕</button></div>
   <div class="drawer-body" id="drawerBody"></div>
   <div class="drawer-foot">Models load into the NPU's memory. Loading takes roughly 30–60 s; the device can only hold what fits in 100% NPU.</div>
 </aside>
 
-<div class="modal" id="annot" role="dialog" aria-label="Mark the area to change">
+<div class="modal" id="annot" role="dialog" aria-modal="true" aria-labelledby="annotTitle">
   <div class="modal-card">
-    <div class="modal-head"><h3>Mark the area to change</h3><span class="hint">circle or paint over it, then say what to do with “the marked area”</span><span class="spacer"></span><button class="icon-btn" id="annotClose">✕</button></div>
+    <div class="modal-head"><h3 id="annotTitle">Mark the area to change</h3><span class="hint">circle or paint over it, then say what to do with “the marked area”</span><span class="spacer"></span><button class="icon-btn" id="annotClose" title="Close (Esc)" aria-label="Close">✕</button></div>
     <div class="annot-stage"><canvas id="annotCanvas"></canvas></div>
     <div class="modal-foot">
       <label>Brush <input type="range" id="annotSize" min="4" max="80" value="18"></label>
@@ -177,7 +177,7 @@
   </div>
 </div>
 
-<div class="modal" id="settingsModal" role="dialog" aria-label="Device settings"></div>
+<div class="modal" id="settingsModal" role="dialog" aria-modal="true" aria-labelledby="settingsTitle"></div>
 <div class="toasts" id="toasts" aria-live="polite"></div>
 <div class="dropveil" id="dropveil"><div id="dropveilText">Drop to use as source image</div></div>
 

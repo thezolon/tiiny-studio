@@ -168,17 +168,17 @@ function openSettings(firstRun = false) {
   SET.editing = null; SET.onClose = null;
   SET.firstRun = firstRun;
   const card = el("div", { class: "modal-card set-card" },
-    el("div", { class: "modal-head" }, el("h3", {}, firstRun ? "Connect your Tiiny" : "Device settings"), el("span", { class: "spacer" }),
-      firstRun ? null : el("button", { class: "icon-btn", title: "Close (Esc)", onclick: closeSettings }, "✕")),
+    el("div", { class: "modal-head" }, el("h3", { id: "settingsTitle" }, firstRun ? "Connect your Tiiny" : "Device settings"), el("span", { class: "spacer" }),
+      firstRun ? null : el("button", { class: "icon-btn", title: "Close (Esc)", "aria-label": "Close", onclick: closeSettings }, "✕")),
     el("div", { class: "set-body", id: "setBody" }, ...settingsBody(firstRun)));
   $("#settingsModal").replaceChildren(card);
-  $("#settingsModal").classList.add("show");
   $("#settingsModal").dataset.locked = firstRun ? "1" : "";
+  openModal($("#settingsModal"));
   if (!firstRun) api("/api/settings/check", { method: "POST", body: "{}" }).then((r) => { SET.info = r; if (!SET.editing) refreshSettings(); }).catch(() => {});
 }
 function refreshSettings() {
   const body = $("#setBody");
-  if (body) body.replaceChildren(...settingsBody(SET.firstRun && !SET.info?.configured));
+  if (body) keepFocus(body, () => body.replaceChildren(...settingsBody(SET.firstRun && !SET.info?.configured)));
 }
 async function wipeEverything() {
   const n = S.history.length;
@@ -222,7 +222,7 @@ async function deviceGoesOff() {
   return false;
 }
 
-function closeSettings() { if (SET.onClose) { const f = SET.onClose; SET.onClose = null; f(); return; } if ($("#settingsModal").dataset.locked === "1" && !SET.info?.configured) return; SET.editing = null; $("#settingsModal").classList.remove("show"); }
+function closeSettings() { if (SET.onClose) { const f = SET.onClose; SET.onClose = null; f(); return; } if ($("#settingsModal").dataset.locked === "1" && !SET.info?.configured) return; SET.editing = null; closeModal($("#settingsModal")); }
 
 $("#settingsBtn").onclick = () => openSettings(false);
 document.addEventListener("keydown", (e) => { if (e.key === "Escape" && $("#settingsModal").classList.contains("show")) { e.stopPropagation(); closeSettings(); } }, true);

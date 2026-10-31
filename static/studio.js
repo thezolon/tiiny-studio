@@ -103,6 +103,48 @@ function timeAgo(t) {
   return new Date(t * 1000).toLocaleDateString();
 }
 
+/* ---------- modal plumbing ----------
+   The settings and text dialogs, the annotate dialog and the Models drawer all use this: focus moves in, Tab stays
+   inside, everything behind is inert (so is a closed drawer), and focus goes back to what opened it. Escape is handled
+   by each dialog itself. The markup carries role="dialog" and aria-modal="true". */
+const MODALS = [];  // open ones, the top one last
+const FOCUSABLE = "a[href], button, input, select, textarea, summary, [tabindex]";
+const focusables = (box) => [...box.querySelectorAll(FOCUSABLE)].filter((n) => n.tabIndex >= 0 && !n.disabled && !n.closest("[hidden], [inert]") && shown(n));
+const shown = (n) => (n.checkVisibility ? n.checkVisibility({ visibilityProperty: true }) : n.getClientRects().length > 0);  // also false inside a closed <details>
+function syncModals() {
+  const top = MODALS[MODALS.length - 1]?.node;
+  for (const n of document.body.children)
+    if (n.matches(".app, .drawer, .modal, .jobs-menu")) n.inert = top ? n !== top : n.matches(".drawer, .modal");
+}
+function openModal(node, first) {
+  if (!MODALS.some((m) => m.node === node)) MODALS.push({ node, opener: document.activeElement });
+  node.classList.add("show"); syncModals();
+  (first || focusables(node)[0])?.focus();
+}
+function closeModal(node) {
+  node.classList.remove("show");
+  const i = MODALS.findIndex((m) => m.node === node);
+  if (i < 0) return;
+  const { opener } = MODALS.splice(i, 1)[0], top = i === MODALS.length;
+  syncModals();
+  if (top && opener?.isConnected && shown(opener)) opener.focus();
+}
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "Tab" || !MODALS.length) return;
+  const node = MODALS[MODALS.length - 1].node, list = focusables(node), a = document.activeElement;
+  if (!list.length) return e.preventDefault();
+  if (!node.contains(a)) { e.preventDefault(); list[0].focus(); }
+  else if (e.shiftKey && a === list[0]) { e.preventDefault(); list[list.length - 1].focus(); }
+  else if (!e.shiftKey && a === list[list.length - 1]) { e.preventDefault(); list[0].focus(); }
+}, true);
+/** Redraw `box` with fn(); a control that had the focus gets it back (found again by its place), so a redraw
+    that runs on a timer doesn't drop a keyboard user out of the dialog. */
+function keepFocus(box, fn) {
+  const i = box.contains(document.activeElement) ? focusables(box).indexOf(document.activeElement) : -1;
+  fn();
+  if (i >= 0 && !box.contains(document.activeElement)) { const l = focusables(box); (l[i] || l[l.length - 1])?.focus(); }
+}
+syncModals();
 
 /* ---------- model button ---------- */
 function renderModelBtn() {
@@ -122,11 +164,11 @@ function renderModelBtn() {
 
 /* ---------- models drawer ---------- */
 const NPU_COLORS = ["#ff7a45", "#60a5fa", "#a78bfa", "#34d399", "#f472b6", "#fbbf24"];
-function openDrawer() { if (typeof pollStats === "function") setTimeout(pollStats, 0); S.drawer = true; $("#drawerBody").scrollTop = 0; $("#drawer").classList.add("show"); $("#scrim").classList.add("show"); $("#drawer").setAttribute("aria-hidden", "false"); renderDrawer(); loadModels(true); }
-function closeDrawer() { S.drawer = false; S.confirm = null; $("#drawer").classList.remove("show"); $("#scrim").classList.remove("show"); $("#drawer").setAttribute("aria-hidden", "true"); }
+function openDrawer() { if (typeof pollStats === "function") setTimeout(pollStats, 0); S.drawer = true; $("#drawerBody").scrollTop = 0; $("#scrim").classList.add("show"); renderDrawer(); openModal($("#drawer")); loadModels(true); }
+function closeDrawer() { S.drawer = false; S.confirm = null; $("#scrim").classList.remove("show"); closeModal($("#drawer")); }
 
-function renderDrawer() {
-  if (!S.drawer) return;
+function renderDrawer() { if (S.drawer) keepFocus($("#drawer"), drawDrawer); }  // it redraws on every poll
+function drawDrawer() {
   const body = $("#drawerBody");
   if (S.deviceOk === false) {
     body.replaceChildren(S.keyRejected

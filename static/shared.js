@@ -88,7 +88,7 @@ function renderJobsPill() {
   const j = act[0];
   const npu = typeof S.stats?.npu_util === "number" ? ` · NPU ${Math.round(S.stats.npu_util)}%` : "";
   pill.replaceChildren(el("span", { class: "dot busy" }), `${act.length} job${act.length > 1 ? "s" : ""} · ${j.label || j.kind}${j.progress ? ` ${j.progress}%` : ""}${npu}`);
-  pill.onclick = (e) => { e.stopPropagation(); toggleJobsMenu(); };
+  pill.onclick = (e) => { e.stopPropagation(); toggleJobsMenu(e.detail === 0); };
   if (!$("#jobsMenu")?.hidden) renderJobsMenu();
 }
 const wsOfJob = (j) => ({ mesh: "mesh", video: "video", image: "image", chat: "chat", assist: S.ws }[j.kind] || "audio");
@@ -107,7 +107,7 @@ function renderJobsMenu() {
   requestAnimationFrame(() => { menu.style.left = `${Math.max(8, Math.min(r.left, innerWidth - menu.offsetWidth - 8))}px`; });  // stay inside the window
   const times = queueTimes(act), waiting = act.filter((j) => j.status === "queued");
   const last = times.get(act[act.length - 1].id);
-  menu.replaceChildren(...act.map((j) => el("div", { class: "jobs-menu-row" },
+  keepFocus(menu, () => menu.replaceChildren(...act.map((j) => el("div", { class: "jobs-menu-row" },
     el("span", { class: "dot " + (j.status === "running" ? "busy" : "") }),
     el("button", { class: "jobs-menu-label", title: "Open its workspace", onclick: () => { menu.hidden = true; setWs(wsOfJob(j)); } },
       el("b", {}, j.label || j.kind), el("small", {}, j.stopping ? STOPPING : (j.status === "running" ? (j.tool_message || j.message || "Working…") + (j.progress ? ` · ${j.progress}%` : "") : `Waiting · #${j.queue_pos || 1} in line`)
@@ -116,7 +116,7 @@ function renderJobsMenu() {
     act.length > 1 || waiting.length ? el("div", { class: "jobs-menu-foot" },
       el("span", {}, last?.end ? `Queue done around ${clock(last.end)}` : "The queue's end time isn't known yet"),
       waiting.length > 1 ? el("button", { class: "btn-sm ghost", ...onPress((b) => { b.disabled = true; b.textContent = "Removing…"; Promise.all(waiting.map((w) => api(`/api/jobs/${w.id}/cancel`, { method: "POST", body: "{}" }).catch(() => {}))).then(pollJobs); }) },
-        `Remove all ${waiting.length} waiting`) : null) : null);
+        `Remove all ${waiting.length} waiting`) : null) : null));
 }
 /** When each job should start and finish, from its estimate (est, seconds) and the jobs ahead of it: a running job's
  *  remaining time, then each queued one in line. Unknown from the first job without an estimate on. */
@@ -137,11 +137,16 @@ function timeNote(j, t) {
   if (!t?.end) return t?.start && j.status === "queued" ? ` · starts ~${clock(t.start)}` : "";
   return j.status === "running" ? ` · done ~${clock(t.end)}` : ` · starts ~${clock(t.start)}, done ~${clock(t.end)}`;
 }
-function toggleJobsMenu() {
+function toggleJobsMenu(byKey) {
   renderJobsMenu();
   const menu = $("#jobsMenu");
   if (menu && S.jobs.some((j) => j.status === "queued" || j.status === "running")) menu.hidden = !menu.hidden;
+  if (byKey && menu && !menu.hidden) menu.querySelector("button")?.focus();  // it sits at the end of the page: bring the keyboard to it
 }
+document.addEventListener("keydown", (e) => {
+  const menu = $("#jobsMenu");
+  if (e.key === "Escape" && menu && !menu.hidden) { menu.hidden = true; if (menu.contains(document.activeElement)) $("#jobsPill").focus(); }
+});
 const STOPPING = "Stopping: the Tiiny finishes its current step, then the result is thrown away";
 /** Cancel from a button: it shows "Stopping…" at once, since a running job ends only when the device answers. */
 function stopButton(btn, id) { btn.disabled = true; btn.textContent = "Stopping…"; btn.title = STOPPING; cancelJob(id); }

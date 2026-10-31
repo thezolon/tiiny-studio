@@ -291,7 +291,7 @@ function pdfPageText(items) {
 /** The text result window, shared by single pictures and documents. Shows plain text or Markdown; Copy and
     Save follow the view. Returns controls to update it. */
 function textDialog(title, { onClose, models, docName } = {}) {
-  const box = el("textarea", { class: "ocr-text", readonly: true });
+  const box = el("textarea", { class: "ocr-text", readonly: true, "aria-label": "Text found" });
   const meta = el("small", { class: "ocr-meta" });
   const bar = el("div", { class: "ocr-progress", hidden: true }, el("i"));
   let parts = [], joined = store.get("ocr.join", false), view = store.get("ocr.view", "text"), closed = false;
@@ -351,15 +351,15 @@ function textDialog(title, { onClose, models, docName } = {}) {
     a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 5000);
   } });
   const copy = el("button", { class: "btn-sm accent", onclick: () => { navigator.clipboard?.writeText(shown()); toast("Copied"); } });
-  const close = () => { closed = true; SET.onClose = null; $("#settingsModal").classList.remove("show"); onClose?.(); };
+  const close = () => { closed = true; SET.onClose = null; closeModal($("#settingsModal")); onClose?.(); };
   SET.onClose = close;  // Escape and the gear close this dialog through the same path (so a running read halts)
   const card = el("div", { class: "modal-card set-card" },
-    el("div", { class: "modal-head" }, el("h3", { class: "ocr-title" }, title), el("span", { class: "spacer" }), seg, el("button", { class: "icon-btn", title: "Close", onclick: close }, "✕")),
+    el("div", { class: "modal-head" }, el("h3", { class: "ocr-title", id: "settingsTitle" }, title), el("span", { class: "spacer" }), seg, el("button", { class: "icon-btn", title: "Close", "aria-label": "Close", onclick: close }, "✕")),
     el("div", { class: "set-body" }, bar, box,
       el("div", { class: "row set-actions" }, meta, el("span", { class: "spacer" }), models || null, stop, join, save, copy)));
   $("#settingsModal").replaceChildren(card);
   $("#settingsModal").dataset.locked = "";
-  $("#settingsModal").classList.add("show");
+  openModal($("#settingsModal"));
   show();
   return {
     get closed() { return closed; },
@@ -374,7 +374,7 @@ function showOcrResult(j) {
   OCR_WAIT.delete(j.id);
   if (OCR_QUIET.delete(j.id) || j.status !== "done") return;
   const models = ocrModels().length > 1 ? el("select", { class: "input", style: "width:auto;padding:4px 8px", title: "Read again with another model",
-    onchange: (e) => { store.set("ocr.model", e.target.value); $("#settingsModal").classList.remove("show"); ocrImage(ocrLastUrl, e.target.value); } },
+    onchange: (e) => { store.set("ocr.model", e.target.value); closeModal($("#settingsModal")); ocrImage(ocrLastUrl, e.target.value); } },
     ocrModels().map((m) => el("option", { value: m.id, selected: m.id === j.model }, shortName(m.id) + (m.status === "running" ? "" : " (not loaded)") + (wifiNote(m) ? " · needs Wi-Fi" : "")))) : null;
   const d = textDialog("Text in this image", { models });
   d.set([{ label: "Image", text: j.entry?.text || "" }]);

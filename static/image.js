@@ -628,11 +628,11 @@ function openAnnot(i) {
   AN.img.onload = () => {
     const c = $("#annotCanvas"); c.width = AN.img.naturalWidth; c.height = AN.img.naturalHeight;
     $("#annotSize").value = Math.round(Math.max(c.width, c.height) / 40);
-    drawAnnot(); $("#annot").classList.add("show");
+    drawAnnot(); openModal($("#annot"));
   };
   AN.img.src = s.orig || s.uri;
 }
-function closeAnnot() { $("#annot").classList.remove("show"); }
+function closeAnnot() { closeModal($("#annot")); }
 function drawAnnot() {
   const c = $("#annotCanvas"), g = c.getContext("2d");
   g.clearRect(0, 0, c.width, c.height);
@@ -722,9 +722,10 @@ window.addEventListener("drop", (e) => { e.preventDefault(); dragDepth = 0; $("#
 // keyboard
 document.addEventListener("keydown", (e) => {
   if (e.key === "Escape") { if ($("#annot").classList.contains("show")) closeAnnot(); else if (S.drawer) closeDrawer(); return; }
-  if (e.target.closest("input, textarea, select, [role=dialog]") || e.ctrlKey || e.metaKey || e.altKey) return;
+  if (e.target.closest("input, textarea, select, [role=dialog]:not(#drawer)") || e.ctrlKey || e.metaKey || e.altKey) return;
   if (document.querySelector(".modal.show")) return;
   if (e.key === "m") { S.drawer ? closeDrawer() : openDrawer(); return; }
+  if (S.drawer) return;  // the drawer is a dialog too: no image shortcuts while it is open
   if (S.ws && S.ws !== "image") return;
   const entry = S.view?.id && S.history.find((x) => x.id === S.view.id);
   if (e.key === "ArrowRight") { stepImage(1); e.preventDefault(); }
