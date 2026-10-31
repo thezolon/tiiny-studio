@@ -197,7 +197,7 @@ async fn build(ctx: &Ctx, saved: &mut Vec<String>) -> JobResult {
     };
     let model = ctx.model.clone();
     ensure_running(&ctx, &model).await?;
-    let url = format!("{}/v1/3d", ctx.state.settings.current().url); // gateway proxy: /v1/3d/tasks -> container /v1/tasks
+    let url = format!("{}/v1/3d", ctx.target.url); // gateway proxy: /v1/3d/tasks -> container /v1/tasks
     // With two 3D models loaded the gateway sends an unnamed request to either one: name it on every call.
     let mq = format!("?model={}", super::quote(&model));
     let (_, caps) = http(&ctx, "GET", &format!("{url}/capabilities{mq}"), None, 30, true).await?;

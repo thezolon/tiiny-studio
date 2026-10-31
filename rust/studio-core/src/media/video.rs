@@ -42,7 +42,7 @@ async fn make(ctx: &Ctx, saved: &mut Vec<String>) -> JobResult {
     }
     let model = ctx.model.clone();
     ensure_running(ctx, &model).await?;
-    let url = format!("{}/v1/videos", ctx.state.settings.current().url);
+    let url = format!("{}/v1/videos", ctx.target.url);
     let secs = int_of(req, "seconds").filter(|x| (1..=20).contains(x)).unwrap_or(2);
     let size = Some(s("size")).filter(|x| !x.is_empty()).unwrap_or("832x480").to_string();
     let mut body = Map::new();

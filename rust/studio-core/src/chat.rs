@@ -216,7 +216,7 @@ struct Call {
 
 /// POST a streaming chat completion; fill job["partial"] as it arrives. Returns (content, reasoning, tool calls, finish).
 async fn stream_completion(ctx: &Ctx, partial: &mut Partial, body: &Value) -> Result<(String, String, Vec<Call>, Value), JobError> {
-    let cur = ctx.state.settings.current();
+    let cur = &ctx.target;
     let res = ctx.state.http.post(format!("{}/v1/chat/completions", cur.url)).bearer_auth(&cur.key).json(body)
         .timeout(Duration::from_secs(900)).send().await.map_err(|e| JobError(format!("Device unreachable: {e}")))?;
     let code = res.status().as_u16();
@@ -276,7 +276,7 @@ async fn stream_completion(ctx: &Ctx, partial: &mut Partial, body: &Value) -> Re
 /// The real id behind "default" (the device's alias for the loaded model), so it can be reloaded after a swap, and
 /// its thinking object (None when the device doesn't say).
 async fn chat_model_id(ctx: &Ctx, wanted: &str) -> Result<(String, Option<Value>), JobError> {
-    let (code, res) = crate::device::call(&ctx.state, "GET", "/v1/models", None, 15, None).await;
+    let (code, res) = ctx.call("GET", "/v1/models", None, 15).await;
     if code == 200 {
         for item in res.get("data").and_then(Value::as_array).into_iter().flatten() {
             let aliases = item.get("aliases").and_then(Value::as_array).cloned().unwrap_or_default();

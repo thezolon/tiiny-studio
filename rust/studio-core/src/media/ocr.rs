@@ -17,7 +17,7 @@ pub async fn run(ctx: Ctx) -> JobResult {
     let model = ctx.model.clone();
     let inst = running_instance(&ctx, &model).await?;
     ctx.update(json!({"message": "Reading text"}));
-    let cur = ctx.state.settings.current();
+    let cur = &ctx.target;
     let url = format!("{}/v1/ocr?model={}", cur.url, quote(&model));
     let (code, mut res) = http(&ctx, "POST", &url, Some(json!({"input": image, "response_format": "json"})), 300, true).await?;
     if code != 200 && err(&res).to_lowercase().contains("endpoint not found") {

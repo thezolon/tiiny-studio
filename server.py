@@ -344,16 +344,25 @@ def edit_history(entry_id, fn):
 
 
 def device(method, path, body=None, timeout=30, url=None, key=None):
-    if not (url or SETTINGS.url):
+    """JSON request to the device: (status, JSON). url/key address another device (a job's own, or one being tested);
+    without them the active one, read once so a key never goes to a different device than its own."""
+    if url is None:
+        cur = SETTINGS.current() or {}
+        url, key = cur.get("url", ""), cur.get("key", "")
+    if not url:
         return 503, {"error": {"message": "No device configured yet. Open Settings and enter your Tiiny's address and API key."}}
     data = json.dumps(body).encode() if body is not None else None
-    req = urllib.request.Request((url or SETTINGS.url) + path, data=data, method=method)
-    req.add_header("Authorization", f"Bearer {key if key is not None else SETTINGS.key}")
+    req = urllib.request.Request(url + path, data=data, method=method)
+    req.add_header("Authorization", f"Bearer {key or ''}")
     if data is not None:
         req.add_header("Content-Type", "application/json")
     try:
         with urllib.request.urlopen(req, timeout=timeout) as r:
-            return r.status, json.loads(r.read() or b"{}")
+            raw = r.read()
+            try:
+                return r.status, json.loads(raw or b"{}")
+            except ValueError:  # a 200 that isn't JSON (a login page, a proxy): an error, not a crash
+                return 502, {"error": {"message": raw.decode("utf-8", "replace")[:500]}}
     except urllib.error.HTTPError as e:
         raw = e.read()
         try:
@@ -416,7 +425,7 @@ def catalog():
                  "last_switch": SETTINGS.last_switch}
 
 
-MEDIA = Media(SETTINGS, IMAGES, add_history, lambda m, p, b=None, t=30: device(m, p, b, timeout=t), DEVICE_LOCK)
+MEDIA = Media(SETTINGS, IMAGES, add_history, lambda m, p, b=None, t=30, url=None, key=None: device(m, p, b, timeout=t, url=url, key=key), DEVICE_LOCK)
 MEDIA.edit_history = edit_history
 SEARCH_CACHE = {}  # entry id -> (text, vector); memory only, dropped on delete/wipe
 STATS_CACHE = {"t": 0, "data": None}
@@ -993,4 +1002,4 @@ if __name__ == "__main__":
         # stop what we started on the Tiiny: it keeps rendering if we just disappear
         for job in [j for j in list(JOBS.values()) if j["status"] == "running"]:
             job["cancel"] = True
-            MEDIA.halt_device(job["kind"], job["model"])
+            (job.get("_m") or MEDIA).halt_device(job["kind"], job["model"])

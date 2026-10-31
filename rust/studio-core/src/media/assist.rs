@@ -156,7 +156,7 @@ async fn call(ctx: &Ctx, task: &str, model: &str, prompt: &str, tokens: u64, mes
         body["chat_template_kwargs"] = json!({"enable_thinking": false});
     }
     ctx.update(json!({"message": message}));
-    let (code, res) = crate::device::call(&ctx.state, "POST", "/v1/chat/completions", Some(body), 600, None).await;
+    let (code, res) = ctx.call("POST", "/v1/chat/completions", Some(body), 600).await;
     if code != 200 || res.get("choices").and_then(Value::as_array).is_none_or(|c| c.is_empty()) {
         return Err(JobError(err(&res)));
     }

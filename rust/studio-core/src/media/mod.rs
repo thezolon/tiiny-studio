@@ -51,7 +51,7 @@ fn quote(s: &str) -> String {
 }
 
 pub async fn running_ids(ctx: &Ctx) -> Vec<String> {
-    let (code, run) = crate::device::call(&ctx.state, "GET", "/api/v1/models/running", None, 15, None).await;
+    let (code, run) = ctx.call("GET", "/api/v1/models/running", None, 15).await;
     if code != 200 {
         return vec![];
     }
@@ -77,11 +77,10 @@ pub async fn make_room(ctx: &Ctx, target: &str) -> Result<Vec<String>, JobError>
     if running_ids(ctx).await.iter().any(|m| m == target) {
         return Ok(vec![]);
     }
-    let st = &ctx.state;
     let mut unloaded = vec![];
     for _ in 0..4 {
         // one unload may not be enough
-        let (code, plan) = crate::device::call(st, "GET", &format!("/api/v1/models/{}/unload_candidate", quote(target)), None, 30, None).await;
+        let (code, plan) = ctx.call("GET", &format!("/api/v1/models/{}/unload_candidate", quote(target)), None, 30).await;
         if code != 200 {
             return Err(JobError(err(&plan)));
         }
@@ -90,7 +89,7 @@ pub async fn make_room(ctx: &Ctx, target: &str) -> Result<Vec<String>, JobError>
         }
         for victim in plan.get("model_id").and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_str) {
             ctx.update(json!({"message": format!("Unloading {} to make room", short(victim))}));
-            let (code, res) = crate::device::call(st, "POST", &format!("/api/v1/models/{}/stop", quote(victim)), None, 120, None).await;
+            let (code, res) = ctx.call("POST", &format!("/api/v1/models/{}/stop", quote(victim)), None, 120).await;
             if code != 200 {
                 return Err(JobError(err(&res)));
             }
@@ -98,7 +97,7 @@ pub async fn make_room(ctx: &Ctx, target: &str) -> Result<Vec<String>, JobError>
         }
     }
     ctx.update(json!({"message": format!("Loading {}", short(target))}));
-    let (code, res) = crate::device::call(st, "POST", &format!("/api/v1/models/{}/launch", quote(target)), Some(json!({"model_id": target})), 120, None).await;
+    let (code, res) = ctx.call("POST", &format!("/api/v1/models/{}/launch", quote(target)), Some(json!({"model_id": target})), 120).await;
     if code != 200 {
         return Err(JobError(err(&res)));
     }
@@ -111,12 +110,11 @@ pub async fn put_back(ctx: &Ctx, target: &str, unloaded: &[String]) -> Result<()
     if unloaded.is_empty() {
         return Ok(()); // everything fitted: leave the model loaded for next time
     }
-    let st = &ctx.state;
     ctx.update(json!({"message": format!("Unloading {}", short(target))}));
-    crate::device::call(st, "POST", &format!("/api/v1/models/{}/stop", quote(target)), None, 120, None).await;
+    ctx.call("POST", &format!("/api/v1/models/{}/stop", quote(target)), None, 120).await;
     for mid in unloaded {
         ctx.update(json!({"message": format!("Loading {} back", short(mid))}));
-        let (code, res) = crate::device::call(st, "POST", &format!("/api/v1/models/{}/launch", quote(mid)), Some(json!({"model_id": mid})), 120, None).await;
+        let (code, res) = ctx.call("POST", &format!("/api/v1/models/{}/launch", quote(mid)), Some(json!({"model_id": mid})), 120).await;
         if code != 200 {
             return Err(JobError(format!("Couldn't load {} back: {}", short(mid), err(&res))));
         }
@@ -130,7 +128,7 @@ pub async fn put_back(ctx: &Ctx, target: &str, unloaded: &[String]) -> Result<()
 // ---------- thinking: what a chat model does, from its own /v1/models "thinking" object (TiinyOS 0.1.36+) ----------
 /// The model's thinking object from /v1/models, or None (older TiinyOS, or the model isn't loaded).
 pub async fn thinking_of(ctx: &Ctx, model: &str) -> Option<Value> {
-    let (code, res) = crate::device::call(&ctx.state, "GET", "/v1/models", None, 15, None).await;
+    let (code, res) = ctx.call("GET", "/v1/models", None, 15).await;
     if code != 200 {
         return None;
     }
@@ -151,7 +149,7 @@ pub fn thinking_mode(model: &str, thinking: Option<&Value>) -> &'static str {
 
 /// The running instance of a model (its port etc.), or the "isn't loaded" error the UI shows.
 pub async fn running_instance(ctx: &Ctx, model: &str) -> Result<Value, JobError> {
-    let (_, run) = crate::device::call(&ctx.state, "GET", "/api/v1/models/running", None, 15, None).await;
+    let (_, run) = ctx.call("GET", "/api/v1/models/running", None, 15).await;
     run.pointer("/instances/running")
         .and_then(Value::as_array)
         .and_then(|r| r.iter().find(|r| r.get("model_id").and_then(Value::as_str) == Some(model)).cloned())
@@ -167,7 +165,7 @@ pub async fn ensure_running(ctx: &Ctx, model: &str) -> Result<(), JobError> {
 /// has no route for them. Some links (the USB cable) only expose the gateway, so check the port first.
 pub async fn instance_url(ctx: &Ctx, model: &str) -> Result<String, JobError> {
     let r = running_instance(ctx, model).await?;
-    let host = ctx.state.settings.current().host();
+    let host = ctx.target.host();
     let port = r.get("port").and_then(Value::as_u64);
     if !port_open(&host, port).await {
         return Err(JobError(format!(
@@ -191,7 +189,7 @@ pub async fn http(ctx: &Ctx, method: &str, url: &str, body: Option<Value>, timeo
     let method = reqwest::Method::from_bytes(method.as_bytes()).unwrap_or(reqwest::Method::GET);
     let mut req = ctx.state.http.request(method, url).timeout(Duration::from_secs(timeout));
     if gateway_auth {
-        req = req.bearer_auth(ctx.state.settings.current().key);
+        req = req.bearer_auth(&ctx.target.key);
     }
     if let Some(b) = body {
         req = req.json(&b);
@@ -204,8 +202,8 @@ pub async fn http(ctx: &Ctx, method: &str, url: &str, body: Option<Value>, timeo
     }
     match serde_json::from_slice(&raw) {
         Ok(v) => Ok((code, v)),
-        Err(_) if code >= 400 => Ok((code, json!({"error": String::from_utf8_lossy(&raw).chars().take(500).collect::<String>()}))),
-        Err(e) => Err(JobError(format!("Device unreachable: {e}"))),
+        // an error answer's own text; a 200 that isn't JSON (a login page, a proxy) is an error answer too
+        Err(_) => Ok((if code >= 400 { code } else { 502 }, json!({"error": String::from_utf8_lossy(&raw).chars().take(500).collect::<String>()}))),
     }
 }
 
@@ -215,7 +213,7 @@ pub async fn http_bytes(ctx: &Ctx, method: &str, url: &str, body: Option<(Vec<u8
     let method = reqwest::Method::from_bytes(method.as_bytes()).unwrap_or(reqwest::Method::GET);
     let mut req = ctx.state.http.request(method, url).timeout(Duration::from_secs(timeout));
     if gateway_auth {
-        req = req.bearer_auth(ctx.state.settings.current().key);
+        req = req.bearer_auth(&ctx.target.key);
     }
     if let Some((b, ctype)) = body {
         req = req.header("Content-Type", ctype).body(b);
@@ -235,7 +233,7 @@ pub fn json_reply(code: u16, reply: Result<Vec<u8>, Value>) -> Result<(u16, Valu
     match reply {
         Err(v) => Ok((code, v)),
         Ok(b) if b.is_empty() => Ok((code, json!({}))),
-        Ok(b) => serde_json::from_slice(&b).map(|v| (code, v)).map_err(|e| JobError(format!("JSONDecodeError: {e}"))),
+        Ok(b) => Ok(serde_json::from_slice(&b).map_or_else(|_| (502, json!({"error": String::from_utf8_lossy(&b).chars().take(500).collect::<String>()})), |v| (code, v))),
     }
 }
 
@@ -344,5 +342,12 @@ mod tests {
         assert_eq!(err(&json!({"error": {"code": 1}})), r#"{"code": 1}"#);
         assert_eq!(err(&json!({"x": 1})), r#"{"x": 1}"#);
         assert_eq!(err(&json!("plain")), "plain");
+    }
+
+    #[test]
+    fn a_200_that_is_not_json_is_an_error_answer() {
+        let (code, v) = json_reply(200, Ok(b"<html>Please log in</html>".to_vec())).unwrap();
+        assert_eq!((code, err(&v).as_str()), (502, "<html>Please log in</html>"));
+        assert_eq!(json_reply(200, Ok(b"{\"a\": 1}".to_vec())).unwrap(), (200, json!({"a": 1})));
     }
 }

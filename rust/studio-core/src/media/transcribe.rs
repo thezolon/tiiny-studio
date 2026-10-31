@@ -29,7 +29,7 @@ pub async fn run(ctx: Ctx) -> JobResult {
     };
     let (body, mp) = multipart(&fields, &[("file", (&file.0, file.1, file.2))]);
     ctx.update(json!({"message": "Transcribing"}));
-    let url = format!("{}/v1/audio/transcriptions", ctx.state.settings.current().url);
+    let url = format!("{}/v1/audio/transcriptions", ctx.target.url);
     let (code, res) = http_bytes(&ctx, "POST", &url, Some((body, mp)), 3600, true).await?;
     let (code, res) = json_reply(code, res)?;
     if code != 200 || res.get("text").is_none() {

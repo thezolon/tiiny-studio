@@ -22,7 +22,7 @@ const ACE_STEP_KEYS: [&str; 5] = ["bpm", "key_scale", "time_signature", "vocal_l
 /// YuE2: "... preview generation is not implemented"); false for SongGeneration. Read from the model's music service
 /// (/v1/music/info, 0.1.38); by its id when the device doesn't say.
 async fn plain_song_model(ctx: &Ctx, model: &str) -> bool {
-    let (code, info) = crate::device::call(&ctx.state, "GET", &format!("/v1/music/info?model={}", quote(model)), None, 15, None).await;
+    let (code, info) = ctx.call("GET", &format!("/v1/music/info?model={}", quote(model)), None, 15).await;
     match info.get("service_name").and_then(Value::as_str).filter(|_| code == 200) {
         Some(service) => !service.starts_with("SongGeneration"),
         None => model.starts_with("ACE-Step/"),
@@ -77,10 +77,10 @@ pub async fn run_loop(ctx: Ctx) -> JobResult {
     let model = ctx.model.clone();
     ensure_running(&ctx, &model).await?;
     ctx.update(json!({"message": "Generating loop"}));
-    let before = session_ids(&ctx.state).await; // the gateway keeps a session per loop but doesn't say which: it's the one that appears
+    let before = session_ids(&ctx.state, &ctx.target).await; // the gateway keeps a session per loop but doesn't say which: it's the one that appears
     // Gateway music route (Tiiny SDK, Oct 2026) works on every link, the USB cable included. Foundation-1
     // still takes its native body ({prompt, config}); older firmware without the route falls back to the port.
-    let gw = format!("{}/v1/music/generate/wav", ctx.state.settings.current().url);
+    let gw = format!("{}/v1/music/generate/wav", ctx.target.url);
     let body = json!({"model": model, "prompt": prompt, "config": config});
     let (mut code, mut res) = http_bytes(&ctx, "POST", &gw, json_body(&body), 3600, true).await?;
     if code == 404 && res.as_ref().is_err_and(|v| v.get("detail").is_some()) {
@@ -94,7 +94,7 @@ pub async fn run_loop(ctx: Ctx) -> JobResult {
         Err(v) => return Err(JobError(err(&v))),
     };
     let out = save(&ctx, &format!("{}-loop.wav", ctx.id), &wav);
-    let after = if before.is_some() { session_ids(&ctx.state).await } else { None };
+    let after = if before.is_some() { session_ids(&ctx.state, &ctx.target).await } else { None };
     let new: Vec<String> = match (&before, after) {
         (Some(before), Some(after)) => after.difference(before).cloned().collect(),
         _ => vec![],
@@ -134,7 +134,7 @@ pub async fn run_song(ctx: Ctx) -> JobResult {
     }
     let inst = running_instance(&ctx, &model).await?;
     let plain = plain_song_model(&ctx, &model).await;
-    let cur = ctx.state.settings.current();
+    let cur = &ctx.target;
     let host = cur.host();
     let gw = format!("{}/v1/music/generate", cur.url);
     let port = inst.get("port").and_then(Value::as_u64);
@@ -238,7 +238,7 @@ async fn song_progress(ctx: Ctx, direct_url: Option<String>) {
         let polled = match &direct_url {
             Some(u) => http(&ctx, "GET", &format!("{u}/v1/sessions"), None, 5, false).await,
             None => {
-                let url = format!("{}/v1/music/sessions?model={}", ctx.state.settings.current().url, quote(&ctx.model));
+                let url = format!("{}/v1/music/sessions?model={}", ctx.target.url, quote(&ctx.model));
                 http(&ctx, "GET", &url, None, 5, true).await
             }
         };
@@ -285,7 +285,7 @@ async fn song_entry(ctx: &Ctx, res: &Value, config: &Map<String, Value>, sources
         http(ctx, "DELETE", &format!("{url}/v1/sessions/{sid}"), None, 15, false).await?;
     } else if let Some(sid) = &sid {
         // Gateway songs can also be fetched as MP3 from their session.
-        let dl = format!("{}/v1/music/sessions/{sid}/download?format=mp3", ctx.state.settings.current().url);
+        let dl = format!("{}/v1/music/sessions/{sid}/download?format=mp3", ctx.target.url);
         if let Ok((200, Ok(mp3))) = http_bytes(ctx, "GET", &dl, None, 120, true).await {
             if mp3.len() > 1000 {
                 downloads.push(save(ctx, &format!("{}-song.mp3", ctx.id), &mp3));

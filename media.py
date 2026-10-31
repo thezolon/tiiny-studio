@@ -6,6 +6,7 @@ Each job runs in a background thread so long work (songs, 3D) survives page relo
 (found by probing TiinyOS 0.1.35, see README).
 """
 import base64
+import copy
 import json
 import os
 import re
@@ -17,7 +18,7 @@ import urllib.error
 import urllib.request
 import uuid
 import zlib
-from urllib.parse import quote
+from urllib.parse import quote, urlparse
 
 RECOVER_MUSIC_SECONDS = 24 * 3600  # songs and loops older than this are never pulled from the device
 
@@ -33,6 +34,16 @@ class JobError(Exception):
 DISK_KINDS = ("image", "speech", "transcribe", "loop", "song", "mesh", "video", "ocr")
 
 
+class DeviceTarget:
+    """The device a job talks to, fixed when it is submitted: the address and key as they were then. The active device
+    can change mid-job (auto-switch, or the Settings screen); a key must never be sent to a device it doesn't belong to."""
+    def __init__(self, settings):
+        cur = settings.current() or {}  # one read: url and key from the same device
+        self.url, self.key = cur.get("url", ""), cur.get("key", "")
+        self.host = urlparse(self.url).hostname or ""
+        self.swap_allowed = settings.swap_allowed
+
+
 class Media:
     def __init__(self, settings, media_dir, add_history, device_call, device_lock):
         self.settings = settings  # live device address + key (can change from the Settings screen)
@@ -46,6 +57,15 @@ class Media:
         self.seen_lock = threading.Lock()  # device_seen.json (read-modify-write)
 
     # ---------- plumbing ----------
+    def snapshot(self):
+        """A copy aimed at the device that is active now, for one job (or one pass over the device): every request it
+        makes goes to that address with that key, whatever is active by the time they are made."""
+        m = copy.copy(self)
+        m.settings = DeviceTarget(self.settings)
+        call, to = self.device, m.settings
+        m.device = lambda method, path, body=None, timeout=30: call(method, path, body, timeout, url=to.url, key=to.key)
+        return m
+
     def disk_space(self):
         """(free GB, total GB) of the Tiiny's storage from /api/v1/sys/status, or None when it can't be read.
         Cached for STUDIO_DISK_TTL seconds (60); the contract tests set 0. Results are written on the device first."""
@@ -124,7 +144,12 @@ class Media:
         try:
             with urllib.request.urlopen(req, timeout=timeout) as r:
                 data = r.read()
-                return r.status, (data if raw else json.loads(data or b"{}"))
+                if raw:
+                    return r.status, data
+                try:
+                    return r.status, json.loads(data or b"{}")
+                except ValueError:  # a 200 that isn't JSON (a login page, a proxy): an error answer, not a crash
+                    return 502, {"error": data.decode("utf-8", "replace")[:500]}
         except urllib.error.HTTPError as e:
             data = e.read()
             try:
@@ -177,9 +202,10 @@ class Media:
                "entry": None, "error": None, "cancel": False, "remote_task": None, "est": req.get("est"),
                # small, display-only copy of the request (prompt, size, …) so the UI can show queued jobs
                "params": {k: v for k, v in req.items() if isinstance(v, (int, float)) or (isinstance(v, str) and len(v) < 2000)}}
+        job["_m"] = m = self.snapshot()  # the device this job runs on, for its cancel and halt too
         with JOBS_LOCK:
             JOBS[job["id"]] = job
-        threading.Thread(target=self._run, args=(job, req), daemon=True).start()
+        threading.Thread(target=m._run, args=(job, req), daemon=True).start()
         return self.view(job)
 
     def _run(self, job, req):
@@ -229,7 +255,7 @@ class Media:
 
     @staticmethod
     def view(job):
-        return {k: v for k, v in job.items() if k not in ("cancel", "remote_task")}
+        return {k: v for k, v in job.items() if k not in ("cancel", "remote_task", "_m")}
 
     def list(self):
         cutoff = time.time() - 600
@@ -251,17 +277,18 @@ class Media:
         if not job:
             return False
         job["cancel"] = True
+        m = job.get("_m") or self
         if job.get("remote_task"):  # POSTed to, or "DELETE <url>" (a video)
             method, _, url = job["remote_task"].rpartition(" ")
             try:
-                self.http(method or "POST", url, b"" if not method else None, timeout=15, headers=self.gateway_headers())
+                self.http(method or "POST", url, b"" if not method else None, timeout=15, headers=m.gateway_headers())
             except JobError:
                 pass
         if job["status"] == "queued":
             job.update(status="cancelled", message="Cancelled")
         elif job["status"] == "running":
             job["stopping"] = True  # the result is thrown away when the device answers
-            threading.Thread(target=self.halt_device, args=(job["kind"], job["model"]), daemon=True).start()
+            threading.Thread(target=m.halt_device, args=(job["kind"], job["model"]), daemon=True).start()
         return True
 
     def halt_device(self, kind, model):
@@ -302,7 +329,8 @@ class Media:
         """Best effort, in the background (it waits its turn for the device): the Tiiny keeps a finished song's session
         until it's deleted. Never blocks or fails the local delete."""
         ids = [i for i in ids if i]
-        if not ids or not self.settings.url:
+        m = self.snapshot()
+        if not ids or not m.settings.url:
             return
         self.mark_seen(*ids)
 
@@ -310,7 +338,7 @@ class Media:
             with self.lock:
                 for i in ids:
                     try:
-                        self.http("DELETE", f"{self.settings.url}/v1/music/sessions/{quote(i, safe='')}", timeout=15, headers=self.gateway_headers())
+                        self.http("DELETE", f"{m.settings.url}/v1/music/sessions/{quote(i, safe='')}", timeout=15, headers=m.gateway_headers())
                     except JobError:
                         pass
         threading.Thread(target=work, daemon=True).start()
@@ -329,6 +357,9 @@ class Media:
     def recover(self):
         """Save what the Tiiny holds that the gallery doesn't. Skipped while a job has the device (its own clip or session
         would look unclaimed); the page asks again on its next load."""
+        return self.snapshot()._recover()
+
+    def _recover(self):
         nothing = {"recovered": [], "baseline": False}
         if not self.settings.url or not self.lock.acquire(blocking=False):
             return nothing
@@ -870,7 +901,7 @@ def song_progress(m, job, direct_url, stop):
             prog = [s.get("progress") for s in live if isinstance(s.get("progress"), (int, float))]
             if prog and max(prog) > 0:
                 job["progress"] = min(99, round(max(prog) * 100))
-        except (JobError, ValueError, AttributeError, TypeError):
+        except (JobError, AttributeError, TypeError):
             pass
 
 
@@ -1068,7 +1099,7 @@ def build_mesh(m, job, req, saved):
             time.sleep(2)
             try:
                 code, st = m.http("GET", f"{url}/tasks/{tid}{mq}", timeout=30, headers=auth)
-            except (JobError, ValueError):
+            except JobError:
                 code, st = 0, {}
             if code == 0 or code >= 500:  # no answer: ride out a dropped link
                 if job["cancel"]:

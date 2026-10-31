@@ -60,7 +60,7 @@ pub async fn run(ctx: Ctx) -> JobResult {
     ensure_running(&ctx, &model).await?;
     // Long text is voiced a few sentences at a time (the model has a context limit) and stitched together.
     let chunks = split_for_speech(&said, 320);
-    let url = format!("{}/v1/audio/speech", ctx.state.settings.current().url);
+    let url = format!("{}/v1/audio/speech", ctx.target.url);
     let mut parts: Vec<Vec<u8>> = vec![];
     let mut direct: Option<(String, String)> = None;
     for (i, chunk) in chunks.iter().enumerate() {

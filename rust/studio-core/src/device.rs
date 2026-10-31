@@ -31,11 +31,11 @@ pub async fn call(state: &AppState, method: &str, path: &str, body: Option<Value
             }
             match serde_json::from_slice::<Value>(&raw) {
                 Ok(v) => (code, v),
-                Err(_) if code >= 400 => {
+                Err(_) => {
+                    // an error answer's own text; a 200 that isn't JSON (a login page, a proxy) is an error too
                     let text: String = String::from_utf8_lossy(&raw).chars().take(500).collect();
-                    (code, json!({"error": {"message": text}}))
+                    (if code >= 400 { code } else { 502 }, json!({"error": {"message": text}}))
                 }
-                Err(e) => (502, json!({"error": {"message": format!("Device unreachable: {e}")}})),
             }
         }
         Err(e) => (502, json!({"error": {"message": format!("Device unreachable: {e}")}})),
