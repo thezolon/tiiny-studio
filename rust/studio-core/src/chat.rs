@@ -151,7 +151,7 @@ user to load {0} from the Models panel (or turn swapping on), then ask again.", 
     ctx.update(json!({"tool": {"name": name, "model": model}}));
     let unloaded = make_room(ctx, &model).await?;
     let result = async {
-        let sub = ctx.sub(&model, sub_req);
+        let sub = ctx.sub(&model, sub_req).own_files(); // its result goes to the gallery at once; a failure takes back only its files
         let started = now();
         let message = match kind {
             "image" => "Making the image",
@@ -164,7 +164,13 @@ user to load {0} from the Models panel (or turn swapping on), then ask again.", 
             return Err(JobError("Cancelled".into()));
         }
         let run = crate::media::kind(kind).ok_or_else(|| JobError(format!("unknown job kind {kind}")))?;
-        let mut entry = run(sub.clone()).await?;
+        let mut entry = match run(sub.clone()).await {
+            Ok(e) => e,
+            Err(e) => {
+                sub.discard_saved();
+                return Err(e);
+            }
+        };
         let k = entry.get("kind").and_then(Value::as_str).unwrap_or(kind).to_string();
         let e = entry.as_object_mut().unwrap();
         e.insert("id".into(), json!(sub.id));
@@ -172,7 +178,10 @@ user to load {0} from the Models panel (or turn swapping on), then ask again.", 
         e.insert("kind".into(), json!(k));
         e.insert("seconds".into(), json!(((now() - started) * 10.0).round() / 10.0));
         e.insert("via".into(), json!("chat"));
-        ctx.state.store.add_history(entry.clone());
+        if let Err(e) = ctx.state.store.add_history(entry.clone()) {
+            sub.discard_saved();
+            return Err(JobError(format!("Couldn't save the result: {e}")));
+        }
         if kind == "image" {
             if let Some(first) = entry.pointer("/outputs/0").and_then(Value::as_str) {
                 ctx.update(json!({"turn_image": format!("/images/{first}")}));
@@ -216,7 +225,7 @@ struct Call {
 
 /// POST a streaming chat completion; fill job["partial"] as it arrives. Returns (content, reasoning, tool calls, finish).
 async fn stream_completion(ctx: &Ctx, partial: &mut Partial, body: &Value) -> Result<(String, String, Vec<Call>, Value), JobError> {
-    let cur = ctx.state.settings.current();
+    let cur = &ctx.target;
     let res = ctx.state.http.post(format!("{}/v1/chat/completions", cur.url)).bearer_auth(&cur.key).json(body)
         .timeout(Duration::from_secs(900)).send().await.map_err(|e| JobError(format!("Device unreachable: {e}")))?;
     let code = res.status().as_u16();
@@ -276,7 +285,7 @@ async fn stream_completion(ctx: &Ctx, partial: &mut Partial, body: &Value) -> Re
 /// The real id behind "default" (the device's alias for the loaded model), so it can be reloaded after a swap, and
 /// its thinking object (None when the device doesn't say).
 async fn chat_model_id(ctx: &Ctx, wanted: &str) -> Result<(String, Option<Value>), JobError> {
-    let (code, res) = crate::device::call(&ctx.state, "GET", "/v1/models", None, 15, None).await;
+    let (code, res) = ctx.call("GET", "/v1/models", None, 15).await;
     if code == 200 {
         for item in res.get("data").and_then(Value::as_array).into_iter().flatten() {
             let aliases = item.get("aliases").and_then(Value::as_array).cloned().unwrap_or_default();

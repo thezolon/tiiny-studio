@@ -11,6 +11,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde_json::{json, Map, Value};
 
+use crate::settings::Target;
 use crate::AppState;
 
 #[derive(Debug)]
@@ -33,6 +34,8 @@ struct Job {
     data: Map<String, Value>,
     cancel: Arc<AtomicBool>,
     remote_task: Option<String>,
+    /// The device this job runs on (its cancel and halt go there, whatever is active by then).
+    target: Target,
 }
 
 #[derive(Default)]
@@ -47,12 +50,23 @@ pub struct Ctx {
     pub id: String,
     pub model: String,
     pub req: Value,
+    /// The device address and key as they were when the job was submitted. Every request the job makes goes there,
+    /// so an auto-switch mid-job never sends one device's key to another.
+    pub target: Target,
+    /// Every file the job has saved (media::save): all of them are shredded if it fails or is cancelled, since no
+    /// gallery entry would point at them. A tool run inside a chat job keeps its own list (its result is saved at once).
+    pub(crate) saved: Arc<Mutex<Vec<String>>>,
     pub(crate) cancel: Arc<AtomicBool>,
     /// Set for a chat tool's inline job: its message/progress show on the chat job as tool_message/tool_progress.
     pub(crate) parent: Option<String>,
 }
 
 impl Ctx {
+    /// `device::call` on this job's device.
+    pub async fn call(&self, method: &str, path: &str, body: Option<Value>, timeout: u64) -> (u16, Value) {
+        crate::device::call(&self.state, method, path, body, timeout, Some((&self.target.url, &self.target.key))).await
+    }
+
     pub fn cancelled(&self) -> bool {
         self.cancel.load(Ordering::Relaxed)
     }
@@ -71,6 +85,17 @@ impl Ctx {
                 self.state.jobs.update(parent, Value::Object(out));
             }
         }
+    }
+
+    /// Shred the files this job saved (it failed or was cancelled).
+    pub fn discard_saved(&self) {
+        discard(&self.state, &self.saved);
+    }
+
+    /// The same job context with a list of saved files of its own.
+    pub fn own_files(mut self) -> Ctx {
+        self.saved = Arc::default();
+        self
     }
 
     /// Drop fields from the job (Python's job.pop).
@@ -94,6 +119,8 @@ impl Ctx {
             id: uuid::Uuid::new_v4().simple().to_string()[..12].to_string(),
             model: model.to_string(),
             req,
+            target: self.target.clone(),
+            saved: self.saved.clone(), // mesh's cut-out is part of the build; chat gives its tools their own (own_files)
             cancel: Arc::new(AtomicBool::new(false)),
             parent: Some(self.id.clone()),
         }
@@ -103,6 +130,14 @@ impl Ctx {
     pub fn set_remote_task(&self, url: Option<String>) {
         if let Some(j) = self.state.jobs.lock().get_mut(&self.id) {
             j.remote_task = url;
+        }
+    }
+}
+
+fn discard(state: &AppState, saved: &Mutex<Vec<String>>) {
+    for f in std::mem::take(&mut *saved.lock().unwrap_or_else(|e| e.into_inner())) {
+        if crate::store::safe_file(&f) {
+            crate::store::shred(&state.store.images.join(f));
         }
     }
 }
@@ -125,6 +160,12 @@ fn view(job: &Job) -> Value {
 }
 
 impl Jobs {
+    /// A context for the plumbing tests in media/: not in the table, no task behind it.
+    #[cfg(test)]
+    pub(crate) fn test_ctx(&self, state: &AppState) -> Ctx {
+        Ctx { state: state.clone(), id: "t".into(), model: String::new(), req: json!({}), target: Target::default(), saved: Arc::default(), cancel: Arc::new(AtomicBool::new(false)), parent: None }
+    }
+
     fn lock(&self) -> MutexGuard<'_, HashMap<String, Job>> {
         self.map.lock().unwrap_or_else(|e| e.into_inner())
     }
@@ -177,10 +218,11 @@ impl Jobs {
             "est": req.get("est").cloned().unwrap_or(Value::Null), "params": params_of(&req),
         });
         let cancel = Arc::new(AtomicBool::new(false));
-        let job = Job { data: data.as_object().cloned().unwrap_or_default(), cancel: cancel.clone(), remote_task: None };
+        let target = state.settings.current();
+        let job = Job { data: data.as_object().cloned().unwrap_or_default(), cancel: cancel.clone(), remote_task: None, target: target.clone() };
         let out = view(&job);
         self.lock().insert(id.clone(), job);
-        let ctx = Ctx { state: state.clone(), id, model, req, cancel, parent: None };
+        let ctx = Ctx { state: state.clone(), id, model, req, target, saved: Arc::default(), cancel, parent: None };
         tokio::spawn(work(ctx, kind.to_string(), run));
         Ok(out)
     }
@@ -213,7 +255,7 @@ impl Jobs {
 
     /// Ask a job to stop; returns false for an unknown id.
     pub async fn cancel(&self, state: &AppState, id: &str) -> bool {
-        let (remote, halt) = {
+        let (remote, halt, target) = {
             let mut map = self.lock();
             let Some(j) = map.get_mut(id) else { return false };
             j.cancel.store(true, Ordering::Relaxed);
@@ -227,19 +269,18 @@ impl Jobs {
                 j.data.insert("status".into(), json!("cancelled"));
                 j.data.insert("message".into(), json!("Cancelled"));
             }
-            (j.remote_task.clone(), halt)
+            (j.remote_task.clone(), halt, j.target.clone())
         };
         if let Some(task) = remote {
             // POSTed to, or "DELETE <url>" (a video)
-            let key = state.settings.current().key;
             let req = match task.strip_prefix("DELETE ") {
                 Some(url) => state.http.delete(url),
                 None => state.http.post(task).body(Vec::new()),
             };
-            let _ = req.bearer_auth(key).timeout(std::time::Duration::from_secs(15)).send().await;
+            let _ = req.bearer_auth(&target.key).timeout(std::time::Duration::from_secs(15)).send().await;
         }
         if let Some((kind, model)) = halt {
-            tokio::spawn(halt_device(state.clone(), kind, model));
+            tokio::spawn(halt_device(state.clone(), target, kind, model));
         }
         true
     }
@@ -249,38 +290,39 @@ impl Jobs {
     /// On shutdown: cancel every running job and wait (up to `wait`) until the device has been told to stop, so a
     /// render doesn't carry on invisibly after the studio is gone (the Tiiny ignores a dropped connection).
     pub async fn cancel_running(&self, state: &AppState, wait: std::time::Duration) {
-        let running: Vec<(String, String, String)> = self
+        let running: Vec<(String, String, String, Target)> = self
             .lock()
             .iter()
             .filter(|(_, j)| Self::status_of(j) == "running")
             .map(|(id, j)| {
                 let s = |k: &str| j.data.get(k).and_then(Value::as_str).unwrap_or("").to_string();
-                (id.clone(), s("kind"), s("model"))
+                (id.clone(), s("kind"), s("model"), j.target.clone())
             })
             .collect();
-        for (id, kind, model) in running {
+        for (id, kind, model, target) in running {
             if let Some(j) = self.lock().get_mut(&id) {
                 j.cancel.store(true, Ordering::Relaxed);
             }
-            let _ = tokio::time::timeout(wait, halt_device(state.clone(), kind, model)).await;
+            let _ = tokio::time::timeout(wait, halt_device(state.clone(), target, kind, model)).await;
         }
     }
 }
 
 /// Make the Tiiny stop a request now instead of finishing it: chat replies can be interrupted; an image only stops
 /// when its model is unloaded (~10 s), so it's unloaded and loaded straight back (~15 s, tested 0.1.36).
-async fn halt_device(state: AppState, kind: String, model: String) {
+async fn halt_device(state: AppState, target: Target, kind: String, model: String) {
+    let to = Some((target.url.as_str(), target.key.as_str()));
     if model.is_empty() {
         return;
     }
     let q: String = model.bytes().map(|b| if b.is_ascii_alphanumeric() || b"_.-~".contains(&b) { (b as char).to_string() } else { format!("%{b:02X}") }).collect();
     match kind.as_str() {
         "chat" | "assist" => {
-            crate::device::call(&state, "POST", &format!("/api/v1/models/{q}/interrupt"), Some(json!({})), 15, None).await;
+            crate::device::call(&state, "POST", &format!("/api/v1/models/{q}/interrupt"), Some(json!({})), 15, to).await;
         }
         "image" => {
-            crate::device::call(&state, "POST", &format!("/api/v1/models/{q}/stop"), None, 120, None).await;
-            crate::device::call(&state, "POST", &format!("/api/v1/models/{q}/launch"), Some(json!({"model_id": model})), 120, None).await;
+            crate::device::call(&state, "POST", &format!("/api/v1/models/{q}/stop"), None, 120, to).await;
+            crate::device::call(&state, "POST", &format!("/api/v1/models/{q}/launch"), Some(json!({"model_id": model})), 120, to).await;
         }
         _ => {}
     }
@@ -299,6 +341,7 @@ async fn work(ctx: Ctx, kind: String, run: KindFn) {
             state.jobs.update(&id, json!({"status": "running", "started": started, "message": "Working…"}));
             let ephemeral = ctx.req.get("ephemeral").is_some_and(crate::device::truthy);
             let cancel = ctx.cancel.clone();
+            let saved = ctx.saved.clone();
             // a panicking kind must not take the worker down: surface it as an error instead
             // kinds that make something on the device (results are written there first) need room for it
             let full = if matches!(kind.as_str(), "image" | "speech" | "transcribe" | "loop" | "song" | "mesh" | "video" | "ocr") {
@@ -329,17 +372,25 @@ async fn work(ctx: Ctx, kind: String, run: KindFn) {
                                 crate::store::shred(&state.store.images.join(f));
                             }
                         }
+                        discard(&state, &saved);
                         state.jobs.update(&id, json!({"status": "cancelled", "message": "Cancelled"}));
                         state.jobs.update(&id, json!({"finished": now()}));
                         return;
                     }
                     // helper text and chat replies live with the job, not in the gallery; throwaway jobs never touch disk
                     if !matches!(k.as_str(), "assist" | "chat") && !ephemeral {
-                        state.store.add_history(entry.clone());
+                        if let Err(e) = state.store.add_history(entry.clone()) {
+                            let msg = format!("Couldn't save the result: {e}");
+                            discard(&state, &saved);
+                            state.jobs.update(&id, json!({"status": "error", "error": msg, "message": msg}));
+                            state.jobs.update(&id, json!({"finished": now()}));
+                            return;
+                        }
                     }
                     state.jobs.update(&id, json!({"status": "done", "progress": 100, "message": "Done", "entry": entry}));
                 }
                 Ok(Err(JobError(msg))) => {
+                    discard(&state, &saved); // a failed job keeps nothing it saved
                     if cancel.load(Ordering::Relaxed) {
                         // the device's error is just the cancel taking effect
                         state.jobs.update(&id, json!({"status": "cancelled", "message": "Cancelled"}));
@@ -348,6 +399,7 @@ async fn work(ctx: Ctx, kind: String, run: KindFn) {
                     }
                 }
                 Err(e) => {
+                    discard(&state, &saved);
                     let msg = format!("{e}");
                     state.jobs.update(&id, json!({"status": "error", "error": format!("panic: {msg}"), "message": msg}));
                 }
@@ -404,6 +456,39 @@ mod tests {
         assert_eq!(history.len(), 1);
         assert_eq!(history[0]["id"], a["id"]);
         assert!(!s.jobs_active());
+    }
+
+    #[tokio::test]
+    async fn a_job_keeps_the_device_it_was_submitted_to() {
+        let s = state();
+        let a = s.settings.upsert(None, "A", "http://10.0.0.1", "key-a").unwrap();
+        let b = s.settings.upsert(None, "B", "http://10.0.0.2", "key-b").unwrap();
+        s.settings.activate(&a, None);
+        let job = s.jobs.submit(&s, "test", json!({"model": "m", "ms": 50})).unwrap();
+        let id = job["id"].as_str().unwrap();
+        s.settings.activate(&b, Some("A isn't answering".into()));
+        assert_eq!(s.settings.current().key, "key-b");
+        // the job (and so its cancel and every request it makes) stays on A with A's key
+        let t = s.jobs.lock().get(id).unwrap().target.clone();
+        assert_eq!((t.url.as_str(), t.key.as_str()), ("http://10.0.0.1", "key-a"));
+        wait_done(&s, id).await;
+    }
+
+    #[tokio::test]
+    async fn a_failed_or_cancelled_job_keeps_no_files() {
+        let s = state();
+        let ok = s.jobs.submit(&s, "test", json!({"save": 1, "ephemeral": true})).unwrap();
+        let failed = s.jobs.submit(&s, "test", json!({"save": 1, "fail": 1})).unwrap();
+        let cancelled = s.jobs.submit(&s, "test", json!({"save": 1, "ms": 200, "ephemeral": true})).unwrap();
+        let (ok, failed, cancelled) = (ok["id"].as_str().unwrap(), failed["id"].as_str().unwrap(), cancelled["id"].as_str().unwrap());
+        let has = |id: &str| s.store.images.join(format!("{id}-x.png")).exists();
+        wait_done(&s, ok).await;
+        assert_eq!(wait_done(&s, failed).await["status"], json!("error"));
+        assert!(has(ok) && !has(failed)); // what a finished job saved stays; a failed one's goes
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        assert!(s.jobs.cancel(&s, cancelled).await);
+        assert_eq!(wait_done(&s, cancelled).await["status"], json!("cancelled"));
+        assert!(!has(cancelled));
     }
 
     #[tokio::test]

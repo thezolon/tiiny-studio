@@ -3,6 +3,7 @@ Usage: python fake_tiiny.py [--port N] [--key KEY] [--launch-delay SECONDS]
 Or import it: `server, url = fake_tiiny.start()`; `server.state` holds the models, tasks and request log.
 Every request is recorded (minus the Authorization header): GET /__requests, POST /__reset (no auth).
 POST /__flags {..} switches on test behaviour until the next reset: "fail" {path: [status, message]}, "delay" {path: seconds},
+"html" [paths] (answer 200 with a web page instead of JSON, like a login portal or proxy in the way),
 "closed_port", "no_music_gateway", "speech_text", "task_polls" N, "task_hold", "fail_stage" name, "rich_texture", "song_tracks",
 "disk_free_gb" N (free storage in /api/v1/sys/status; plenty by default), "no_disk" (sys/status without disk keys).
 "task_flaky" N / "artifact_flaky" N (the next N 3D task polls / artifact fetches answer 502).
@@ -280,6 +281,8 @@ class Handler(BaseHTTPRequestHandler):
             self.st.sessions.pop("live", None)
         if path in flags.get("fail", {}):
             return self.err(*flags["fail"][path])
+        if path in flags.get("html", ()):
+            return self.send_bytes(200, b"<html><body>Please log in</body></html>", "text/html")
         if tts_port:  # Broken-TTS's container, like Supertonic-3's on 0.1.38: it works under its own name only
             if method == "GET":
                 return self.send_json(200, {"model_config": {"id": "Broken-TTS"}})

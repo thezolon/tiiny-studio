@@ -8,6 +8,7 @@ use std::time::Duration;
 use serde_json::{json, Value};
 
 use super::{py_round, quote};
+use crate::settings::Target;
 use crate::{device, jobs::now, AppState};
 
 /// Songs and loops older than this are never pulled from the device.
@@ -18,8 +19,8 @@ fn new_id() -> String {
 }
 
 /// The list a gateway endpoint answers; empty when the firmware lacks it (404); None when it can't be read.
-async fn device_list(state: &AppState, path: &str, key: &str) -> Option<Vec<Value>> {
-    let (code, res) = device::call(state, "GET", path, None, 20, None).await;
+async fn device_list(state: &AppState, to: &Target, path: &str, key: &str) -> Option<Vec<Value>> {
+    let (code, res) = device::call(state, "GET", path, None, 20, Some((&to.url, &to.key))).await;
     if code == 404 {
         return Some(vec![]);
     }
@@ -28,18 +29,17 @@ async fn device_list(state: &AppState, path: &str, key: &str) -> Option<Vec<Valu
 }
 
 /// Ids of the music sessions on the device now, or None when it can't say.
-pub async fn session_ids(state: &AppState) -> Option<BTreeSet<String>> {
-    if state.settings.current().url.is_empty() {
+pub async fn session_ids(state: &AppState, to: &Target) -> Option<BTreeSet<String>> {
+    if to.url.is_empty() {
         return None;
     }
-    let sessions = device_list(state, "/v1/music/sessions", "sessions").await?;
+    let sessions = device_list(state, to, "/v1/music/sessions", "sessions").await?;
     Some(sessions.iter().filter_map(|s| s.get("session_id").and_then(Value::as_str).map(String::from)).collect())
 }
 
 /// A file from the gateway: the bytes of a 200 answer, nothing otherwise.
-async fn fetch(state: &AppState, path: &str, timeout: u64) -> Option<Vec<u8>> {
-    let cur = state.settings.current();
-    let res = state.http.get(format!("{}{path}", cur.url)).bearer_auth(&cur.key).timeout(Duration::from_secs(timeout)).send().await.ok()?;
+async fn fetch(state: &AppState, to: &Target, path: &str, timeout: u64) -> Option<Vec<u8>> {
+    let res = state.http.get(format!("{}{path}", to.url)).bearer_auth(&to.key).timeout(Duration::from_secs(timeout)).send().await.ok()?;
     if res.status().as_u16() != 200 {
         return None;
     }
@@ -67,12 +67,13 @@ fn text<'a>(x: &'a Value, k: &str) -> &'a str {
 /// would look unclaimed); the page asks again on its next load.
 pub async fn recover(state: &AppState) -> Value {
     let nothing = json!({"recovered": [], "baseline": false});
-    if state.settings.current().url.is_empty() {
+    let to = state.settings.current(); // one snapshot: the address and key this pass uses throughout
+    if to.url.is_empty() {
         return nothing;
     }
     let Ok(_device) = state.device_lock.try_lock() else { return nothing };
-    let vids = device_list(state, "/v1/videos", "data").await;
-    let sessions = device_list(state, "/v1/music/sessions", "sessions").await;
+    let vids = device_list(state, &to, "/v1/videos", "data").await;
+    let sessions = device_list(state, &to, "/v1/music/sessions", "sessions").await;
     let Some(seen) = state.store.seen_ids() else {
         // first look: everything there now is history
         let (Some(vids), Some(sessions)) = (vids, sessions) else { return nothing };
@@ -90,7 +91,7 @@ pub async fn recover(state: &AppState) -> Value {
     let mut vids: Vec<Value> = vids.unwrap_or_default().into_iter().filter(|v| text(v, "status") == "completed" && !text(v, "id").is_empty() && !seen.contains(text(v, "id"))).collect();
     vids.sort_by(|a, b| when(a).partial_cmp(&when(b)).unwrap_or(std::cmp::Ordering::Equal));
     for v in &vids {
-        if let Some(e) = recover_video(state, v).await {
+        if let Some(e) = recover_video(state, &to, v).await {
             out.push(e);
         }
     }
@@ -102,19 +103,19 @@ pub async fn recover(state: &AppState) -> Value {
         .collect();
     new.sort_by(|a, b| when(a).partial_cmp(&when(b)).unwrap_or(std::cmp::Ordering::Equal));
     for s in &new {
-        if let Some(e) = recover_session(state, s).await {
+        if let Some(e) = recover_session(state, &to, s).await {
             out.push(e);
         }
     }
     json!({"recovered": out, "baseline": false})
 }
 
-async fn recover_video(state: &AppState, v: &Value) -> Option<Value> {
+async fn recover_video(state: &AppState, to: &Target, v: &Value) -> Option<Value> {
     let vid = text(v, "id");
-    let data = fetch(state, &format!("/v1/videos/{}/content", quote(vid)), 600).await.filter(|d| !d.is_empty())?;
+    let data = fetch(state, to, &format!("/v1/videos/{}/content", quote(vid)), 600).await.filter(|d| !d.is_empty())?;
     let id = new_id();
     let out = format!("{id}-video.mp4");
-    let _ = std::fs::write(state.store.images.join(&out), data);
+    std::fs::write(state.store.images.join(&out), data).ok()?; // can't write here: it stays on the device for the next look
     let secs = num(v.get("seconds")).filter(|x| x.is_finite()).map_or(2, |x| py_round(x).max(1));
     let frames = num(v.get("frames")).unwrap_or(0.0);
     let fps = num(v.get("fps")).filter(|f| *f != 0.0).unwrap_or(24.0);
@@ -123,23 +124,29 @@ async fn recover_video(state: &AppState, v: &Value) -> Option<Value> {
     let entry = json!({"id": id, "created": now() as i64, "kind": "video", "seconds": 0,
         "params": {"model": text(v, "model"), "prompt": "", "size": size, "seconds": secs, "recovered": true},
         "sources": [], "outputs": [out], "duration": duration});
-    state.store.add_history(entry);
+    if state.store.add_history(entry).is_err() {
+        crate::store::shred(&state.store.images.join(&out));
+        return None;
+    }
     state.store.mark_seen(&[vid.to_string()], false);
-    let _ = device::call(state, "DELETE", &format!("/v1/videos/{}", quote(vid)), None, 30, None).await; // the device keeps it an hour otherwise
+    let _ = device::call(state, "DELETE", &format!("/v1/videos/{}", quote(vid)), None, 30, Some((&to.url, &to.key))).await; // the device keeps it an hour otherwise
     Some(json!({"id": id, "kind": "video"}))
 }
 
-async fn recover_session(state: &AppState, s: &Value) -> Option<Value> {
+async fn recover_session(state: &AppState, to: &Target, s: &Value) -> Option<Value> {
     let sid = text(s, "session_id");
     let model = text(s, "model_id");
-    let mp3 = fetch(state, &format!("/v1/music/sessions/{}/download?format=mp3", quote(sid)), 120).await.filter(|m| m.len() > 1000)?;
+    let mp3 = fetch(state, to, &format!("/v1/music/sessions/{}/download?format=mp3", quote(sid)), 120).await.filter(|m| m.len() > 1000)?;
     let id = new_id();
     let kind = if model.contains("Foundation-1") { "loop" } else { "song" };
     let out = format!("{id}-{kind}.mp3");
-    let _ = std::fs::write(state.store.images.join(&out), mp3);
+    std::fs::write(state.store.images.join(&out), mp3).ok()?;
     let entry = json!({"id": id, "created": now() as i64, "kind": kind, "seconds": 0, "params": {"model": model, "recovered": true},
         "sources": [], "outputs": [out], "downloads": [], "duration": null, "device": {"music_session": sid}});
-    state.store.add_history(entry);
+    if state.store.add_history(entry).is_err() {
+        crate::store::shred(&state.store.images.join(&out));
+        return None;
+    }
     state.store.mark_seen(&[sid.to_string()], false); // the session stays on the Tiiny until the entry is deleted
     Some(json!({"id": id, "kind": kind}))
 }
@@ -148,7 +155,8 @@ async fn recover_session(state: &AppState, s: &Value) -> Option<Value> {
 /// its turn for the device): never blocks or fails the local delete.
 pub fn delete_device_sessions(state: &AppState, ids: Vec<String>) {
     let ids: Vec<String> = ids.into_iter().filter(|i| !i.is_empty()).collect();
-    if ids.is_empty() || state.settings.current().url.is_empty() {
+    let to = state.settings.current();
+    if ids.is_empty() || to.url.is_empty() {
         return;
     }
     state.store.mark_seen(&ids, false);
@@ -156,7 +164,7 @@ pub fn delete_device_sessions(state: &AppState, ids: Vec<String>) {
     tokio::spawn(async move {
         let _device = state.device_lock.lock().await;
         for id in ids {
-            let _ = device::call(&state, "DELETE", &format!("/v1/music/sessions/{}", quote(&id)), None, 15, None).await;
+            let _ = device::call(&state, "DELETE", &format!("/v1/music/sessions/{}", quote(&id)), None, 15, Some((&to.url, &to.key))).await;
         }
     });
 }

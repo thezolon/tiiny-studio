@@ -57,7 +57,7 @@ pub async fn run(ctx: Ctx) -> JobResult {
         if let Some(s) = seed0.as_ref().and_then(as_int) {
             body.insert("seed".into(), json!(s + i));
         }
-        let (mut code, mut one) = crate::device::call(&ctx.state, "POST", "/v1/images/generations", Some(Value::Object(body.clone())), 3600, None).await;
+        let (mut code, mut one) = ctx.call("POST", "/v1/images/generations", Some(Value::Object(body.clone())), 3600).await;
         // A model that just reported "running" may not be ready yet: its first request answers "xh2a backend
         // fail" (seen with Qwen-Image right after a load). Give it up to a minute before giving up.
         for _ in 0..6 {
@@ -66,7 +66,7 @@ pub async fn run(ctx: Ctx) -> JobResult {
             }
             ctx.update(json!({"message": "Waiting for the model to warm up"}));
             tokio::time::sleep(warmup_wait()).await;
-            (code, one) = crate::device::call(&ctx.state, "POST", "/v1/images/generations", Some(Value::Object(body.clone())), 3600, None).await;
+            (code, one) = ctx.call("POST", "/v1/images/generations", Some(Value::Object(body.clone())), 3600).await;
         }
         let got = one.get("data").and_then(Value::as_array).filter(|d| !d.is_empty()).cloned();
         match got {
@@ -85,13 +85,13 @@ pub async fn run(ctx: Ctx) -> JobResult {
             "image/webp" => "webp",
             _ => "png",
         };
-        src_names.push(save(&ctx, &format!("{}-src{i}.{ext}", ctx.id), &bytes));
+        src_names.push(save(&ctx, &format!("{}-src{i}.{ext}", ctx.id), &bytes)?);
     }
     let mut outputs = vec![];
     for (i, d) in data.iter().enumerate() {
         if let Some(b64) = d.get("b64_json").and_then(Value::as_str).filter(|s| !s.is_empty()) {
             let bytes = base64::engine::general_purpose::STANDARD.decode(b64).map_err(|e| JobError(format!("Error: {e}")))?;
-            outputs.push(save(&ctx, &format!("{}-{i}.png", ctx.id), &bytes));
+            outputs.push(save(&ctx, &format!("{}-{i}.png", ctx.id), &bytes)?);
         }
     }
     let params: Map<String, Value> = body.into_iter().filter(|(k, _)| k != "image" && k != "response_format").collect();

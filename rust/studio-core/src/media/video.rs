@@ -16,24 +16,13 @@ const FRAME_FIELDS: [&str; 2] = ["image", "last_image"]; // first frame tested o
 /// Polls in a row without an answer (~5 minutes) before a video job gives up (media.py VIDEO_LOST_POLLS).
 const LOST_POLLS: u32 = 100;
 
-/// A failed or cancelled clip keeps none of the frames it saved.
-pub async fn run(ctx: Ctx) -> JobResult {
-    let mut saved = vec![];
-    let result = make(&ctx, &mut saved).await;
-    if result.is_err() {
-        for name in &saved {
-            let _ = std::fs::remove_file(ctx.state.store.images.join(name));
-        }
-    }
-    result
-}
-
 /// A whole number from the request (Python's isinstance(x, int): not a float, not a bool).
 fn int_of(req: &Value, k: &str) -> Option<i64> {
     req.get(k).filter(|v| v.is_i64() || v.is_u64()).and_then(Value::as_i64)
 }
 
-async fn make(ctx: &Ctx, saved: &mut Vec<String>) -> JobResult {
+pub async fn run(ctx: Ctx) -> JobResult {
+    let ctx = &ctx;
     let req = &ctx.req;
     let s = |k: &str| req.get(k).and_then(Value::as_str).unwrap_or("");
     let prompt = s("prompt").trim().to_string();
@@ -42,7 +31,7 @@ async fn make(ctx: &Ctx, saved: &mut Vec<String>) -> JobResult {
     }
     let model = ctx.model.clone();
     ensure_running(ctx, &model).await?;
-    let url = format!("{}/v1/videos", ctx.state.settings.current().url);
+    let url = format!("{}/v1/videos", ctx.target.url);
     let secs = int_of(req, "seconds").filter(|x| (1..=20).contains(x)).unwrap_or(2);
     let size = Some(s("size")).filter(|x| !x.is_empty()).unwrap_or("832x480").to_string();
     let mut body = Map::new();
@@ -61,9 +50,7 @@ async fn make(ctx: &Ctx, saved: &mut Vec<String>) -> JobResult {
             continue;
         }
         let (ctype, data) = decode_uri(s(k))?;
-        let name = save(ctx, &format!("{}-frame{i}.png", ctx.id), &data);
-        saved.push(name.clone());
-        sources.push(name);
+        sources.push(save(ctx, &format!("{}-frame{i}.png", ctx.id), &data)?);
         body.insert(FRAME_FIELDS[i].into(), json!(format!("data:{ctype};base64,{}", base64::engine::general_purpose::STANDARD.encode(&data))));
     }
     let body = Value::Object(body);
@@ -119,8 +106,7 @@ async fn make(ctx: &Ctx, saved: &mut Vec<String>) -> JobResult {
         Ok(_) => return Err(JobError("Couldn't fetch the video: empty".into())),
         Err(e) => return Err(JobError(format!("Couldn't fetch the video: {}", err(&e)))),
     };
-    let out = save(ctx, &format!("{}-video.mp4", ctx.id), &data);
-    saved.push(out.clone());
+    let out = save(ctx, &format!("{}-video.mp4", ctx.id), &data)?;
     let _ = http(ctx, "DELETE", &format!("{url}/{vid}"), None, 30, true).await; // the device keeps it an hour otherwise
     let frames = v.get("frames").and_then(Value::as_f64).unwrap_or(0.0);
     let fps = v.get("fps").and_then(Value::as_f64).filter(|f| *f > 0.0).unwrap_or(24.0);

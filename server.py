@@ -22,7 +22,7 @@ from urllib.parse import parse_qs, quote, unquote, urlparse
 
 import chat  # noqa: F401  (registers the "chat" job kind)
 import extract
-from media import JOBS, JobError, Media
+from media import JOBS, JobError, Media, reason, shred
 
 PORT = int(os.environ.get("PORT", "7860"))
 PASSWORD = os.environ.get("STUDIO_PASSWORD", "")
@@ -303,23 +303,6 @@ def save_history(items):
     save_json(HISTORY, items)
 
 
-def shred(path):
-    """Overwrite a file with zeros, then delete it. Best effort: SSDs and copy-on-write filesystems
-    may still keep old blocks, but the data is no longer reachable through the file system."""
-    try:
-        size = path.stat().st_size
-        with open(path, "r+b") as f:
-            while size > 0:
-                n = min(size, 1 << 20)
-                f.write(b"\0" * n)
-                size -= n
-            f.flush()
-            os.fsync(f.fileno())
-    except OSError:
-        pass
-    path.unlink(missing_ok=True)
-
-
 def save_json(path, obj):
     tmp = path.with_suffix(".tmp")
     tmp.write_text(json.dumps(obj, indent=1), "utf-8")
@@ -344,16 +327,25 @@ def edit_history(entry_id, fn):
 
 
 def device(method, path, body=None, timeout=30, url=None, key=None):
-    if not (url or SETTINGS.url):
+    """JSON request to the device: (status, JSON). url/key address another device (a job's own, or one being tested);
+    without them the active one, read once so a key never goes to a different device than its own."""
+    if url is None:
+        cur = SETTINGS.current() or {}
+        url, key = cur.get("url", ""), cur.get("key", "")
+    if not url:
         return 503, {"error": {"message": "No device configured yet. Open Settings and enter your Tiiny's address and API key."}}
     data = json.dumps(body).encode() if body is not None else None
-    req = urllib.request.Request((url or SETTINGS.url) + path, data=data, method=method)
-    req.add_header("Authorization", f"Bearer {key if key is not None else SETTINGS.key}")
+    req = urllib.request.Request(url + path, data=data, method=method)
+    req.add_header("Authorization", f"Bearer {key or ''}")
     if data is not None:
         req.add_header("Content-Type", "application/json")
     try:
         with urllib.request.urlopen(req, timeout=timeout) as r:
-            return r.status, json.loads(r.read() or b"{}")
+            raw = r.read()
+            try:
+                return r.status, json.loads(raw or b"{}")
+            except ValueError:  # a 200 that isn't JSON (a login page, a proxy): an error, not a crash
+                return 502, {"error": {"message": raw.decode("utf-8", "replace")[:500]}}
     except urllib.error.HTTPError as e:
         raw = e.read()
         try:
@@ -416,7 +408,7 @@ def catalog():
                  "last_switch": SETTINGS.last_switch}
 
 
-MEDIA = Media(SETTINGS, IMAGES, add_history, lambda m, p, b=None, t=30: device(m, p, b, timeout=t), DEVICE_LOCK)
+MEDIA = Media(SETTINGS, IMAGES, add_history, lambda m, p, b=None, t=30, url=None, key=None: device(m, p, b, timeout=t, url=url, key=key), DEVICE_LOCK)
 MEDIA.edit_history = edit_history
 SEARCH_CACHE = {}  # entry id -> (text, vector); memory only, dropped on delete/wipe
 STATS_CACHE = {"t": 0, "data": None}
@@ -467,7 +459,7 @@ def device_stats():
     return out
 MIME = {"png": "image/png", "jpg": "image/jpeg", "webp": "image/webp", "wav": "audio/wav", "mp3": "audio/mpeg",
         "m4a": "audio/mp4", "webm": "audio/webm", "ogg": "audio/ogg", "flac": "audio/flac", "glb": "model/gltf-binary", "mp4": "video/mp4",
-        "js": "text/javascript; charset=utf-8", "mjs": "text/javascript; charset=utf-8", "css": "text/css; charset=utf-8", "mp3": "audio/mpeg"}
+        "js": "text/javascript; charset=utf-8", "mjs": "text/javascript; charset=utf-8", "css": "text/css; charset=utf-8"}
 
 
 IN_DOCKER = Path("/.dockerenv").exists()
@@ -512,6 +504,14 @@ def load_voices():
         return json.loads(VOICES.read_text("utf-8"))
     except (OSError, ValueError):
         return []
+
+
+class BadBody(ValueError):
+    """A request body the routes can't use; the message is what the page is told."""
+
+
+MAX_BODY = 150 << 20  # pictures, voice clips and video frames arrive as base64 JSON; /api/extract checks its own 100 MB
+TOO_LARGE = "That request is too large (over 150 MB)."
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -609,9 +609,21 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_json(400, {"error": {"message": f"Couldn't read this file ({type(e).__name__})."}})
         return self.send_json(200, {"parts": parts})
 
+    def body_length(self):
+        try:
+            return max(0, int(self.headers.get("Content-Length") or 0))
+        except ValueError:
+            raise BadBody("The request has a bad Content-Length.")
+
     def read_json(self):
-        n = int(self.headers.get("Content-Length") or 0)
-        return json.loads(self.rfile.read(n) or b"{}")
+        """The request body as a JSON object ({} when empty); BadBody (a ValueError) when it is anything else."""
+        try:
+            body = json.loads(self.rfile.read(self.body_length()) or b"{}")
+        except ValueError:
+            raise BadBody("The request body isn't valid JSON.")
+        if not isinstance(body, dict):
+            raise BadBody("The request body must be a JSON object.")
+        return body
 
     def do_GET(self):
         if not self.authorized():
@@ -703,6 +715,23 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         if not self.authorized():
             return
+        try:
+            if self.body_length() > MAX_BODY:
+                self.close_connection = True  # the body is left unread
+                return self.send_json(413, {"error": {"message": TOO_LARGE}})
+            self.route_post()
+        except BadBody as e:  # the routes that need a body answer 400 for one they can't read
+            self.send_json(400, {"error": {"message": str(e)}})
+        except OSError as e:
+            self.save_failed(e)
+
+    def save_failed(self, e):
+        """A write to the data folder failed (disk full, no permission): say so instead of dropping the connection."""
+        if isinstance(e, ConnectionError):  # the browser went away
+            raise e
+        self.send_json(500, {"error": {"message": f"Couldn't save your changes: {reason(e)}"}})
+
+    def route_post(self):
         if self.path == "/api/settings":
             return self.save_settings()
         if self.path == "/api/open-folder":
@@ -739,7 +768,9 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(400, {"error": {"message": str(e)}})
         m = re.fullmatch(r"/api/jobs/(\w+)/cancel", self.path)
         if m:
-            return self.send_json(200 if MEDIA.cancel(m.group(1)) else 404, {"ok": True})
+            if not MEDIA.cancel(m.group(1)):
+                return self.send_json(404, {"error": {"message": "no such job"}})
+            return self.send_json(200, {"ok": True})
         if self.path == "/api/voices":
             return self.save_voice()
         m = re.fullmatch(r"/api/chats/(\w+)(/delete)?", self.path)
@@ -921,18 +952,28 @@ class Handler(BaseHTTPRequestHandler):
         except (ValueError, JobError) as e:
             return self.send_json(400, {"error": {"message": str(e)}})
         vid = uuid.uuid4().hex[:10]
-        (IMAGES / f"voice-{vid}.wav").write_bytes(audio)
         voice = {"id": vid, "name": (req.get("name") or "Voice").strip()[:60], "file": f"voice-{vid}.wav",
                  "text": (req.get("text") or "").strip(), "created": int(time.time())}
-        with LOCK:
-            voices = load_voices()
-            voices.insert(0, voice)
-            VOICES.write_text(json.dumps(voices, indent=1), "utf-8")
+        (IMAGES / voice["file"]).write_bytes(audio)
+        try:
+            with LOCK:
+                voices = load_voices()
+                voices.insert(0, voice)
+                save_json(VOICES, voices)
+        except OSError:
+            shred(IMAGES / voice["file"])  # no entry would point at it
+            raise
         self.send_json(200, voice)
 
     def do_DELETE(self):
         if not self.authorized():
             return
+        try:
+            self.route_delete()
+        except OSError as e:
+            self.save_failed(e)
+
+    def route_delete(self):
         m = re.fullmatch(r"/api/voices/(\w+)", self.path)
         if m:
             with LOCK:
@@ -993,4 +1034,4 @@ if __name__ == "__main__":
         # stop what we started on the Tiiny: it keeps rendering if we just disappear
         for job in [j for j in list(JOBS.values()) if j["status"] == "running"]:
             job["cancel"] = True
-            MEDIA.halt_device(job["kind"], job["model"])
+            (job.get("_m") or MEDIA).halt_device(job["kind"], job["model"])

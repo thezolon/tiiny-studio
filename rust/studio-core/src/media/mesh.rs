@@ -163,7 +163,7 @@ async fn cut_out(ctx: &Ctx) -> Result<(Vec<u8>, String), JobError> {
     back?;
     let dir = &ctx.state.store.images;
     for name in entry.get("sources").and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_str) {
-        let _ = std::fs::remove_file(dir.join(name)); // its copy of the source: the 3D entry keeps its own
+        crate::store::shred(&dir.join(name)); // its copy of the source: the 3D entry keeps its own
     }
     let name = entry.pointer("/outputs/0").and_then(Value::as_str).unwrap_or("").to_string();
     let bytes = clean_alpha(&std::fs::read(dir.join(&name)).map_err(|e| JobError(e.to_string()))?);
@@ -171,33 +171,19 @@ async fn cut_out(ctx: &Ctx) -> Result<(Vec<u8>, String), JobError> {
     Ok((bytes, name))
 }
 
-/// A failed or cancelled build keeps none of the files it saved (they'd have no gallery entry to delete them by).
 pub async fn run(ctx: Ctx) -> JobResult {
-    let mut saved = vec![];
-    let result = build(&ctx, &mut saved).await;
-    if result.is_err() {
-        for name in &saved {
-            let _ = std::fs::remove_file(ctx.state.store.images.join(name));
-        }
-    }
-    result
-}
-
-async fn build(ctx: &Ctx, saved: &mut Vec<String>) -> JobResult {
-    let ctx = ctx.clone();
     let req = &ctx.req;
     let (_, original) = decode_uri(req.get("image").and_then(Value::as_str).unwrap_or(""))?;
     // the page leaves it off for a picture that's already transparent
     let (image, cut) = if req.get("cutout").is_some_and(truthy) {
         let (bytes, name) = cut_out(&ctx).await?;
-        saved.push(name.clone());
         (bytes, Some(name))
     } else {
         (original.clone(), None)
     };
     let model = ctx.model.clone();
     ensure_running(&ctx, &model).await?;
-    let url = format!("{}/v1/3d", ctx.state.settings.current().url); // gateway proxy: /v1/3d/tasks -> container /v1/tasks
+    let url = format!("{}/v1/3d", ctx.target.url); // gateway proxy: /v1/3d/tasks -> container /v1/tasks
     // With two 3D models loaded the gateway sends an unnamed request to either one: name it on every call.
     let mq = format!("?model={}", super::quote(&model));
     let (_, caps) = http(&ctx, "GET", &format!("{url}/capabilities{mq}"), None, 30, true).await?;
@@ -234,8 +220,7 @@ async fn build(ctx: &Ctx, saved: &mut Vec<String>) -> JobResult {
     let mut have = Have::default();
     have.set("image", ("input.png".into(), image.clone(), "image/png".into()));
     let mut stage_log = vec![];
-    let src = save(&ctx, &format!("{}-src.png", ctx.id), &original);
-    saved.push(src.clone());
+    let src = save(&ctx, &format!("{}-src.png", ctx.id), &original)?;
 
     let last = plan.last().copied();
     for stage in plan {
@@ -406,7 +391,7 @@ async fn build(ctx: &Ctx, saved: &mut Vec<String>) -> JobResult {
 
     // no export (shape only): the last stage's preview GLB
     let mesh = have.get("mesh").or_else(|| have.get("preview")).ok_or_else(|| JobError("The device returned no mesh".into()))?;
-    let out = save(&ctx, &format!("{}-model.glb", ctx.id), &mesh.1);
+    let out = save(&ctx, &format!("{}-model.glb", ctx.id), &mesh.1)?;
     let mut params = Map::new();
     params.insert("model".into(), json!(model));
     params.extend(quality.iter().map(|(k, v)| (k.to_string(), v.clone())));

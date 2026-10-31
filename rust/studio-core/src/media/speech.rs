@@ -60,7 +60,7 @@ pub async fn run(ctx: Ctx) -> JobResult {
     ensure_running(&ctx, &model).await?;
     // Long text is voiced a few sentences at a time (the model has a context limit) and stitched together.
     let chunks = split_for_speech(&said, 320);
-    let url = format!("{}/v1/audio/speech", ctx.state.settings.current().url);
+    let url = format!("{}/v1/audio/speech", ctx.target.url);
     let mut parts: Vec<Vec<u8>> = vec![];
     let mut direct: Option<(String, String)> = None;
     for (i, chunk) in chunks.iter().enumerate() {
@@ -96,8 +96,8 @@ pub async fn run(ctx: Ctx) -> JobResult {
         }
     }
     let joined = join_wavs(&parts).map_err(|e| JobError(e.to_string()))?;
-    let out = save(&ctx, &format!("{}-speech.wav", ctx.id), &joined);
-    let src = reference.as_ref().map(|r| save(&ctx, &format!("{}-ref.wav", ctx.id), r));
+    let out = save(&ctx, &format!("{}-speech.wav", ctx.id), &joined)?;
+    let src = reference.as_ref().map(|r| save(&ctx, &format!("{}-ref.wav", ctx.id), r)).transpose()?;
     let duration = wav_seconds(&joined).map_err(|e| JobError(e.to_string()))?;
     let or_none = |s: &str| if s.is_empty() { Value::Null } else { json!(s) };
     let voice = match req.get("voice_name").filter(|v| crate::device::truthy(v)) {

@@ -13,6 +13,11 @@ use serde_json::{json, Value};
 
 use crate::routes::{error, mime, read_json, str_of};
 use crate::store::{safe_file, save_json, shred, word};
+
+/// A write to the data folder failed (disk full, no permission): say so.
+fn save_failed(e: &str) -> Response {
+    error(StatusCode::INTERNAL_SERVER_ERROR, &format!("Couldn't save your changes: {e}"))
+}
 use crate::{device, AppState};
 
 pub fn routes() -> Router<AppState> {
@@ -73,8 +78,10 @@ async fn submit_job(State(state): State<AppState>, body: Bytes) -> Response {
 }
 
 async fn cancel_job(State(state): State<AppState>, Path(id): Path<String>) -> Response {
-    let ok = word(&id) && state.jobs.cancel(&state, &id).await;
-    (if ok { StatusCode::OK } else { StatusCode::NOT_FOUND }, Json(json!({"ok": true}))).into_response()
+    if !word(&id) || !state.jobs.cancel(&state, &id).await {
+        return error(StatusCode::NOT_FOUND, "no such job");
+    }
+    Json(json!({"ok": true})).into_response()
 }
 
 async fn history(State(state): State<AppState>) -> Json<Value> {
@@ -100,16 +107,22 @@ fn forget(state: &AppState, ids: &[String]) {
     }
 }
 
-async fn delete_entries(State(state): State<AppState>, body: Bytes) -> Json<Value> {
-    let req = read_json(&body).unwrap_or(json!({}));
+async fn delete_entries(State(state): State<AppState>, body: Bytes) -> Response {
+    let req = match read_json(&body) {
+        Ok(v) => v,
+        Err(e) => return error(StatusCode::BAD_REQUEST, &e),
+    };
     let mut ids: Vec<String> = req.get("ids").and_then(Value::as_array).into_iter().flatten().filter_map(|v| v.as_str().map(String::from)).collect();
     ids.sort();
     ids.dedup();
     let sessions = crate::media::recover::sessions_of(&entries_of(&state, &ids));
-    state.store.delete_entries(&ids);
+    let saved = state.store.delete_entries(&ids);
     forget(&state, &ids);
     crate::media::recover::delete_device_sessions(&state, sessions); // the Tiiny's copy goes too
-    Json(json!({"ok": true, "deleted": ids.len()}))
+    if let Err(e) = saved {
+        return save_failed(&e);
+    }
+    Json(json!({"ok": true, "deleted": ids.len()})).into_response()
 }
 
 async fn delete_entry(State(state): State<AppState>, Path(id): Path<String>) -> Response {
@@ -118,26 +131,35 @@ async fn delete_entry(State(state): State<AppState>, Path(id): Path<String>) -> 
     }
     let ids = vec![id];
     let sessions = crate::media::recover::sessions_of(&entries_of(&state, &ids));
-    state.store.delete_entries(&ids);
+    let saved = state.store.delete_entries(&ids);
     forget(&state, &ids); // the finished job's in-memory copy (prompt, label) goes too
     crate::media::recover::delete_device_sessions(&state, sessions);
-    Json(json!({"ok": true})).into_response()
+    match saved {
+        Ok(()) => Json(json!({"ok": true})).into_response(),
+        Err(e) => save_failed(&e),
+    }
 }
 
 async fn fav(State(state): State<AppState>, Path(id): Path<String>, body: Bytes) -> Response {
     if !word(&id) {
         return not_found();
     }
-    let req = read_json(&body).unwrap_or(json!({}));
+    let req = match read_json(&body) {
+        Ok(v) => v,
+        Err(e) => return error(StatusCode::BAD_REQUEST, &e),
+    };
     let fav = req.get("fav").map(device::truthy).unwrap_or(true);
-    state.store.edit_history(&id, |e| {
+    let saved = state.store.edit_history(&id, |e| {
         if fav {
             e.insert("fav".into(), json!(true));
         } else {
             e.remove("fav");
         }
     });
-    Json(json!({"ok": true, "fav": fav})).into_response()
+    match saved {
+        Ok(()) => Json(json!({"ok": true, "fav": fav})).into_response(),
+        Err(e) => save_failed(&e),
+    }
 }
 
 async fn image(State(state): State<AppState>, Path(name): Path<String>, headers: HeaderMap) -> Response {
@@ -193,13 +215,18 @@ async fn save_voice(State(state): State<AppState>, body: Bytes) -> Response {
     };
     let vid = uuid::Uuid::new_v4().simple().to_string()[..10].to_string();
     let file = format!("voice-{vid}.wav");
-    let _ = std::fs::write(state.store.images.join(&file), audio);
+    if let Err(e) = std::fs::write(state.store.images.join(&file), audio) {
+        return save_failed(&crate::store::io_reason(&e));
+    }
     let name = Some(str_of(&req, "name").trim()).filter(|n| !n.is_empty()).unwrap_or("Voice").chars().take(60).collect::<String>();
     let voice = json!({"id": vid, "name": name, "file": file, "text": str_of(&req, "text").trim(), "created": crate::jobs::now() as i64});
     let _g = state.store.lock();
     let mut voices = state.store.load_voices();
     voices.insert(0, voice.clone());
-    state.store.save_voices(&voices);
+    if let Err(e) = state.store.save_voices(&voices) {
+        shred(&state.store.images.join(&file)); // no entry would point at it
+        return save_failed(&e);
+    }
     Json(voice).into_response()
 }
 
@@ -216,7 +243,9 @@ async fn delete_voice(State(state): State<AppState>, Path(id): Path<String>) -> 
             shred(&state.store.images.join(f));
         }
     }
-    state.store.save_voices(&keep);
+    if let Err(e) = state.store.save_voices(&keep) {
+        return save_failed(&e);
+    }
     Json(json!({"ok": true})).into_response()
 }
 
@@ -242,7 +271,9 @@ async fn save_chat(State(state): State<AppState>, Path(id): Path<String>, body: 
     };
     convo["id"] = json!(id);
     convo["updated"] = json!(crate::jobs::now() as i64);
-    save_json(&state.store.chat_path(&id), &convo);
+    if let Err(e) = save_json(&state.store.chat_path(&id), &convo) {
+        return save_failed(&e);
+    }
     Json(json!({"ok": true})).into_response()
 }
 
@@ -277,12 +308,14 @@ async fn wipe(State(state): State<AppState>) -> Response {
             shred(&p);
         }
     }
-    state.store.save_history(&[]);
-    state.store.save_voices(&[]);
+    let saved = state.store.save_history(&[]).and_then(|_| state.store.save_voices(&[]));
     state.jobs.clear();
     state.search_cache.lock().unwrap_or_else(|e| e.into_inner()).clear();
     drop(g);
     crate::media::recover::delete_device_sessions(&state, sessions);
+    if let Err(e) = saved {
+        return save_failed(&e);
+    }
     Json(json!({"ok": true, "entries": entries, "voices": voices, "files": files.len()})).into_response()
 }
 
@@ -294,7 +327,10 @@ fn local_stamp(epoch: i64) -> String {
 /// Zip the chosen results (files + an info.json of their settings), built in memory, never stored.
 async fn export(State(state): State<AppState>, body: Bytes) -> Response {
     use std::io::Write;
-    let req = read_json(&body).unwrap_or(json!({}));
+    let req = match read_json(&body) {
+        Ok(v) => v,
+        Err(e) => return error(StatusCode::BAD_REQUEST, &e),
+    };
     let ids: Vec<&str> = req.get("ids").and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_str).collect();
     let items: Vec<Value> = {
         let _g = state.store.lock();
@@ -370,7 +406,10 @@ async fn embed(state: &AppState, model: &str, texts: &[String]) -> Result<Vec<Ve
 
 /// Rank saved results by meaning with the device's embedding model (vectors kept in memory only).
 async fn search(State(state): State<AppState>, body: Bytes) -> Response {
-    let req = read_json(&body).unwrap_or(json!({}));
+    let req = match read_json(&body) {
+        Ok(v) => v,
+        Err(e) => return error(StatusCode::BAD_REQUEST, &e),
+    };
     let query = str_of(&req, "query").trim().to_string();
     let (_, cat) = device::catalog(&state).await;
     let emb: Vec<Value> = cat.get("models").and_then(Value::as_array).into_iter().flatten().filter(|m| str_of(m, "type") == "Text Embedding").cloned().collect();
