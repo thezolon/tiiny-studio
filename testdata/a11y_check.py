@@ -1,5 +1,5 @@
 """Accessibility check (WCAG 2.2 AA rules of axe-core) of the studio's web UI, driven by the fake Tiiny: every workspace,
-the Models drawer and the dialogs, with an image in the gallery. Fails on serious or critical issues.
+the Models drawer and the dialogs, with an image in the gallery, in the dark and the light theme. Fails on serious or critical issues.
 Needs: pip install playwright==1.64.1 && python -m playwright install chromium. Never contacts a real device.
 Usage: python testdata/a11y_check.py [--all]   (--all also fails on moderate and minor issues)"""
 import base64
@@ -21,6 +21,8 @@ import fake_tiiny  # noqa: E402
 ROOT = Path(__file__).resolve().parents[1]
 AXE = "4.14.0"  # pinned; the tarball must match npm's published integrity
 AXE_SHA512 = "9WTZxEjsZ7b13TH8JPmbV2z8CHbl80/2hm3XPEG4JgNdQLK81IBRXmSxHfMAOkSqQeRxT/0dwNDz2GOm3zzpcQ=="
+ANNOTATE = """fetch('/images/' + S.history[0].outputs[0]).then((r) => r.blob()).then((b) => new Promise((res) => { const f = new FileReader(); f.onload = () => res(f.result); f.readAsDataURL(b); }))
+  .then((uri) => { S.sources = [{ uri }]; renderComposer(); openAnnot(0); })"""
 TAGS = ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22aa"]
 
 
@@ -61,31 +63,39 @@ def main():
         axe = axe_source()
         with sync_playwright() as p:
             browser = p.chromium.launch()
-            page = browser.new_page(viewport={"width": 1280, "height": 860})
+            for scheme in ("dark", "light"):  # the theme tokens differ, so every state is scanned in both
+                page = browser.new_page(viewport={"width": 1280, "height": 860}, color_scheme=scheme)
 
-            def scan(state):
-                page.wait_for_timeout(600)
-                page.add_script_tag(content=axe) if not page.evaluate("!!window.axe") else None
-                res = page.evaluate("t => axe.run(document, {runOnly: {type: 'tag', values: t}})", TAGS)
-                for v in res["violations"]:
-                    for n in v["nodes"]:
-                        key = (v["id"], " ".join(n["target"]) if isinstance(n["target"][0], str) else json.dumps(n["target"]))
-                        found.setdefault(key, {"impact": v["impact"], "help": v["help"], "states": []})["states"].append(state)
+                def scan(state):
+                    page.wait_for_timeout(600)
+                    page.add_script_tag(content=axe) if not page.evaluate("!!window.axe") else None
+                    res = page.evaluate("t => axe.run(document, {runOnly: {type: 'tag', values: t}})", TAGS)
+                    for v in res["violations"]:
+                        for n in v["nodes"]:
+                            key = (v["id"], " ".join(n["target"]) if isinstance(n["target"][0], str) else json.dumps(n["target"]))
+                            found.setdefault(key, {"impact": v["impact"], "help": v["help"], "states": []})["states"].append(f"{scheme} {state}")
 
-            page.goto(base + "/")
-            page.wait_for_load_state("networkidle")
-            for tab in ("Image", "Audio", "3D", "Video", "Chat"):
-                page.get_by_role("button", name=tab, exact=True).first.click() if page.get_by_role("button", name=tab, exact=True).count() \
-                    else page.get_by_role("tab", name=tab, exact=True).first.click()
-                scan(tab)
-            page.get_by_role("button", name="Image", exact=True).first.click() if page.get_by_role("button", name="Image", exact=True).count() \
-                else page.get_by_role("tab", name="Image", exact=True).first.click()
-            for state, js in (("models drawer", "openDrawer()"), ("settings", "document.querySelector('#settingsBtn').click()"),
-                              ("annotate", "openAnnot(0)")):
-                page.evaluate(js)
-                scan(state)
-                page.keyboard.press("Escape")
-                page.evaluate("typeof closeDrawer === 'function' && closeDrawer(); typeof closeAnnot === 'function' && closeAnnot()")
+                page.goto(base + "/")
+                page.wait_for_load_state("networkidle")
+                for tab in ("Image", "Audio", "3D", "Video", "Chat"):
+                    page.get_by_role("tab", name=tab, exact=True).first.click()
+                    scan(tab)
+                    for i in range(page.locator("#aTools button").count() if tab == "Audio" else 0):  # Audio: one panel per tool
+                        page.locator("#aTools button").nth(i).click()
+                        scan(f"Audio tool {i + 1}")
+                page.get_by_role("tab", name="Image", exact=True).first.click()
+                for state, js in (("models drawer", "openDrawer()"), ("settings", "document.querySelector('#settingsBtn').click()"),
+                                  ("add device", "openSettings(false); SET.editing = 'new'; refreshSettings()"),
+                                  ("annotate", ANNOTATE),  # openAnnot needs a source picture: the gallery's image
+                                  ("text dialog", "textDialog('Text in this image', {}).set([{label: 'Image', text: 'A11Y TEST text'}])")):
+                    page.evaluate(js)
+                    scan(state)
+                    page.keyboard.press("Escape")
+                    page.evaluate("closeDrawer(); closeAnnot(); S.sources = []; renderComposer()")
+                page.evaluate("galState('image').select = true; renderStrip()")  # select mode swaps the delete buttons for check marks
+                scan("gallery select")
+                page.evaluate("galState('image').select = false; renderStrip()")
+                page.close()
             browser.close()
     finally:
         server.terminate()
