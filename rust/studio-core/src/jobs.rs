@@ -53,6 +53,9 @@ pub struct Ctx {
     /// The device address and key as they were when the job was submitted. Every request the job makes goes there,
     /// so an auto-switch mid-job never sends one device's key to another.
     pub target: Target,
+    /// Every file the job has saved (media::save): all of them are shredded if it fails or is cancelled, since no
+    /// gallery entry would point at them. A tool run inside a chat job keeps its own list (its result is saved at once).
+    pub(crate) saved: Arc<Mutex<Vec<String>>>,
     pub(crate) cancel: Arc<AtomicBool>,
     /// Set for a chat tool's inline job: its message/progress show on the chat job as tool_message/tool_progress.
     pub(crate) parent: Option<String>,
@@ -84,6 +87,17 @@ impl Ctx {
         }
     }
 
+    /// Shred the files this job saved (it failed or was cancelled).
+    pub fn discard_saved(&self) {
+        discard(&self.state, &self.saved);
+    }
+
+    /// The same job context with a list of saved files of its own.
+    pub fn own_files(mut self) -> Ctx {
+        self.saved = Arc::default();
+        self
+    }
+
     /// Drop fields from the job (Python's job.pop).
     pub fn remove(&self, keys: &[&str]) {
         if let Some(j) = self.state.jobs.lock().get_mut(&self.id) {
@@ -106,6 +120,7 @@ impl Ctx {
             model: model.to_string(),
             req,
             target: self.target.clone(),
+            saved: self.saved.clone(), // mesh's cut-out is part of the build; chat gives its tools their own (own_files)
             cancel: Arc::new(AtomicBool::new(false)),
             parent: Some(self.id.clone()),
         }
@@ -115,6 +130,14 @@ impl Ctx {
     pub fn set_remote_task(&self, url: Option<String>) {
         if let Some(j) = self.state.jobs.lock().get_mut(&self.id) {
             j.remote_task = url;
+        }
+    }
+}
+
+fn discard(state: &AppState, saved: &Mutex<Vec<String>>) {
+    for f in std::mem::take(&mut *saved.lock().unwrap_or_else(|e| e.into_inner())) {
+        if crate::store::safe_file(&f) {
+            crate::store::shred(&state.store.images.join(f));
         }
     }
 }
@@ -140,7 +163,7 @@ impl Jobs {
     /// A context for the plumbing tests in media/: not in the table, no task behind it.
     #[cfg(test)]
     pub(crate) fn test_ctx(&self, state: &AppState) -> Ctx {
-        Ctx { state: state.clone(), id: "t".into(), model: String::new(), req: json!({}), target: Target::default(), cancel: Arc::new(AtomicBool::new(false)), parent: None }
+        Ctx { state: state.clone(), id: "t".into(), model: String::new(), req: json!({}), target: Target::default(), saved: Arc::default(), cancel: Arc::new(AtomicBool::new(false)), parent: None }
     }
 
     fn lock(&self) -> MutexGuard<'_, HashMap<String, Job>> {
@@ -199,7 +222,7 @@ impl Jobs {
         let job = Job { data: data.as_object().cloned().unwrap_or_default(), cancel: cancel.clone(), remote_task: None, target: target.clone() };
         let out = view(&job);
         self.lock().insert(id.clone(), job);
-        let ctx = Ctx { state: state.clone(), id, model, req, target, cancel, parent: None };
+        let ctx = Ctx { state: state.clone(), id, model, req, target, saved: Arc::default(), cancel, parent: None };
         tokio::spawn(work(ctx, kind.to_string(), run));
         Ok(out)
     }
@@ -318,6 +341,7 @@ async fn work(ctx: Ctx, kind: String, run: KindFn) {
             state.jobs.update(&id, json!({"status": "running", "started": started, "message": "Working…"}));
             let ephemeral = ctx.req.get("ephemeral").is_some_and(crate::device::truthy);
             let cancel = ctx.cancel.clone();
+            let saved = ctx.saved.clone();
             // a panicking kind must not take the worker down: surface it as an error instead
             // kinds that make something on the device (results are written there first) need room for it
             let full = if matches!(kind.as_str(), "image" | "speech" | "transcribe" | "loop" | "song" | "mesh" | "video" | "ocr") {
@@ -348,6 +372,7 @@ async fn work(ctx: Ctx, kind: String, run: KindFn) {
                                 crate::store::shred(&state.store.images.join(f));
                             }
                         }
+                        discard(&state, &saved);
                         state.jobs.update(&id, json!({"status": "cancelled", "message": "Cancelled"}));
                         state.jobs.update(&id, json!({"finished": now()}));
                         return;
@@ -356,11 +381,7 @@ async fn work(ctx: Ctx, kind: String, run: KindFn) {
                     if !matches!(k.as_str(), "assist" | "chat") && !ephemeral {
                         if let Err(e) = state.store.add_history(entry.clone()) {
                             let msg = format!("Couldn't save the result: {e}");
-                            for f in crate::store::entry_files(&entry) {
-                                if crate::store::safe_file(&f) {
-                                    crate::store::shred(&state.store.images.join(f));
-                                }
-                            }
+                            discard(&state, &saved);
                             state.jobs.update(&id, json!({"status": "error", "error": msg, "message": msg}));
                             state.jobs.update(&id, json!({"finished": now()}));
                             return;
@@ -369,6 +390,7 @@ async fn work(ctx: Ctx, kind: String, run: KindFn) {
                     state.jobs.update(&id, json!({"status": "done", "progress": 100, "message": "Done", "entry": entry}));
                 }
                 Ok(Err(JobError(msg))) => {
+                    discard(&state, &saved); // a failed job keeps nothing it saved
                     if cancel.load(Ordering::Relaxed) {
                         // the device's error is just the cancel taking effect
                         state.jobs.update(&id, json!({"status": "cancelled", "message": "Cancelled"}));
@@ -377,6 +399,7 @@ async fn work(ctx: Ctx, kind: String, run: KindFn) {
                     }
                 }
                 Err(e) => {
+                    discard(&state, &saved);
                     let msg = format!("{e}");
                     state.jobs.update(&id, json!({"status": "error", "error": format!("panic: {msg}"), "message": msg}));
                 }
@@ -449,6 +472,23 @@ mod tests {
         let t = s.jobs.lock().get(id).unwrap().target.clone();
         assert_eq!((t.url.as_str(), t.key.as_str()), ("http://10.0.0.1", "key-a"));
         wait_done(&s, id).await;
+    }
+
+    #[tokio::test]
+    async fn a_failed_or_cancelled_job_keeps_no_files() {
+        let s = state();
+        let ok = s.jobs.submit(&s, "test", json!({"save": 1, "ephemeral": true})).unwrap();
+        let failed = s.jobs.submit(&s, "test", json!({"save": 1, "fail": 1})).unwrap();
+        let cancelled = s.jobs.submit(&s, "test", json!({"save": 1, "ms": 200, "ephemeral": true})).unwrap();
+        let (ok, failed, cancelled) = (ok["id"].as_str().unwrap(), failed["id"].as_str().unwrap(), cancelled["id"].as_str().unwrap());
+        let has = |id: &str| s.store.images.join(format!("{id}-x.png")).exists();
+        wait_done(&s, ok).await;
+        assert_eq!(wait_done(&s, failed).await["status"], json!("error"));
+        assert!(has(ok) && !has(failed)); // what a finished job saved stays; a failed one's goes
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        assert!(s.jobs.cancel(&s, cancelled).await);
+        assert_eq!(wait_done(&s, cancelled).await["status"], json!("cancelled"));
+        assert!(!has(cancelled));
     }
 
     #[tokio::test]

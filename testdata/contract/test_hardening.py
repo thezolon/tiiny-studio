@@ -124,6 +124,34 @@ class Hardening(Jobs):
             self.assertTrue(r.json["error"]["message"].startswith("Couldn't save your changes: "), r.body)
         self.assertEqual([r.json for r in self.get("/api/voices")], [[], []])  # no half-saved voice
 
+    # ---------- files left behind by failed jobs ----------
+    def files(self):
+        return [sorted(p.name for p in (d / "images").iterdir()) for d in self.h.tmp[-2:]]
+
+    def test_a_failed_song_keeps_its_style_reference_no_longer(self):
+        before = self.files()
+        py = self.failed({"kind": "song", "model": SONG, "caption": "RUST TEST pop", "lyrics": "[verse]\nla la", "reference_audio": WAV, "load": SONG,
+                          "flags": {"fail": {"/v1/generate": [500, "boom"]}}}, "boom")
+        self.assertEqual(py["status"], "error")
+        self.assertEqual(self.files(), before)
+
+    def test_a_video_that_fails_after_the_download_keeps_no_files(self):
+        # the clip and its first frame are saved, then the gallery can't take the entry (history.tmp is in the way)
+        before = self.files()
+        tmps = [d / "history.tmp" for d in self.h.tmp[-2:]]
+        for d in tmps:
+            d.mkdir()
+        try:
+            for base in (self.h.py_url, self.h.rs_url):
+                job, calls = self.run_job(base, {"kind": "video", "model": VIDEO, "load": VIDEO, "prompt": "RUST TEST apple", "image": PNG, "seconds": 1})
+                self.assertEqual(job["status"], "error")
+                self.assertTrue(job["error"].startswith("Couldn't save the result: "), job["error"])
+                self.assertTrue(any(p.endswith("/content") for _, p, *_ in calls))  # it did download the clip
+        finally:
+            for d in tmps:
+                d.rmdir()
+        self.assertEqual(self.files(), before)
+
     def test_settings_that_cannot_be_saved_are_a_500(self):
         tmps = [d / "config.tmp" for d in self.h.tmp[-2:]]
         for d in tmps:

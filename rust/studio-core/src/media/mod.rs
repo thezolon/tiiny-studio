@@ -311,6 +311,7 @@ pub fn decode_uri(uri: &str) -> Result<(String, Vec<u8>), JobError> {
 
 pub fn save(ctx: &Ctx, name: &str, data: &[u8]) -> Result<String, JobError> {
     std::fs::write(ctx.state.store.images.join(name), data).map_err(|e| JobError(format!("Couldn't save the result: {}", crate::store::io_reason(&e))))?;
+    ctx.saved.lock().unwrap_or_else(|e| e.into_inner()).push(name.to_string());
     Ok(name.to_string())
 }
 
@@ -324,6 +325,9 @@ async fn test_kind(ctx: Ctx) -> crate::jobs::JobResult {
         }
         ctx.update(json!({"progress": i * 20}));
         tokio::time::sleep(Duration::from_millis(ms / 5)).await;
+    }
+    if ctx.req.get("save").is_some() {
+        save(&ctx, &format!("{}-x.png", ctx.id), b"x")?;
     }
     if ctx.req.get("fail").is_some() {
         return Err(JobError("it failed".into()));

@@ -128,9 +128,14 @@ def run_tool(m, job, req, name, args, messages):
         job["message"] = {"image": "Making the image", "speech": "Speaking", "loop": "Making the loop", "song": "Making the song"}[kind]
         if job["cancel"]:
             raise JobError("Cancelled")
-        entry = media.KINDS[kind](m, sub, sub_req)
-        entry.update(id=sub["id"], created=int(time.time()), kind=entry.get("kind", kind), seconds=round(time.time() - sub["started"], 1), via="chat")
-        m.record(entry)
+        tool = m.fork()  # its result goes to the gallery at once; a failure takes back only its files
+        try:
+            entry = media.KINDS[kind](tool, sub, sub_req)
+            entry.update(id=sub["id"], created=int(time.time()), kind=entry.get("kind", kind), seconds=round(time.time() - sub["started"], 1), via="chat")
+            m.record(entry)
+        except BaseException:
+            tool.discard_saved()
+            raise
         if kind == "image" and entry.get("outputs"):
             job["turn_image"] = "/images/" + entry["outputs"][0]
     finally:
