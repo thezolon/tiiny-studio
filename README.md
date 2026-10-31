@@ -90,8 +90,10 @@ From the [Releases](../../releases) page, download the installer for your comput
 - **Windows:** run the setup (no admin rights needed; it installs for you only). The first time, Windows may
   say *"Windows protected your PC"* because the app isn't code-signed: click **More info → Run anyway**. Start
   it from the Start menu. To update, run a newer setup over it.
-- **macOS:** open the `.dmg` and drag Tiiny Studio to Applications. The first time, right-click it → **Open** →
-  **Open** (macOS asks because the app isn't notarized).
+- **macOS:** open the `.dmg` and drag Tiiny Studio to Applications. The app isn't notarized by Apple yet, so macOS
+  says it **"is damaged and can't be opened"** (it isn't; it's the quarantine flag macOS puts on downloads, and
+  right-click → Open doesn't get past it on recent macOS). Clear the flag once in Terminal, then open it normally:
+  `xattr -cr "/Applications/Tiiny Studio.app"`
 - **Linux:** `sudo apt install ./Tiiny-Studio_<version>_amd64.deb`, or make the AppImage executable
   (`chmod +x`) and run it. Needs WebKitGTK 4.1 (installed with most desktops).
 
