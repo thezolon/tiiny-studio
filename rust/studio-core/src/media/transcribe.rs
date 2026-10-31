@@ -35,7 +35,7 @@ pub async fn run(ctx: Ctx) -> JobResult {
     if code != 200 || res.get("text").is_none() {
         return Err(JobError(err(&res)));
     }
-    let src = if req.get("ephemeral").is_some_and(crate::device::truthy) { None } else { Some(save(&ctx, &format!("{}-audio.{ext}", ctx.id), &audio)) };
+    let src = if req.get("ephemeral").is_some_and(crate::device::truthy) { None } else { Some(save(&ctx, &format!("{}-audio.{ext}", ctx.id), &audio)?) };
     Ok(json!({"kind": "transcript", "params": {"model": ctx.model, "language": if language.is_empty() { Value::Null } else { json!(language) }, "name": req.get("name")},
         "sources": src.into_iter().collect::<Vec<_>>(), "outputs": [], "text": res["text"]}))
 }

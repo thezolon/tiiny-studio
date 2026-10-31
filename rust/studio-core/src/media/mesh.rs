@@ -234,7 +234,7 @@ async fn build(ctx: &Ctx, saved: &mut Vec<String>) -> JobResult {
     let mut have = Have::default();
     have.set("image", ("input.png".into(), image.clone(), "image/png".into()));
     let mut stage_log = vec![];
-    let src = save(&ctx, &format!("{}-src.png", ctx.id), &original);
+    let src = save(&ctx, &format!("{}-src.png", ctx.id), &original)?;
     saved.push(src.clone());
 
     let last = plan.last().copied();
@@ -406,7 +406,7 @@ async fn build(ctx: &Ctx, saved: &mut Vec<String>) -> JobResult {
 
     // no export (shape only): the last stage's preview GLB
     let mesh = have.get("mesh").or_else(|| have.get("preview")).ok_or_else(|| JobError("The device returned no mesh".into()))?;
-    let out = save(&ctx, &format!("{}-model.glb", ctx.id), &mesh.1);
+    let out = save(&ctx, &format!("{}-model.glb", ctx.id), &mesh.1)?;
     let mut params = Map::new();
     params.insert("model".into(), json!(model));
     params.extend(quality.iter().map(|(k, v)| (k.to_string(), v.clone())));

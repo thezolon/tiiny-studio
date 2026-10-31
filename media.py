@@ -30,6 +30,28 @@ class JobError(Exception):
     pass
 
 
+def reason(e):
+    """What went wrong, from an OSError, in a few words (No space left on device)."""
+    return e.strerror or str(e)
+
+
+def shred(path):
+    """Overwrite a file with zeros, then delete it. Best effort: SSDs and copy-on-write filesystems
+    may still keep old blocks, but the data is no longer reachable through the file system."""
+    try:
+        size = path.stat().st_size
+        with open(path, "r+b") as f:
+            while size > 0:
+                n = min(size, 1 << 20)
+                f.write(b"\0" * n)
+                size -= n
+            f.flush()
+            os.fsync(f.fileno())
+    except OSError:
+        pass
+    path.unlink(missing_ok=True)
+
+
 # Kinds that make something on the device (results are written there before the studio downloads them).
 DISK_KINDS = ("image", "speech", "transcribe", "loop", "song", "mesh", "video", "ocr")
 
@@ -178,8 +200,18 @@ class Media:
         return m.group(1) or "application/octet-stream", base64.b64decode(m.group(2))
 
     def save(self, name, data):
-        (self.dir / name).write_bytes(data)
+        try:
+            (self.dir / name).write_bytes(data)
+        except OSError as e:
+            raise JobError(f"Couldn't save the result: {reason(e)}")
         return name
+
+    def record(self, entry):
+        """Add a finished result to the gallery."""
+        try:
+            self.add_history(entry)
+        except OSError as e:
+            raise JobError(f"Couldn't save the result: {reason(e)}")
 
     @staticmethod
     def err(res):
@@ -232,7 +264,7 @@ class Media:
                     return
                 if entry["kind"] not in ("assist", "chat"):  # helper text and chat replies live with the job, not in the gallery
                     if not req.get("ephemeral"):  # throwaway jobs (e.g. transcribing a voice clip) never touch disk
-                        self.add_history(entry)
+                        self.record(entry)
                 job.update(status="done", progress=100, message="Done", entry=entry)
             except JobError as e:
                 if job["cancel"]:  # the device's error is just the cancel taking effect
@@ -322,8 +354,11 @@ class Media:
             have = sorted((have or set()) | {i for i in ids if i})
             path = self.dir.parent / "device_seen.json"
             tmp = path.with_suffix(".tmp")
-            tmp.write_text(json.dumps(have, indent=1), "utf-8")
-            tmp.replace(path)
+            try:
+                tmp.write_text(json.dumps(have, indent=1), "utf-8")
+                tmp.replace(path)
+            except OSError:
+                pass  # best effort: a clip or song deleted here could be pulled back from the device at the next look
 
     def delete_device_sessions(self, ids):
         """Best effort, in the background (it waits its turn for the device): the Tiiny keeps a finished song's session
@@ -396,7 +431,10 @@ class Media:
         if code != 200 or not data:
             return None
         eid = uuid.uuid4().hex[:12]
-        out = self.save(f"{eid}-video.mp4", data)
+        try:
+            out = self.save(f"{eid}-video.mp4", data)
+        except JobError:
+            return None  # can't write here: it stays on the device for the next look
         try:
             secs = max(1, round(float(v.get("seconds"))))
         except (TypeError, ValueError, OverflowError):
@@ -408,7 +446,11 @@ class Media:
         entry = {"id": eid, "created": int(time.time()), "kind": "video", "seconds": 0,
                  "params": {"model": v.get("model") or "", "prompt": "", "size": str(v.get("size") or "832x480"), "seconds": secs, "recovered": True},
                  "sources": [], "outputs": [out], "duration": round(frames / fps if frames > 0 and fps > 0 else secs, 1)}
-        self.add_history(entry)
+        try:
+            self.record(entry)
+        except JobError:
+            shred(self.dir / out)
+            return None
         self.mark_seen(vid)
         try:
             self.http("DELETE", f"{base}/v1/videos/{quote(vid, safe='')}", timeout=30, headers=auth)  # the device keeps it an hour otherwise
@@ -426,9 +468,17 @@ class Media:
         if code != 200 or not isinstance(mp3, (bytes, bytearray)) or len(mp3) <= 1000:
             return None
         eid, kind = uuid.uuid4().hex[:12], "loop" if "Foundation-1" in model else "song"
+        try:
+            out = self.save(f"{eid}-{kind}.mp3", mp3)
+        except JobError:
+            return None
         entry = {"id": eid, "created": int(time.time()), "kind": kind, "seconds": 0, "params": {"model": model, "recovered": True},
-                 "sources": [], "outputs": [self.save(f"{eid}-{kind}.mp3", mp3)], "downloads": [], "duration": None, "device": {"music_session": sid}}
-        self.add_history(entry)
+                 "sources": [], "outputs": [out], "downloads": [], "duration": None, "device": {"music_session": sid}}
+        try:
+            self.record(entry)
+        except JobError:
+            shred(self.dir / out)
+            return None
         self.mark_seen(sid)  # the session stays on the Tiiny until the entry is deleted
         return entry
 
@@ -930,7 +980,10 @@ def _song_entry(m, job, req, res, config, sources, route, url):
         device = {"music_session": sid}  # the session stays on the Tiiny until this entry is deleted
         m.mark_seen(sid)
     if req.get("resume_session") and req.get("from_entry") and getattr(m, "edit_history", None):
-        m.edit_history(req["from_entry"], lambda e: e.pop("resume", None))
+        try:
+            m.edit_history(req["from_entry"], lambda e: e.pop("resume", None))
+        except OSError as e:
+            raise JobError(f"Couldn't save the result: {reason(e)}")
     entry = {"kind": "song", "params": {"model": job["model"], "route": route, **{k: v for k, v in config.items() if k != "reference_audio_base64"}},
              "sources": sources, "outputs": outputs, "tracks": tracks, "duration": res.get("duration"), "downloads": downloads}
     if resume:

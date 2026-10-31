@@ -22,7 +22,7 @@ from urllib.parse import parse_qs, quote, unquote, urlparse
 
 import chat  # noqa: F401  (registers the "chat" job kind)
 import extract
-from media import JOBS, JobError, Media
+from media import JOBS, JobError, Media, reason, shred
 
 PORT = int(os.environ.get("PORT", "7860"))
 PASSWORD = os.environ.get("STUDIO_PASSWORD", "")
@@ -303,23 +303,6 @@ def save_history(items):
     save_json(HISTORY, items)
 
 
-def shred(path):
-    """Overwrite a file with zeros, then delete it. Best effort: SSDs and copy-on-write filesystems
-    may still keep old blocks, but the data is no longer reachable through the file system."""
-    try:
-        size = path.stat().st_size
-        with open(path, "r+b") as f:
-            while size > 0:
-                n = min(size, 1 << 20)
-                f.write(b"\0" * n)
-                size -= n
-            f.flush()
-            os.fsync(f.fileno())
-    except OSError:
-        pass
-    path.unlink(missing_ok=True)
-
-
 def save_json(path, obj):
     tmp = path.with_suffix(".tmp")
     tmp.write_text(json.dumps(obj, indent=1), "utf-8")
@@ -476,7 +459,7 @@ def device_stats():
     return out
 MIME = {"png": "image/png", "jpg": "image/jpeg", "webp": "image/webp", "wav": "audio/wav", "mp3": "audio/mpeg",
         "m4a": "audio/mp4", "webm": "audio/webm", "ogg": "audio/ogg", "flac": "audio/flac", "glb": "model/gltf-binary", "mp4": "video/mp4",
-        "js": "text/javascript; charset=utf-8", "mjs": "text/javascript; charset=utf-8", "css": "text/css; charset=utf-8", "mp3": "audio/mpeg"}
+        "js": "text/javascript; charset=utf-8", "mjs": "text/javascript; charset=utf-8", "css": "text/css; charset=utf-8"}
 
 
 IN_DOCKER = Path("/.dockerenv").exists()
@@ -739,6 +722,14 @@ class Handler(BaseHTTPRequestHandler):
             self.route_post()
         except BadBody as e:  # the routes that need a body answer 400 for one they can't read
             self.send_json(400, {"error": {"message": str(e)}})
+        except OSError as e:
+            self.save_failed(e)
+
+    def save_failed(self, e):
+        """A write to the data folder failed (disk full, no permission): say so instead of dropping the connection."""
+        if isinstance(e, ConnectionError):  # the browser went away
+            raise e
+        self.send_json(500, {"error": {"message": f"Couldn't save your changes: {reason(e)}"}})
 
     def route_post(self):
         if self.path == "/api/settings":
@@ -959,18 +950,28 @@ class Handler(BaseHTTPRequestHandler):
         except (ValueError, JobError) as e:
             return self.send_json(400, {"error": {"message": str(e)}})
         vid = uuid.uuid4().hex[:10]
-        (IMAGES / f"voice-{vid}.wav").write_bytes(audio)
         voice = {"id": vid, "name": (req.get("name") or "Voice").strip()[:60], "file": f"voice-{vid}.wav",
                  "text": (req.get("text") or "").strip(), "created": int(time.time())}
-        with LOCK:
-            voices = load_voices()
-            voices.insert(0, voice)
-            VOICES.write_text(json.dumps(voices, indent=1), "utf-8")
+        (IMAGES / voice["file"]).write_bytes(audio)
+        try:
+            with LOCK:
+                voices = load_voices()
+                voices.insert(0, voice)
+                save_json(VOICES, voices)
+        except OSError:
+            shred(IMAGES / voice["file"])  # no entry would point at it
+            raise
         self.send_json(200, voice)
 
     def do_DELETE(self):
         if not self.authorized():
             return
+        try:
+            self.route_delete()
+        except OSError as e:
+            self.save_failed(e)
+
+    def route_delete(self):
         m = re.fullmatch(r"/api/voices/(\w+)", self.path)
         if m:
             with LOCK:

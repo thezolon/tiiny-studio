@@ -22,12 +22,17 @@ pub fn read_json_file(path: &Path) -> Option<Value> {
     std::fs::read_to_string(path).ok().and_then(|s| serde_json::from_str(&s).ok())
 }
 
-/// Write through a temp file so a crash never leaves half a file.
-pub fn save_json(path: &Path, v: &Value) {
+/// What went wrong with a file, in a few words ("No space left on device"): Rust adds " (os error N)".
+pub fn io_reason(e: &std::io::Error) -> String {
+    let s = e.to_string();
+    s.split(" (os error").next().unwrap_or(&s).trim_end_matches('.').to_string()
+}
+
+/// Write through a temp file so a crash never leaves half a file. Err is the reason it couldn't be written.
+pub fn save_json(path: &Path, v: &Value) -> Result<(), String> {
     let tmp = path.with_extension("tmp");
-    if std::fs::write(&tmp, serde_json::to_string_pretty(v).unwrap_or_default()).is_ok() {
-        let _ = std::fs::rename(&tmp, path);
-    }
+    std::fs::write(&tmp, serde_json::to_string_pretty(v).unwrap_or_default()).map_err(|e| io_reason(&e))?;
+    std::fs::rename(&tmp, path).map_err(|e| io_reason(&e))
 }
 
 /// Overwrite a file with zeros, then delete it. Best effort: SSDs and copy-on-write filesystems may still
@@ -95,19 +100,19 @@ impl Store {
         read_json_file(&self.history).and_then(|v| v.as_array().cloned()).unwrap_or_default()
     }
 
-    pub fn save_history(&self, items: &[Value]) {
-        save_json(&self.history, &Value::Array(items.to_vec()));
+    pub fn save_history(&self, items: &[Value]) -> Result<(), String> {
+        save_json(&self.history, &Value::Array(items.to_vec()))
     }
 
-    pub fn add_history(&self, entry: Value) {
+    pub fn add_history(&self, entry: Value) -> Result<(), String> {
         let _g = self.lock();
         let mut items = self.load_history();
         items.insert(0, entry);
-        self.save_history(&items);
+        self.save_history(&items)
     }
 
     /// Apply `f` to one saved entry (e.g. clear a preview's resume token) and save.
-    pub fn edit_history(&self, id: &str, f: impl Fn(&mut serde_json::Map<String, Value>)) {
+    pub fn edit_history(&self, id: &str, f: impl Fn(&mut serde_json::Map<String, Value>)) -> Result<(), String> {
         let _g = self.lock();
         let mut items = self.load_history();
         for e in items.iter_mut() {
@@ -117,11 +122,11 @@ impl Store {
                 }
             }
         }
-        self.save_history(&items);
+        self.save_history(&items)
     }
 
-    /// Remove entries and shred their files; returns nothing (callers drop jobs/search cache themselves).
-    pub fn delete_entries(&self, ids: &[String]) {
+    /// Remove entries and shred their files (callers drop jobs/search cache themselves).
+    pub fn delete_entries(&self, ids: &[String]) -> Result<(), String> {
         let _g = self.lock();
         let items = self.load_history();
         let (gone, keep): (Vec<Value>, Vec<Value>) =
@@ -133,7 +138,7 @@ impl Store {
                 }
             }
         }
-        self.save_history(&keep);
+        self.save_history(&keep)
     }
 
     /// The device ids already handled; None without a (usable) file: the next look at the device is a baseline.
@@ -152,15 +157,15 @@ impl Store {
         }
         let mut all = have.unwrap_or_default();
         all.extend(ids.iter().filter(|i| !i.is_empty()).cloned());
-        save_json(&self.seen, &json!(all));
+        let _ = save_json(&self.seen, &json!(all)); // best effort: a clip or song deleted here could be pulled back from the device at the next look
     }
 
     pub fn load_voices(&self) -> Vec<Value> {
         read_json_file(&self.voices).and_then(|v| v.as_array().cloned()).unwrap_or_default()
     }
 
-    pub fn save_voices(&self, voices: &[Value]) {
-        save_json(&self.voices, &Value::Array(voices.to_vec()));
+    pub fn save_voices(&self, voices: &[Value]) -> Result<(), String> {
+        save_json(&self.voices, &Value::Array(voices.to_vec()))
     }
 
     /// A saved voice as the speech model wants it: name, transcript and the clip as a data URI.
@@ -212,16 +217,30 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("studio-store-{}", uuid::Uuid::new_v4().simple()));
         let s = Store::new(&dir);
         std::fs::write(s.images.join("a.png"), b"png").unwrap();
-        s.add_history(json!({"id": "e1", "outputs": ["a.png"]}));
-        s.add_history(json!({"id": "e2"}));
+        s.add_history(json!({"id": "e1", "outputs": ["a.png"]})).unwrap();
+        s.add_history(json!({"id": "e2"})).unwrap();
         s.edit_history("e1", |e| {
             e.insert("fav".into(), json!(true));
-        });
+        })
+        .unwrap();
         assert_eq!(s.load_history()[1]["fav"], json!(true));
-        s.delete_entries(&["e1".into()]);
+        s.delete_entries(&["e1".into()]).unwrap();
         assert_eq!(s.load_history().len(), 1);
         assert!(!s.images.join("a.png").exists());
         assert!(!safe_file("../x") && !safe_file("a/b") && safe_file("voice-1.wav"));
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_failed_write_is_an_error_with_a_reason() {
+        let dir = std::env::temp_dir().join(format!("studio-store-{}", uuid::Uuid::new_v4().simple()));
+        let s = Store::new(&dir);
+        // the folder is gone (a plain file in its place): nothing can be written, and the caller is told
+        std::fs::remove_dir_all(&dir).unwrap();
+        std::fs::write(&dir, b"").unwrap();
+        assert!(!s.add_history(json!({"id": "e1"})).unwrap_err().is_empty());
+        assert!(!s.save_voices(&[]).unwrap_err().is_empty());
+        std::fs::remove_file(&dir).unwrap();
+        assert!(!io_reason(&std::io::Error::from_raw_os_error(2)).contains("(os error"));
     }
 }

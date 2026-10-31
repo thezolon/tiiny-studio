@@ -130,7 +130,7 @@ def run_tool(m, job, req, name, args, messages):
             raise JobError("Cancelled")
         entry = media.KINDS[kind](m, sub, sub_req)
         entry.update(id=sub["id"], created=int(time.time()), kind=entry.get("kind", kind), seconds=round(time.time() - sub["started"], 1), via="chat")
-        m.add_history(entry)
+        m.record(entry)
         if kind == "image" and entry.get("outputs"):
             job["turn_image"] = "/images/" + entry["outputs"][0]
     finally:

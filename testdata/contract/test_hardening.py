@@ -1,7 +1,9 @@
 """Hardening contract tests: a job keeps the device it started on, answers that aren't JSON, request bodies, files left
 behind by failed jobs. Both servers run against the fake Tiiny and must answer alike."""
 import base64
+import contextlib
 import json
+import shutil
 import time
 import unittest
 
@@ -83,6 +85,59 @@ class Hardening(Jobs):
             self.same((py, rs))
             self.assertEqual(py.status, 413)
             self.assertIn("too large", py.json["error"]["message"])
+
+    # ---------- writes that fail ----------
+    @contextlib.contextmanager
+    def blocked(self, name):
+        """A data folder (images, chats) replaced by a plain file on both servers: nothing can be written inside it."""
+        dirs = [d / name for d in self.h.tmp[-2:]]
+        for d in dirs:
+            shutil.rmtree(d)
+            d.write_bytes(b"")
+        try:
+            yield
+        finally:
+            for d in dirs:
+                d.unlink()
+                d.mkdir()
+
+    def test_a_result_that_cannot_be_saved_fails_the_job(self):
+        with self.blocked("images"):
+            for base in (self.h.py_url, self.h.rs_url):  # the reason is the operating system's own words: only the start is compared
+                job, _ = self.run_job(base, {"kind": "image", "model": IMAGE_MODEL, "prompt": "RUST TEST duck", "size": "512x512"})
+                self.assertEqual(job["status"], "error")
+                self.assertTrue(job["error"].startswith("Couldn't save the result: ") and len(job["error"]) > 30, job["error"])
+            self.assertEqual(self.get("/api/history")[0].json, [])
+            self.assertEqual(self.get("/api/history")[1].json, [])
+
+    def test_a_voice_or_chat_that_cannot_be_saved_is_a_500(self):
+        voice = {"audio": WAV, "name": "RUST TEST voice", "text": "hi"}
+        with self.blocked("images"):
+            py, rs = self.post("/api/voices", voice)
+        for r in (py, rs):
+            self.assertEqual(r.status, 500)
+            self.assertTrue(r.json["error"]["message"].startswith("Couldn't save your changes: "), r.body)
+        with self.blocked("chats"):
+            py, rs = self.post("/api/chats/abc123", {"title": "RUST TEST", "messages": []})
+        for r in (py, rs):
+            self.assertEqual(r.status, 500)
+            self.assertTrue(r.json["error"]["message"].startswith("Couldn't save your changes: "), r.body)
+        self.assertEqual([r.json for r in self.get("/api/voices")], [[], []])  # no half-saved voice
+
+    def test_settings_that_cannot_be_saved_are_a_500(self):
+        tmps = [d / "config.tmp" for d in self.h.tmp[-2:]]
+        for d in tmps:
+            d.mkdir()  # the file the settings are written through can't be created
+        try:
+            py, rs = self.post("/api/settings/auto", {"auto": False})
+        finally:
+            for d in tmps:
+                d.rmdir()
+        for r in (py, rs):
+            self.assertEqual(r.status, 500)
+            self.assertTrue(r.json["error"]["message"].startswith("Couldn't save your changes: "), r.body)
+        for r in self.post("/api/settings/auto", {"auto": True}):  # and back to normal once it can be
+            self.assertEqual((r.status, r.json["auto"]), (200, True))
 
 
 if __name__ == "__main__":

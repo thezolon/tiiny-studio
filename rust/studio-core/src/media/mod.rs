@@ -309,9 +309,9 @@ pub fn decode_uri(uri: &str) -> Result<(String, Vec<u8>), JobError> {
     crate::library::decode_uri(uri).map_err(|_| JobError("Expected a base64 data URI".into()))
 }
 
-pub fn save(ctx: &Ctx, name: &str, data: &[u8]) -> String {
-    let _ = std::fs::write(ctx.state.store.images.join(name), data);
-    name.to_string()
+pub fn save(ctx: &Ctx, name: &str, data: &[u8]) -> Result<String, JobError> {
+    std::fs::write(ctx.state.store.images.join(name), data).map_err(|e| JobError(format!("Couldn't save the result: {}", crate::store::io_reason(&e))))?;
+    Ok(name.to_string())
 }
 
 /// For the job-table tests: waits `ms`, fails when asked, and reports progress like a real kind.
@@ -342,6 +342,24 @@ mod tests {
         assert_eq!(err(&json!({"error": {"code": 1}})), r#"{"code": 1}"#);
         assert_eq!(err(&json!({"x": 1})), r#"{"x": 1}"#);
         assert_eq!(err(&json!("plain")), "plain");
+    }
+
+    #[tokio::test]
+    async fn a_result_that_cannot_be_saved_fails_the_job() {
+        let state = crate::AppState::new(crate::Config {
+            port: 0,
+            host: "127.0.0.1".into(),
+            password: String::new(),
+            lan_access: false,
+            app: false,
+            data_dir: std::env::temp_dir().join(format!("studio-save-{}", uuid::Uuid::new_v4().simple())),
+        });
+        let ctx = state.jobs.test_ctx(&state);
+        assert_eq!(save(&ctx, "a.png", b"x").unwrap(), "a.png");
+        std::fs::remove_dir_all(&state.store.images).unwrap();
+        std::fs::write(&state.store.images, b"").unwrap(); // a file where the folder was
+        let JobError(msg) = save(&ctx, "b.png", b"x").unwrap_err();
+        assert!(msg.starts_with("Couldn't save the result: ") && msg.len() > 26 && !msg.contains("os error"), "{msg}");
     }
 
     #[test]

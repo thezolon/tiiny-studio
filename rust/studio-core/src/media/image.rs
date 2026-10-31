@@ -85,13 +85,13 @@ pub async fn run(ctx: Ctx) -> JobResult {
             "image/webp" => "webp",
             _ => "png",
         };
-        src_names.push(save(&ctx, &format!("{}-src{i}.{ext}", ctx.id), &bytes));
+        src_names.push(save(&ctx, &format!("{}-src{i}.{ext}", ctx.id), &bytes)?);
     }
     let mut outputs = vec![];
     for (i, d) in data.iter().enumerate() {
         if let Some(b64) = d.get("b64_json").and_then(Value::as_str).filter(|s| !s.is_empty()) {
             let bytes = base64::engine::general_purpose::STANDARD.decode(b64).map_err(|e| JobError(format!("Error: {e}")))?;
-            outputs.push(save(&ctx, &format!("{}-{i}.png", ctx.id), &bytes));
+            outputs.push(save(&ctx, &format!("{}-{i}.png", ctx.id), &bytes)?);
         }
     }
     let params: Map<String, Value> = body.into_iter().filter(|(k, _)| k != "image" && k != "response_format").collect();

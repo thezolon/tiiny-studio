@@ -93,7 +93,7 @@ pub async fn run_loop(ctx: Ctx) -> JobResult {
         Ok(other) => return Err(JobError(err(&json!(String::from_utf8_lossy(&other))))),
         Err(v) => return Err(JobError(err(&v))),
     };
-    let out = save(&ctx, &format!("{}-loop.wav", ctx.id), &wav);
+    let out = save(&ctx, &format!("{}-loop.wav", ctx.id), &wav)?;
     let after = if before.is_some() { session_ids(&ctx.state, &ctx.target).await } else { None };
     let new: Vec<String> = match (&before, after) {
         (Some(before), Some(after)) => after.difference(before).cloned().collect(),
@@ -125,7 +125,7 @@ pub async fn run_song(ctx: Ctx) -> JobResult {
     if req.get("reference_audio").is_some_and(truthy) {
         let (_, reference) = decode_uri(text(req, "reference_audio"))?;
         config.insert("reference_audio_base64".into(), json!(base64::engine::general_purpose::STANDARD.encode(&reference)));
-        sources.push(save(&ctx, &format!("{}-styleref.wav", ctx.id), &reference));
+        sources.push(save(&ctx, &format!("{}-styleref.wav", ctx.id), &reference)?);
     }
     let ace = req.get("ace_step").cloned().unwrap_or(Value::Null);
     let ace = pick(&ace, &ACE_STEP_KEYS);
@@ -263,7 +263,7 @@ fn b64(s: &str) -> Result<Vec<u8>, JobError> {
 
 async fn song_entry(ctx: &Ctx, res: &Value, config: &Map<String, Value>, sources: Vec<String>, route: &str, url: Option<String>) -> JobResult {
     let req = &ctx.req;
-    let mut outputs = vec![save(ctx, &format!("{}-song.wav", ctx.id), &b64(text(res, "audio_data"))?)];
+    let mut outputs = vec![save(ctx, &format!("{}-song.wav", ctx.id), &b64(text(res, "audio_data"))?)?];
     let mut tracks = Map::new();
     for (name, data) in res.get("audio_outputs").and_then(Value::as_object).into_iter().flatten() {
         let Some(data) = data.as_str().filter(|d| d.chars().count() > 1000 && name.to_lowercase() != "mixed") else { continue }; // "mixed" duplicates the main file
@@ -275,7 +275,7 @@ async fn song_entry(ctx: &Ctx, res: &Value, config: &Map<String, Value>, sources
                 slug.push('_');
             }
         }
-        let fname = save(ctx, &format!("{}-{slug}.wav", ctx.id), &b64(data)?);
+        let fname = save(ctx, &format!("{}-{slug}.wav", ctx.id), &b64(data)?)?;
         outputs.push(fname.clone());
         tracks.insert(fname, json!(name));
     }
@@ -288,7 +288,7 @@ async fn song_entry(ctx: &Ctx, res: &Value, config: &Map<String, Value>, sources
         let dl = format!("{}/v1/music/sessions/{sid}/download?format=mp3", ctx.target.url);
         if let Ok((200, Ok(mp3))) = http_bytes(ctx, "GET", &dl, None, 120, true).await {
             if mp3.len() > 1000 {
-                downloads.push(save(ctx, &format!("{}-song.mp3", ctx.id), &mp3));
+                downloads.push(save(ctx, &format!("{}-song.mp3", ctx.id), &mp3)?);
             }
         }
         if route == "preview" {
@@ -301,7 +301,8 @@ async fn song_entry(ctx: &Ctx, res: &Value, config: &Map<String, Value>, sources
         if let Some(from) = req.get("from_entry").filter(|f| truthy(f)).and_then(Value::as_str) {
             ctx.state.store.edit_history(from, |e| {
                 e.remove("resume");
-            });
+            })
+            .map_err(|e| JobError(format!("Couldn't save the result: {e}")))?;
         }
     }
     let mut params = Map::new();

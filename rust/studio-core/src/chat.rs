@@ -172,7 +172,7 @@ user to load {0} from the Models panel (or turn swapping on), then ask again.", 
         e.insert("kind".into(), json!(k));
         e.insert("seconds".into(), json!(((now() - started) * 10.0).round() / 10.0));
         e.insert("via".into(), json!("chat"));
-        ctx.state.store.add_history(entry.clone());
+        ctx.state.store.add_history(entry.clone()).map_err(|e| JobError(format!("Couldn't save the result: {e}")))?;
         if kind == "image" {
             if let Some(first) = entry.pointer("/outputs/0").and_then(Value::as_str) {
                 ctx.update(json!({"turn_image": format!("/images/{first}")}));

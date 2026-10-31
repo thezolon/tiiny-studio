@@ -286,9 +286,13 @@ async fn save_settings(State(state): State<AppState>, body: Bytes) -> Response {
         Err(e) => return error(StatusCode::BAD_REQUEST, &e),
     };
     let new = req.get("new").is_some_and(device::truthy);
+    state.settings.take_save_error();
     let did = Some(str_of(&req, "id")).filter(|s| !s.is_empty()).map(String::from).or_else(|| if new { None } else { state.settings.active() });
     if let Err(e) = state.settings.upsert(did.as_deref(), str_of(&req, "name"), str_of(&req, "url"), str_of(&req, "key").trim()) {
         return error(StatusCode::BAD_REQUEST, &e);
+    }
+    if let Some(e) = state.settings.take_save_error() {
+        return error(StatusCode::INTERNAL_SERVER_ERROR, &format!("Couldn't save your changes: {e}"));
     }
     let check = state.clone();
     tokio::spawn(async move { check.settings.check(&check.http).await });
@@ -298,6 +302,7 @@ async fn save_settings(State(state): State<AppState>, body: Bytes) -> Response {
 async fn device_action(State(state): State<AppState>, Path(action): Path<String>, body: Bytes) -> Response {
     let req = read_json(&body).unwrap_or(json!({}));
     let did = str_of(&req, "id");
+    state.settings.take_save_error();
     match action.as_str() {
         "delete" => state.settings.remove(did),
         "move" => state.settings.move_device(did, if req.get("dir").and_then(Value::as_f64).unwrap_or(-1.0) < 0.0 { -1 } else { 1 }),
@@ -306,6 +311,9 @@ async fn device_action(State(state): State<AppState>, Path(action): Path<String>
         "swap" => state.settings.set_swap(&req),
         "check" => state.settings.check(&state.http).await,
         _ => return not_found().await,
+    }
+    if let Some(e) = state.settings.take_save_error() {
+        return error(StatusCode::INTERNAL_SERVER_ERROR, &format!("Couldn't save your changes: {e}"));
     }
     Json(state.settings.public()).into_response()
 }

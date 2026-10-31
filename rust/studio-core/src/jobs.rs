@@ -137,6 +137,12 @@ fn view(job: &Job) -> Value {
 }
 
 impl Jobs {
+    /// A context for the plumbing tests in media/: not in the table, no task behind it.
+    #[cfg(test)]
+    pub(crate) fn test_ctx(&self, state: &AppState) -> Ctx {
+        Ctx { state: state.clone(), id: "t".into(), model: String::new(), req: json!({}), target: Target::default(), cancel: Arc::new(AtomicBool::new(false)), parent: None }
+    }
+
     fn lock(&self) -> MutexGuard<'_, HashMap<String, Job>> {
         self.map.lock().unwrap_or_else(|e| e.into_inner())
     }
@@ -348,7 +354,17 @@ async fn work(ctx: Ctx, kind: String, run: KindFn) {
                     }
                     // helper text and chat replies live with the job, not in the gallery; throwaway jobs never touch disk
                     if !matches!(k.as_str(), "assist" | "chat") && !ephemeral {
-                        state.store.add_history(entry.clone());
+                        if let Err(e) = state.store.add_history(entry.clone()) {
+                            let msg = format!("Couldn't save the result: {e}");
+                            for f in crate::store::entry_files(&entry) {
+                                if crate::store::safe_file(&f) {
+                                    crate::store::shred(&state.store.images.join(f));
+                                }
+                            }
+                            state.jobs.update(&id, json!({"status": "error", "error": msg, "message": msg}));
+                            state.jobs.update(&id, json!({"finished": now()}));
+                            return;
+                        }
                     }
                     state.jobs.update(&id, json!({"status": "done", "progress": 100, "message": "Done", "entry": entry}));
                 }

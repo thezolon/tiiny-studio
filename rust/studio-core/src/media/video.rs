@@ -61,7 +61,7 @@ async fn make(ctx: &Ctx, saved: &mut Vec<String>) -> JobResult {
             continue;
         }
         let (ctype, data) = decode_uri(s(k))?;
-        let name = save(ctx, &format!("{}-frame{i}.png", ctx.id), &data);
+        let name = save(ctx, &format!("{}-frame{i}.png", ctx.id), &data)?;
         saved.push(name.clone());
         sources.push(name);
         body.insert(FRAME_FIELDS[i].into(), json!(format!("data:{ctype};base64,{}", base64::engine::general_purpose::STANDARD.encode(&data))));
@@ -119,7 +119,7 @@ async fn make(ctx: &Ctx, saved: &mut Vec<String>) -> JobResult {
         Ok(_) => return Err(JobError("Couldn't fetch the video: empty".into())),
         Err(e) => return Err(JobError(format!("Couldn't fetch the video: {}", err(&e)))),
     };
-    let out = save(ctx, &format!("{}-video.mp4", ctx.id), &data);
+    let out = save(ctx, &format!("{}-video.mp4", ctx.id), &data)?;
     saved.push(out.clone());
     let _ = http(ctx, "DELETE", &format!("{url}/{vid}"), None, 30, true).await; // the device keeps it an hour otherwise
     let frames = v.get("frames").and_then(Value::as_f64).unwrap_or(0.0);

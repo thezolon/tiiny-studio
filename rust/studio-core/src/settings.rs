@@ -66,6 +66,7 @@ struct State {
     status: HashMap<String, Probe>,
     pinned: Option<String>, // a device picked by hand stays in use while it answers
     last_switch: Option<Value>,
+    save_error: Option<String>, // why the last write of config.json failed
 }
 
 pub struct Settings {
@@ -224,15 +225,22 @@ impl Settings {
     fn save(&self, st: &mut State) {
         let body = json!({"devices": st.devices, "active": st.active, "auto": st.auto, "swap": st.swap, "helper_model": st.helper_model});
         let tmp = self.path.with_extension("tmp");
-        if std::fs::write(&tmp, serde_json::to_string_pretty(&body).unwrap_or_default()).is_ok() {
+        let written = std::fs::write(&tmp, serde_json::to_string_pretty(&body).unwrap_or_default()).and_then(|_| {
             #[cfg(unix)]
             {
                 use std::os::unix::fs::PermissionsExt;
                 let _ = std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600));
             }
-            let _ = std::fs::rename(&tmp, &self.path);
-        }
+            std::fs::rename(&tmp, &self.path)
+        });
+        st.save_error = written.err().map(|e| crate::store::io_reason(&e));
         st.source = "file";
+    }
+
+    /// Why the last change couldn't be written to config.json (the change itself is in effect until the studio stops);
+    /// reading it clears it, so a route calls it before and after the change it makes.
+    pub fn take_save_error(&self) -> Option<String> {
+        self.lock().save_error.take()
     }
 
     pub fn upsert(&self, did: Option<&str>, name: &str, url: &str, key: &str) -> Result<String, String> {

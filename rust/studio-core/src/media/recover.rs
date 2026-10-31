@@ -115,7 +115,7 @@ async fn recover_video(state: &AppState, to: &Target, v: &Value) -> Option<Value
     let data = fetch(state, to, &format!("/v1/videos/{}/content", quote(vid)), 600).await.filter(|d| !d.is_empty())?;
     let id = new_id();
     let out = format!("{id}-video.mp4");
-    let _ = std::fs::write(state.store.images.join(&out), data);
+    std::fs::write(state.store.images.join(&out), data).ok()?; // can't write here: it stays on the device for the next look
     let secs = num(v.get("seconds")).filter(|x| x.is_finite()).map_or(2, |x| py_round(x).max(1));
     let frames = num(v.get("frames")).unwrap_or(0.0);
     let fps = num(v.get("fps")).filter(|f| *f != 0.0).unwrap_or(24.0);
@@ -124,7 +124,10 @@ async fn recover_video(state: &AppState, to: &Target, v: &Value) -> Option<Value
     let entry = json!({"id": id, "created": now() as i64, "kind": "video", "seconds": 0,
         "params": {"model": text(v, "model"), "prompt": "", "size": size, "seconds": secs, "recovered": true},
         "sources": [], "outputs": [out], "duration": duration});
-    state.store.add_history(entry);
+    if state.store.add_history(entry).is_err() {
+        crate::store::shred(&state.store.images.join(&out));
+        return None;
+    }
     state.store.mark_seen(&[vid.to_string()], false);
     let _ = device::call(state, "DELETE", &format!("/v1/videos/{}", quote(vid)), None, 30, Some((&to.url, &to.key))).await; // the device keeps it an hour otherwise
     Some(json!({"id": id, "kind": "video"}))
@@ -137,10 +140,13 @@ async fn recover_session(state: &AppState, to: &Target, s: &Value) -> Option<Val
     let id = new_id();
     let kind = if model.contains("Foundation-1") { "loop" } else { "song" };
     let out = format!("{id}-{kind}.mp3");
-    let _ = std::fs::write(state.store.images.join(&out), mp3);
+    std::fs::write(state.store.images.join(&out), mp3).ok()?;
     let entry = json!({"id": id, "created": now() as i64, "kind": kind, "seconds": 0, "params": {"model": model, "recovered": true},
         "sources": [], "outputs": [out], "downloads": [], "duration": null, "device": {"music_session": sid}});
-    state.store.add_history(entry);
+    if state.store.add_history(entry).is_err() {
+        crate::store::shred(&state.store.images.join(&out));
+        return None;
+    }
     state.store.mark_seen(&[sid.to_string()], false); // the session stays on the Tiiny until the entry is deleted
     Some(json!({"id": id, "kind": kind}))
 }
