@@ -239,8 +239,11 @@ pub fn json_body(v: &Value) -> Option<(Vec<u8>, String)> {
     Some((v.to_string().into_bytes(), "application/json".into()))
 }
 
+/// A file part of a multipart body: (name, data, content type).
+pub type Upload<'a> = (&'a str, &'a [u8], &'a str);
+
 /// multipart/form-data body and content type (media.py Media.multipart); files are (field, (name, data, type)).
-pub fn multipart(fields: &[(&str, String)], files: &[(&str, (&str, &[u8], &str))]) -> (Vec<u8>, String) {
+pub fn multipart(fields: &[(&str, String)], files: &[(&str, Upload)]) -> (Vec<u8>, String) {
     let b = uuid::Uuid::new_v4().simple().to_string();
     let mut body = vec![];
     for (k, v) in fields {

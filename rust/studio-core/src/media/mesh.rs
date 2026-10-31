@@ -7,7 +7,7 @@ use std::time::Duration;
 use base64::Engine;
 use serde_json::{json, Map, Value};
 
-use super::{decode_uri, ensure_running, err, http, http_bytes, json_reply, make_room, multipart, put_back, py_json, py_round, save};
+use super::{decode_uri, ensure_running, err, http, http_bytes, json_reply, make_room, multipart, put_back, py_json, py_round, save, Upload};
 use crate::device::truthy;
 use crate::jobs::{Ctx, JobError, JobResult};
 
@@ -252,7 +252,7 @@ pub async fn run(ctx: Ctx) -> JobResult {
             Some(a) => a.iter().filter_map(|x| x.as_str().map(String::from)).collect(),
             None => stage_inputs(stage).iter().map(|s| s.to_string()).collect(),
         };
-        let mut files: Vec<(&str, (&str, &[u8], &str))> = vec![];
+        let mut files: Vec<(&str, Upload)> = vec![];
         let mut inrefs = Map::new();
         for name in &names {
             let field = stage_field(name);

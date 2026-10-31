@@ -25,6 +25,13 @@ pub fn version() -> &'static str {
     VERSION.trim()
 }
 
+/// (when read, device url, direct access to the model ports) of device::direct_access
+type DirectCache = (Instant, String, Option<bool>);
+/// (when read, device url, (free GB, total GB)) of the Tiiny's storage
+type DiskCache = (Instant, String, Option<(f64, f64)>);
+/// entry id -> (text, vector)
+type SearchCache = std::collections::HashMap<String, (String, Vec<f64>)>;
+
 /// Shared state handed to every route.
 #[derive(Clone)]
 pub struct AppState {
@@ -33,14 +40,14 @@ pub struct AppState {
     pub http: reqwest::Client,
     /// The device runs one request at a time; every job (image, audio, 3D) takes this.
     pub device_lock: Arc<tokio::sync::Mutex<()>>,
-    pub(crate) direct_cache: Arc<Mutex<Option<(Instant, String, Option<bool>)>>>,
+    pub(crate) direct_cache: Arc<Mutex<Option<DirectCache>>>,
     pub(crate) stats_cache: Arc<Mutex<Option<(Instant, serde_json::Value)>>>,
     /// (when read, device url, (free GB, total GB)) of the Tiiny's storage; see device::disk_space
-    pub(crate) disk_cache: Arc<Mutex<Option<(Instant, String, Option<(f64, f64)>)>>>,
+    pub(crate) disk_cache: Arc<Mutex<Option<DiskCache>>>,
     pub jobs: Arc<jobs::Jobs>,
     pub store: Arc<store::Store>,
     /// entry id -> (text, vector) for smart search; memory only, dropped on delete/wipe
-    pub(crate) search_cache: Arc<Mutex<std::collections::HashMap<String, (String, Vec<f64>)>>>,
+    pub(crate) search_cache: Arc<Mutex<SearchCache>>,
 }
 
 impl AppState {

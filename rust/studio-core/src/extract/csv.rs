@@ -7,6 +7,9 @@ use fancy_regex::Regex;
 
 use super::{Fail, R};
 
+/// (char, how often it was seen), like the Counter items of csv.Sniffer.
+type Tally = Vec<(char, usize)>;
+
 const FIELD_LIMIT: usize = 131072;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -92,7 +95,9 @@ impl<'a> Reader<'a> {
                 } else if c == Some(self.d.delimiter) {
                     self.save_field();
                 } else {
-                    self.add_char(c.unwrap())?;
+                    if let Some(ch) = c {
+                        self.add_char(ch)?;
+                    }
                     self.state = State::InField;
                 }
                 Ok(())
@@ -104,8 +109,8 @@ impl<'a> Reader<'a> {
                 } else if c == Some(self.d.delimiter) {
                     self.save_field();
                     self.state = State::StartField;
-                } else {
-                    self.add_char(c.unwrap())?;
+                } else if let Some(ch) = c {
+                    self.add_char(ch)?;
                 }
                 Ok(())
             }
@@ -128,7 +133,9 @@ impl<'a> Reader<'a> {
                     self.save_field();
                     self.state = end(c);
                 } else {
-                    self.add_char(c.unwrap())?;
+                    if let Some(ch) = c {
+                        self.add_char(ch)?;
+                    }
                     self.state = State::InField;
                 }
                 Ok(())
@@ -214,7 +221,7 @@ fn guess_quote_and_delimiter(data: &str, delimiters: &str) -> R<(Option<char>, b
     }
     let Some((r, matches)) = found else { return Ok((None, false, None, false)) };
     let has = |n: &str| r.capture_names().flatten().any(|c| c == n);
-    let (mut quotes, mut delims, mut spaces): (Vec<(char, usize)>, Vec<(char, usize)>, usize) = (vec![], vec![], 0);
+    let (mut quotes, mut delims, mut spaces): (Tally, Tally, usize) = (vec![], vec![], 0);
     for m in &matches {
         if let Some(q) = m.name("quote").and_then(|g| g.as_str().chars().next()) {
             bump(&mut quotes, q);

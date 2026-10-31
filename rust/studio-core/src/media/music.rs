@@ -290,7 +290,7 @@ async fn song_entry(ctx: &Ctx, res: &Value, config: &Map<String, Value>, sources
             resume = Some(json!({"session_id": sid})); // a preview can be continued once
         }
         device = Some(json!({"music_session": sid})); // the session stays on the Tiiny until this entry is deleted
-        ctx.state.store.mark_seen(&[sid.clone()], false);
+        ctx.state.store.mark_seen(std::slice::from_ref(sid), false);
     }
     if req.get("resume_session").is_some_and(truthy) {
         if let Some(from) = req.get("from_entry").filter(|f| truthy(f)).and_then(Value::as_str) {

@@ -401,9 +401,8 @@ impl Settings {
 }
 
 /// Run futures concurrently and collect their results in order (no extra crate needed).
-async fn futures_join<F: std::future::Future>(futs: impl Iterator<Item = F>) -> Vec<F::Output>
+async fn futures_join<F: std::future::Future + Send + 'static>(futs: impl Iterator<Item = F>) -> Vec<F::Output>
 where
-    F: Send + 'static,
     F::Output: Send + 'static,
 {
     let handles: Vec<_> = futs.map(tokio::spawn).collect();
