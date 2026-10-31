@@ -227,7 +227,7 @@ const ChatWS = {
     if (!box) return;
     box.replaceChildren(...(C.list.length ? C.list.map((c) => el("div", { class: "chat-item" + (c.id === C.cur?.id ? " on" : "") },
       el("button", { class: "chat-item-open", title: c.title, onclick: () => this.open(c.id) }, el("b", {}, c.title), el("small", {}, new Date(c.updated * 1000).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }))),
-      el("button", { class: "x", title: "Delete this chat (completely)", onclick: () => this.remove(c.id) }, "✕")))
+      el("button", { class: "x", title: "Delete this chat (completely)", "aria-label": `Delete chat ${c.title || ""}`.trim(), onclick: () => this.remove(c.id) }, "✕")))
       : [el("p", { class: "chat-empty-list" }, C.save ? "Saved chats show up here." : "Chats aren't being saved.")]));
   },
   async open(id) {
@@ -312,7 +312,7 @@ const ChatWS = {
     box.replaceChildren(...[
       C.attach.length ? el("div", { class: "chat-attach" }, C.attach.map((a, i) => el("span", { class: "att" },
         a.kind === "image" ? el("img", { src: a.uri, alt: "" }) : el("span", {}, "📄 " + a.name),
-        el("button", { class: "x", title: "Remove", onclick: () => { C.attach.splice(i, 1); this.renderComposer(); } }, "✕")))) : null,
+        el("button", { class: "x", title: "Remove", "aria-label": `Remove ${a.name || "attachment"}`, onclick: () => { C.attach.splice(i, 1); this.renderComposer(); } }, "✕")))) : null,
       el("div", { class: "chat-row" },
         el("button", { class: "icon-btn", title: "Attach pictures or documents (or paste / drop them)", onclick: () => file.click() }, icon("i-upload")), file,
         el("button", { class: "icon-btn" + (C.recorder ? " rec-on" : ""), title: C.recorder ? "Stop and transcribe" : "Speak your message", onclick: chatMic }, icon("i-mic")),

@@ -299,7 +299,7 @@ function renderAssistGates() {
 /** A small "Undo" line after a helper replaced text the user wrote. */
 function assistUndo(slot, what, undo) {
   slot.replaceChildren(el("div", { class: "assist-note" }, `${what} by ${shortName(modelForTool("chat")?.id || "")}`, el("span", { class: "spacer" }),
-    el("button", { class: "linkish", onclick: () => { undo(); slot.replaceChildren(); } }, "Undo"), el("button", { class: "linkish", onclick: () => slot.replaceChildren() }, "✕")));
+    el("button", { class: "linkish", onclick: () => { undo(); slot.replaceChildren(); } }, "Undo"), el("button", { class: "linkish", "aria-label": "Dismiss", onclick: () => slot.replaceChildren() }, "✕")));
 }
 
 /* ---------- audio helpers ---------- */
@@ -427,31 +427,30 @@ document.addEventListener("keydown", (e) => {
 /* ---------- small shared UI ---------- */
 /** Two-click delete for a gallery thumbnail: first click arms it ("Delete?"), second deletes. */
 function thumbDel(onDelete) {
-  const b = el("span", { class: "thumb-del", role: "button", tabindex: "0", title: "Delete", "aria-label": "Delete" }, "✕");
+  const b = el("button", { class: "thumb-del", type: "button", title: "Delete", "aria-label": "Delete" }, "✕");  // a sibling of the thumbnail button, never inside it
   let timer = null;
   const act = (ev) => {
     ev.stopPropagation(); ev.preventDefault();
     if (!b.classList.contains("armed")) {
-      b.classList.add("armed"); b.textContent = "Delete?";
-      timer = setTimeout(() => { b.classList.remove("armed"); b.textContent = "✕"; }, 3000);
+      b.classList.add("armed"); b.textContent = "Delete?"; b.setAttribute("aria-label", "Delete? Press again to confirm");
+      timer = setTimeout(() => { b.classList.remove("armed"); b.textContent = "✕"; b.setAttribute("aria-label", "Delete"); }, 3000);
       return;
     }
     clearTimeout(timer); b.textContent = "…"; onDelete();
   };
   b.addEventListener("click", act);
-  b.addEventListener("keydown", (ev) => { if (ev.key === "Enter" || ev.key === " ") act(ev); });
   return b;
 }
-function mediaThumb(e, current, onclick, onDelete) {
+function mediaThumb(e, current, onclick) {
   const icons = { speech: "i-voice", loop: "i-wave", song: "i-music", transcript: "i-text", mesh: "i-cube", video: "i-film" };
   const labels = { speech: "VOICE", loop: "LOOP", song: "SONG", transcript: "TEXT", mesh: "3D", video: "VIDEO" };
-  const t = el("button", { class: "thumb media-thumb", "aria-current": current, title: e.params?.text || e.params?.prompt || e.params?.caption || e.text || "", onclick });
+  const title = e.params?.text || e.params?.prompt || e.params?.caption || e.text || "";
+  const t = el("button", { class: "thumb media-thumb", "aria-current": current, title, "aria-label": `${labels[e.kind] || e.kind} ${title}`.trim(), onclick });
   if (e.kind === "mesh" && e.sources?.[0]) t.append(el("img", { src: "/images/" + e.sources[0], alt: "", loading: "lazy" }));
   else if (e.kind === "video") t.append(el("video", { src: "/images/" + e.outputs[0] + "#t=0.5", muted: true, preload: "metadata" }));
   else t.append(icon(icons[e.kind] || "i-wave"));
   t.append(el("span", { class: "badge" }, labels[e.kind] || e.kind));
   if (e.duration) t.append(el("span", { class: "multi" }, fmtSec(e.duration)));
-  if (onDelete) t.append(thumbDel(onDelete));
   return t;
 }
 function pendingCard(j, onCancel) {
@@ -476,7 +475,7 @@ function seedField(obj) {
 }
 /** One picture to drop, paste or browse for, shown with a remove button once set. take gets the files. */
 function imageSlot({ img, clear, cls, key, zone, title, hint, take }) {
-  if (img) return el("div", { class: cls }, el("img", { src: img.uri, alt: "" }), el("button", { class: "x", title: "Remove", onclick: clear }, "✕"));
+  if (img) return el("div", { class: cls }, el("img", { src: img.uri, alt: "" }), el("button", { class: "x", title: "Remove", "aria-label": "Remove picture", onclick: clear }, "✕"));
   const d = el("button", { class: "drop", onclick: () => { const i = el("input", { type: "file", accept: "image/*" }); i.onchange = () => i.files[0] && take([i.files[0]]); i.click(); } },
     icon("i-upload"), el("span", {}, el("b", {}, title), hint));
   return fileZone(d, { key, accept: /^image\//, what: "image", label: zone, take });
@@ -535,14 +534,14 @@ function mediaWS(c) {
       const items = [], show = () => { this.renderStage(); this.renderStrip(); };
       for (const j of S.jobs.filter((x) => c.jobs(x) && (x.status === "queued" || x.status === "running"))) {
         const q = c.queued(j);
-        items.push(el("button", { class: "thumb queued" + (q.run ? " run" : ""), "aria-current": st.view?.job === j.id, title: q.title, onclick: () => { st.view = q.view?.() || { job: j.id }; show(); } }, q.label));
+        items.push(el("button", { class: "thumb queued" + (q.run ? " run" : ""), "aria-current": st.view?.job === j.id, title: q.title, "aria-label": `${q.label}: ${q.title}`, onclick: () => { st.view = q.view?.() || { job: j.id }; show(); } }, q.label));
       }
       const list = this.entries(), shown = galleryFilter(kind, list);
       $("#galBar-" + kind).replaceChildren(galleryBar(kind, shown, () => this.renderStrip()));
       for (const e of shown) {
-        const t = mediaThumb(e, st.view?.id === e.id, () => { st.view = { id: e.id }; show(); }, () => this.del(e));
+        const t = mediaThumb(e, st.view?.id === e.id, () => { st.view = { id: e.id }; show(); });
         c.thumb?.(t, e);
-        items.push(decorateThumb(kind, t, e, () => this.renderStrip()));
+        items.push(decorateThumb(kind, t, e, () => this.renderStrip(), thumbDel(() => this.del(e))));
       }
       $(`#${p}Strip`).replaceChildren(...(items.length ? items : [el("div", { class: "strip-empty" }, c.empty)]));
       $(`#${p}Count`).textContent = list.length || "";

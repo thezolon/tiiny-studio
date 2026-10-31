@@ -119,7 +119,7 @@ ${e.params?.recovered ? "" : `Took ${fmtSec(e.seconds)} to render · `}${e.param
       el("div", { class: "toolbar" },
         el("a", { class: "tb primary", href: url, download: `tiiny-video-${e.id}.mp4` }, icon("i-down"), el("span", { class: "lbl" }, "Download MP4")),
         el("button", { class: "tb", onclick: () => this.reuse(e) }, icon("i-copy"), el("span", { class: "lbl" }, "Reuse")),
-        el("button", { class: "tb danger", title: "Delete", onclick: () => this.del(e) }, icon("i-trash"))));
+        el("button", { class: "tb danger", title: "Delete", "aria-label": "Delete", onclick: () => this.del(e) }, icon("i-trash"))));
     stage.append(el("div", { class: "video-result" },
       el("video", { class: "video-player", src: url, controls: true, autoplay: true, loop: true, playsinline: true }),
       p.prompt || p.recovered ? el("div", { class: "prompt-echo" }, p.prompt || "Recovered from the Tiiny") : null,

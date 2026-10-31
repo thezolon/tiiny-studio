@@ -99,10 +99,10 @@ function deviceList() {
         el("small", {}, `${d.host}${d.key_set ? ` · key ${d.key_hint}` : " · no key"}${st?.ok ? ` · ${st.ms} ms` : st ? " · not answering" : ""}`),
         i.docker && d.host.startsWith("172.17.") && !st?.ok ? el("small", { class: "dev-warn" }, "A USB address in Docker's own network: the studio in Docker can't reach it. Use the Tiiny's Wi-Fi address, the desktop app, or ",
           el("a", { href: "/docs/CONNECTING.md", target: "_blank", rel: "noopener" }, "move Docker's network"), ".") : null),
-      n > 0 ? el("button", { class: "icon-btn sm", type: "button", title: "Move up (higher priority)", onclick: () => act("move", { id: d.id, dir: -1 }) }, "↑") : null,
+      n > 0 ? el("button", { class: "icon-btn sm", type: "button", title: "Move up (higher priority)", "aria-label": `Move ${d.name} up`, onclick: () => act("move", { id: d.id, dir: -1 }) }, "↑") : null,
       active ? null : el("button", { class: "btn-sm", type: "button", disabled: !d.key_set, onclick: () => act("activate", { id: d.id }) }, "Use"),
       el("button", { class: "btn-sm ghost", type: "button", onclick: () => { SET.editing = d.id; refreshSettings(); } }, "Edit"),
-      i.devices.length > 1 ? el("button", { class: "btn-sm ghost dev-del", type: "button", title: "Remove", onclick: () => { if (confirm(`Remove “${d.name}” and its saved key?`)) act("delete", { id: d.id }); } }, "✕") : null);
+      i.devices.length > 1 ? el("button", { class: "btn-sm ghost dev-del", type: "button", title: "Remove", "aria-label": `Remove ${d.name}`, onclick: () => { if (confirm(`Remove “${d.name}” and its saved key?`)) act("delete", { id: d.id }); } }, "✕") : null);
   });
   const auto = el("label", { class: "auto dev-auto" },
     el("input", { type: "checkbox", checked: !!i.auto, onchange: (e) => act("auto", { auto: e.target.checked }) }),

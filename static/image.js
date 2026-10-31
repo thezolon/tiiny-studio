@@ -204,18 +204,18 @@ function renderComposer() {
     el("img", { src: s.uri, alt: "" }),
     el("span", { class: "tag" }, text ? "TEXT" : !edit ? "IMAGE " + (i + 1) : (i === 0 ? "SOURCE" : "REF " + i) + (s.orig ? " · MARKED" : "")),
     edit && C.annotate ? el("button", { class: "mark", title: "Circle or paint the area to change", onclick: () => openAnnot(i) }, s.orig ? "Re-mark" : "Mark area") : null,
-    el("button", { class: "x", title: "Remove", onclick: () => { S.sources.splice(i, 1); if (!S.sources.length && S.aspect === "src") S.aspect = S.prevAspect || "1:1"; renderComposer(); } }, "✕"))));
+    el("button", { class: "x", title: "Remove", "aria-label": `Remove picture ${i + 1}`, onclick: () => { S.sources.splice(i, 1); if (!S.sources.length && S.aspect === "src") S.aspect = S.prevAspect || "1:1"; renderComposer(); } }, "✕"))));
   if (text && S.textDoc) box.append(el("div", { class: "src doc", title: S.textDoc.name },
     el("b", {}, (S.textDoc.name.match(/\.(\w{1,5})$/)?.[1] || "file").toUpperCase()), el("small", {}, S.textDoc.name),
-    el("button", { class: "x", title: "Remove", onclick: () => { S.textDoc = null; renderComposer(); } }, "✕")));
+    el("button", { class: "x", title: "Remove", "aria-label": `Remove ${S.textDoc.name}`, onclick: () => { S.textDoc = null; renderComposer(); } }, "✕")));
   if (!text) S.textDoc = null;
   $("#fileInput").accept = text ? DOC_ACCEPT : "image/png,image/jpeg,image/webp";
   const drop = el("button", { class: "drop" + (S.sources.length || refs ? " compact" : ""), onclick: () => $("#fileInput").click() },
     icon("i-upload"),
     text ? el("span", {}, el("b", {}, "Drop, paste (Ctrl+V) or browse a picture or document"), "Photos, scans, screenshots, PDF, TIFF, Word, PowerPoint, Excel, OpenDocument, EPUB, RTF, HTML or text. Read right away, never saved.")
       : refs ? el("span", {}, S.sources.length ? "Add picture" : "Add a reference (optional)") : S.sources.length ? el("span", {}, "Add ref") : el("span", {}, el("b", {}, "Drop, paste (Ctrl+V) or click to browse"), "PNG · JPG · WebP — or pick one from the gallery below"));
-  fileZone(drop, { key: "img-src", accept: { test: (t) => S.mode === "text" || /^image\//.test(t) }, what: "image", label: srcLabel, take: (f) => addFiles(f, true) });
-  if (S.sources.length + (text && S.textDoc ? 1 : 0) < (text ? 1 : Math.max(1, C.maxRefs))) box.append(drop);
+  const zone = fileZone(drop, { key: "img-src", accept: { test: (t) => S.mode === "text" || /^image\//.test(t) }, what: "image", label: srcLabel, take: (f) => addFiles(f, true) });
+  if (S.sources.length + (text && S.textDoc ? 1 : 0) < (text ? 1 : Math.max(1, C.maxRefs))) box.append(zone);
   $("#srcHint").textContent = text ? "drop, paste or browse" : refs ? `optional, up to ${C.maxRefs} · call them "image 1", "image 2"` : C.maxRefs > 1 ? `source + up to ${C.maxRefs - 1} references` : "drop, paste, or pick from gallery";
 
   // chips
@@ -411,12 +411,12 @@ function renderStage() {
     el("button", { class: "tb", title: "Describe this image with the chat model", disabled: !!S.describing[entry.outputs[idx]], onclick: () => describeImage(entry, idx) }, icon("i-text"), el("span", { class: "lbl" }, S.describing[entry.outputs[idx]] ? "Describing…" : "Describe")),
     entry.sources.length ? el("button", { class: "tb", "aria-pressed": S.compare, title: "Before / after (C)", onclick: () => { S.compare = !S.compare; renderStage(); } }, icon("i-cmp"), el("span", { class: "lbl" }, "Compare")) : null,
     el("button", { class: "tb", title: "Same settings, new seed (V)", onclick: () => rerun(entry, true) }, icon("i-redo"), el("span", { class: "lbl" }, "Vary")),
-    el("button", { class: "tb", title: "Four new variations of this prompt, shown as a grid", onclick: () => variations(entry) }, el("span", { class: "lbl-x" }, "×4")),
-    entry.outputs.length > 1 ? el("button", { class: "tb", "aria-pressed": !!S.grid, title: "Show all variations side by side", onclick: () => { S.grid = !S.grid; renderStage(); } }, el("span", { class: "lbl-x" }, "▦"), el("span", { class: "lbl" }, "Grid")) : null,
-    ocrModel() ? el("button", { class: "tb", title: "Read the text in this image (not saved)", onclick: () => ocrImage(url) }, el("span", { class: "lbl-x" }, "Aa"), el("span", { class: "lbl" }, "Text")) : null,
+    el("button", { class: "tb", title: "Four new variations of this prompt, shown as a grid", "aria-label": "×4 new variations", onclick: () => variations(entry) }, el("span", { class: "lbl-x" }, "×4")),
+    entry.outputs.length > 1 ? el("button", { class: "tb", "aria-pressed": !!S.grid, title: "Show all variations side by side", "aria-label": "Grid", onclick: () => { S.grid = !S.grid; renderStage(); } }, el("span", { class: "lbl-x" }, "▦"), el("span", { class: "lbl" }, "Grid")) : null,
+    ocrModel() ? el("button", { class: "tb", title: "Read the text in this image (not saved)", "aria-label": "Text", onclick: () => ocrImage(url) }, el("span", { class: "lbl-x" }, "Aa"), el("span", { class: "lbl" }, "Text")) : null,
     el("button", { class: "tb", title: "Load these settings into the composer (R)", onclick: () => reuse(entry) }, icon("i-copy"), el("span", { class: "lbl" }, "Reuse")),
     el("a", { class: "tb", href: url, download: `tiiny-${entry.id}-${idx}.png`, title: "Download (D)" }, icon("i-down"), el("span", { class: "lbl" }, "Save")),
-    el("button", { class: "tb danger", title: "Delete", onclick: () => deleteImage(entry) }, icon("i-trash")));
+    el("button", { class: "tb danger", title: "Delete", "aria-label": "Delete", onclick: () => deleteImage(entry) }, icon("i-trash")));
   head.append(tb);
 
   if (S.grid && entry.outputs.length > 1) {  // all variations side by side; click one to open it
@@ -432,9 +432,10 @@ function renderStage() {
   canvas.append(img);
   if (S.compare && entry.sources[0]) {
     const before = el("img", { class: "before", src: "/images/" + entry.sources[0], alt: "before" });
-    const handle = el("div", { class: "cmp-handle", role: "slider", "aria-label": "Compare position", tabindex: "0" });
+    const handle = el("div", { class: "cmp-handle", role: "slider", "aria-label": "Compare position", "aria-valuemin": "0", "aria-valuemax": "100", tabindex: "0" });
     canvas.append(before, handle, el("span", { class: "cmp-label", style: "left:10px" }, "Before"), el("span", { class: "cmp-label", style: "right:10px" }, "After"));
-    const set = (f) => { f = Math.max(0, Math.min(1, f)); before.style.clipPath = `inset(0 ${100 - f * 100}% 0 0)`; handle.style.left = `calc(${f * 100}% - 1px)`; handle.dataset.f = f; };
+    const set = (f) => { f = Math.max(0, Math.min(1, f)); before.style.clipPath = `inset(0 ${100 - f * 100}% 0 0)`; handle.style.left = `calc(${f * 100}% - 12px)`; handle.dataset.f = f;
+      const n = Math.round(f * 100); handle.setAttribute("aria-valuenow", n); handle.setAttribute("aria-valuetext", `${n}% before, ${100 - n}% after`); };
     set(.5);
     const move = (ev) => { const r = canvas.getBoundingClientRect(); set((ev.clientX - r.left) / r.width); };
     canvas.addEventListener("pointerdown", (ev) => { canvas.setPointerCapture(ev.pointerId); move(ev); canvas.onpointermove = move; });
@@ -459,7 +460,7 @@ function renderStage() {
     el("div", { class: "row" }, el("small", {}, "Description"), el("span", { class: "spacer" }),
       el("button", { class: "linkish", onclick: () => { navigator.clipboard?.writeText(cap); toast("Copied"); } }, "Copy"),
       el("button", { class: "linkish", onclick: () => { setMode("create"); $("#prompt").value = cap; autoGrow(); renderComposer(); $("#prompt").focus(); } }, "Use as prompt"),
-      el("button", { class: "linkish", onclick: () => { delete S.captions[entry.outputs[idx]]; renderStage(); } }, "✕"))));
+      el("button", { class: "linkish", "aria-label": "Dismiss", onclick: () => { delete S.captions[entry.outputs[idx]]; renderStage(); } }, "✕"))));
   const gate = S.describeGate === entry.outputs[idx] && modelGate("vision", "image-reading chat");
   wrap.append(el("div", { id: "describeSlot" }, gate ? el("div", { class: "assist-gate", "data-tool": "vision" }, gate) : null));
   stage.append(wrap);
@@ -513,7 +514,7 @@ function renderStrip() {
   const items = [];
   const pend = [...(S.running ? [S.running] : []), ...S.queue];
   for (const j of pend.slice().reverse()) {
-    items.push(el("button", { class: "thumb queued" + (j === S.running ? " run" : ""), "aria-current": S.view?.job === j.jid, title: j.params.prompt, onclick: () => { S.view = { job: j.jid }; renderStage(); renderStrip(); } }, j === S.running ? "running" : "queued"));
+    items.push(el("button", { class: "thumb queued" + (j === S.running ? " run" : ""), "aria-current": S.view?.job === j.jid, title: j.params.prompt, "aria-label": `${j === S.running ? "Running" : "Queued"}: ${j.params.prompt}`, onclick: () => { S.view = { job: j.jid }; renderStage(); renderStrip(); } }, j === S.running ? "running" : "queued"));
   }
   // extras.js (gallery tools) loads after this script; the very first render happens before it.
   const tools = typeof galleryFilter === "function";
@@ -521,11 +522,10 @@ function renderStrip() {
   if (tools) $("#galBar-image").replaceChildren(galleryBar("image", shown, renderStrip));
   for (const e of shown) {
     const dec = tools ? decorateThumb : (_ws, t) => t;
-    items.push(dec("image", el("button", { class: "thumb", "aria-current": S.view?.id === e.id, title: e.params.prompt, onclick: () => { S.view = { id: e.id, idx: 0 }; S.compare = false; S.grid = false; renderStage(); renderStrip(); } },
+    items.push(dec("image", el("button", { class: "thumb", "aria-current": S.view?.id === e.id, title: e.params.prompt, "aria-label": e.params.prompt, onclick: () => { S.view = { id: e.id, idx: 0 }; S.compare = false; S.grid = false; renderStage(); renderStrip(); } },
       el("img", { src: "/images/" + e.outputs[0], alt: "", loading: "lazy" }),
       e.mode === "edit" ? el("span", { class: "badge" }, "EDIT") : e.mode === "refs" ? el("span", { class: "badge" }, "REFS") : null,
-      e.outputs.length > 1 ? el("span", { class: "multi" }, "×" + e.outputs.length) : null,
-      thumbDel(() => deleteImage(e))), e, renderStrip));
+      e.outputs.length > 1 ? el("span", { class: "multi" }, "×" + e.outputs.length) : null), e, renderStrip, thumbDel(() => deleteImage(e))));
   }
   strip.replaceChildren(...(items.length ? items : [el("div", { class: "strip-empty" }, "Your images will collect here.")]));
   $("#galCount").textContent = imageHistory().length || "";

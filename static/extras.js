@@ -71,10 +71,11 @@ function rerenderStage(ws) {
   else if (ws === "video" && VideoWS.mounted) VideoWS.renderStage();
 }
 
-/** Star + selection overlay on a thumbnail; in select mode a click toggles selection. */
-function decorateThumb(ws, thumb, e, rerender) {
+/** Wraps a thumbnail button with its star and delete button (siblings: a button can't hold buttons). In select mode
+    the delete goes, a check shows and a click toggles selection. */
+function decorateThumb(ws, thumb, e, rerender, del) {
   const g = galState(ws);
-  const star = el("span", { class: "thumb-fav" + (e.fav ? " on" : ""), role: "button", tabindex: "0", title: e.fav ? "Unfavorite" : "Favorite" }, e.fav ? "★" : "☆");
+  const star = el("button", { class: "thumb-fav" + (e.fav ? " on" : ""), type: "button", "aria-pressed": !!e.fav, title: e.fav ? "Unfavorite" : "Favorite", "aria-label": "Favorite" }, e.fav ? "★" : "☆");
   const toggleFav = async (ev) => {
     ev.stopPropagation(); ev.preventDefault();
     const fav = !e.fav;
@@ -82,16 +83,14 @@ function decorateThumb(ws, thumb, e, rerender) {
     catch (err) { toast(err.message, "err"); }
   };
   star.addEventListener("click", toggleFav);
-  star.addEventListener("keydown", (ev) => { if (ev.key === "Enter" || ev.key === " ") toggleFav(ev); });
-  thumb.append(star);
+  const cell = el("div", { class: "thumb-cell" }, thumb, g.select ? null : del, star);
   if (g.select) {
-    thumb.classList.add("selectable");
-    if (g.sel.has(e.id)) thumb.classList.add("selected");
-    thumb.append(el("span", { class: "thumb-check" }, g.sel.has(e.id) ? "✓" : ""));
+    const on = g.sel.has(e.id);
+    thumb.classList.add("selectable"); thumb.classList.toggle("selected", on); thumb.setAttribute("aria-pressed", on);
+    cell.append(el("span", { class: "thumb-check" + (on ? " on" : ""), "aria-hidden": "true" }, on ? "✓" : ""));
     thumb.onclick = (ev) => { ev.preventDefault(); g.sel.has(e.id) ? g.sel.delete(e.id) : g.sel.add(e.id); rerender(); };
-    thumb.querySelector(".thumb-del")?.remove();
   }
-  return thumb;
+  return cell;
 }
 
 async function smartSearch(ws, rerender) {

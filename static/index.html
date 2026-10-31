@@ -52,7 +52,7 @@
       <span class="txt"><div class="nm" id="modelName">Connecting…</div><div class="cp" id="modelCaps"></div></span>
       <svg><use href="#i-chev"/></svg>
     </button>
-    <button class="icon-btn" id="settingsBtn" title="Device settings (address and API key)"><svg><use href="#i-gear"/></svg></button>
+    <button class="icon-btn" id="settingsBtn" title="Device settings (address and API key)" aria-label="Device settings"><svg><use href="#i-gear"/></svg></button>
   </header>
 
   <div class="main ws" id="wsImage" role="tabpanel" aria-labelledby="tabImage">
@@ -75,7 +75,7 @@
         <div class="field">
           <div class="label"><span id="promptLabel">Describe the image</span></div>
           <div class="prompt-wrap">
-            <textarea id="prompt" rows="4" placeholder="A watercolor fox in a misty pine forest, soft morning light"></textarea>
+            <textarea id="prompt" aria-labelledby="promptLabel" rows="4" placeholder="A watercolor fox in a misty pine forest, soft morning light"></textarea>
             <div class="prompt-foot"><span id="charCount">0</span><button class="assist-btn" id="improveBtn" title="Rewrite the prompt with the chat model"><svg><use href="#i-spark"/></svg>Improve prompt</button><span class="spacer"></span><kbd>Ctrl</kbd><kbd>Enter</kbd> to run</div>
           </div>
           <div id="improveSlot"></div>
@@ -108,23 +108,23 @@
           <div class="adv-body">
             <div class="field">
               <div class="label">Negative prompt <span class="hint">what to avoid</span></div>
-              <textarea id="negative" rows="2" placeholder="blurry, low quality, watermark"></textarea>
+              <textarea id="negative" aria-label="Negative prompt" rows="2" placeholder="blurry, low quality, watermark"></textarea>
             </div>
             <div class="field">
               <div class="label">Seed <span class="hint" id="seedHint">new each run</span></div>
               <div class="seed-row">
-                <input class="input" id="seed" inputmode="numeric" placeholder="random">
-                <button class="toggle-btn" id="seedDice" title="Roll a new seed"><svg><use href="#i-dice"/></svg></button>
-                <button class="toggle-btn" id="seedLock" aria-pressed="false" title="Keep this seed between runs"><svg><use href="#i-lock"/></svg></button>
+                <input class="input" id="seed" aria-label="Seed" inputmode="numeric" placeholder="random">
+                <button class="toggle-btn" id="seedDice" title="Roll a new seed" aria-label="Roll a new seed"><svg><use href="#i-dice"/></svg></button>
+                <button class="toggle-btn" id="seedLock" aria-pressed="false" title="Keep this seed between runs" aria-label="Keep this seed between runs"><svg><use href="#i-lock"/></svg></button>
               </div>
             </div>
             <div class="field">
               <div class="label">Steps <label class="auto"><input type="checkbox" id="stepsAuto" checked> model default</label></div>
-              <div class="slider-row"><input type="range" id="steps" min="4" max="60" value="30" disabled><output id="stepsOut">—</output></div>
+              <div class="slider-row"><input type="range" id="steps" aria-label="Steps" min="4" max="60" value="30" disabled><output id="stepsOut">—</output></div>
             </div>
             <div class="field">
               <div class="label">Guidance (CFG) <label class="auto"><input type="checkbox" id="cfgAuto" checked> model default</label></div>
-              <div class="slider-row"><input type="range" id="cfg" min="1" max="10" step="0.5" value="4" disabled><output id="cfgOut">—</output></div>
+              <div class="slider-row"><input type="range" id="cfg" aria-label="Guidance (CFG)" min="1" max="10" step="0.5" value="4" disabled><output id="cfgOut">—</output></div>
             </div>
           </div>
         </details>

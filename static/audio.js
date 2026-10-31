@@ -261,7 +261,7 @@ const AudioWS = {
           el("div", { class: "seg small" }, [100, 110, 120, 128, 130, 140, 150].map((b) => el("button", { "aria-pressed": L.bpm === b, onclick: () => { L.bpm = b; L.custom = null; rerender(); } }, String(b)))))),
         el("div", { class: "row", style: "margin-top:12px" },
           el("div", {}, el("div", { class: "label" }, "Bars"), el("div", { class: "seg small" }, [4, 8].map((b) => el("button", { "aria-pressed": L.bars === b, onclick: () => { L.bars = b; L.custom = null; rerender(); } }, String(b))))),
-          el("div", { class: "grow" }, el("div", { class: "label" }, "Key"), el("select", { class: "input", onchange: (e) => { L.key = e.target.value; L.custom = null; rerender(); } }, KEYS.map((k) => el("option", { selected: k === L.key }, k)))))),
+          el("div", { class: "grow" }, el("div", { class: "label" }, "Key"), el("select", { class: "input", "aria-label": "Key", onchange: (e) => { L.key = e.target.value; L.custom = null; rerender(); } }, KEYS.map((k) => el("option", { selected: k === L.key }, k)))))),
       el("div", { class: "field" }, el("div", { class: "label" }, "Prompt", el("span", { class: "hint" }, `${secs.toFixed(1)} s loop`, L.custom != null ? el("a", { href: "#", style: "margin-left:8px;color:var(--accent-2)", onclick: (e) => { e.preventDefault(); L.custom = null; rerender(); } }, "reset") : null)),
         el("div", { class: "prompt-wrap" }, el("textarea", { rows: "3", oninput: (e) => { L.custom = e.target.value; this.renderFoot(); } }, this.loopPrompt())),
         el("div", { class: "hint-line" }, "Foundation-1 works best with tag-style prompts at these exact tempos. No drums in this release.")),
@@ -347,7 +347,7 @@ const AudioWS = {
     const close = () => { A.help = null; this.render(); };
     if (h.gate) { const g = modelGate("chat", "chat"); return g ? el("div", { class: "assist-gate", "data-tool": "chat" }, g) : null; }
     return el("div", { class: "assist-note" }, `${h.what} by ${shortName(h.model)}`, el("span", { class: "spacer" }),
-      el("button", { class: "linkish", onclick: () => { h.undo(); close(); } }, "Undo"), el("button", { class: "linkish", onclick: close }, "✕"));
+      el("button", { class: "linkish", onclick: () => { h.undo(); close(); } }, "Undo"), el("button", { class: "linkish", "aria-label": "Dismiss", onclick: close }, "✕"));
   },
   async runHelper(key, task, payload, label, apply) {
     if (A.helpBusy) return;
@@ -513,7 +513,7 @@ const AudioWS = {
         (e.downloads || []).find((f) => f.endsWith(".mp3")) ? el("a", { class: "tb", href: "/images/" + e.downloads.find((f) => f.endsWith(".mp3")), download: `tiiny-song-${e.id}.mp3` }, icon("i-down"), el("span", { class: "lbl" }, "MP3")) : null,
         SONG_STYLE_REF && e.kind !== "song" && e.kind !== "speech" ? btn("Use as song style", "i-music", () => this.toSongRef("/images/" + main)) : null].filter(Boolean));
     }
-    tb.append(el("button", { class: "tb danger", title: "Delete", onclick: () => this.del(e) }, icon("i-trash")));
+    tb.append(el("button", { class: "tb danger", title: "Delete", "aria-label": "Delete", onclick: () => this.del(e) }, icon("i-trash")));
     head.append(tb);
 
     const card = el("div", { class: "media-card" + (A.view.fresh ? " fade-in" : "") });

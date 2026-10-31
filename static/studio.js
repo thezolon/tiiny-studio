@@ -315,15 +315,17 @@ function wireDrop(node, take = addFiles) {
    Each place that takes a file registers itself here. Ctrl+V goes to the zone under the pointer, else
    the one last clicked (while it's still on screen), else the workspace's default slot. */
 let pasteLast = null;
-function fileZone(node, z) {  // z: { key, accept: RegExp, what: "image" | "audio", label: string | () => string, take(files) }
+function fileZone(node, z) {  // returns what to put on the page: node itself, or a wrapper around it. z: { key, accept: RegExp, what: "image" | "audio", label: string | () => string, take(files) }
   node.classList.add("paste-zone"); node.dataset.zone = z.key; node._zone = z;
   wireDrop(node, (files) => zoneTake(z, [...files], false));
   node.addEventListener("pointerdown", () => { pasteLast = z.key; });
   // The async clipboard API only hands over images (not audio files), and only on https/localhost.
   if (z.what === "image" && navigator.clipboard?.read) {
     const paste = (e) => { e.preventDefault(); e.stopPropagation(); pasteLast = z.key; clipboardPaste(z); };
-    node.append(el("span", { class: "paste-btn", role: "button", tabindex: "0", title: "Paste an image from the clipboard",
-      onclick: paste, onkeydown: (e) => { if (e.key === "Enter" || e.key === " ") paste(e); } }, "Paste"));
+    const btn = el("button", { class: "paste-btn", type: "button", title: "Paste an image from the clipboard", onclick: paste }, "Paste");
+    // a button can't hold a button: beside a button zone, Paste sits over its corner instead of inside it
+    if (node.tagName === "BUTTON") return el("div", { class: "drop-wrap" + (node.classList.contains("compact") ? " compact" : "") }, node, btn);
+    node.append(btn);
   }
   return node;
 }
@@ -373,3 +375,18 @@ setInterval(() => {
   if (Date.now() - lastPoll < (fast ? 2500 : 30000)) return;
   lastPoll = Date.now(); loadModels(true);
 }, 1000);
+
+/* Fields are built as <div class="field"><div class="label">Name</div><control>. Give each control that has no name of
+   its own the label's text so a screen reader announces it; the observer keeps up with the redraws. */
+function nameFields() {
+  for (const f of document.querySelectorAll(".field:not([data-named])")) {
+    f.dataset.named = "1";
+    const label = f.querySelector(":scope > .label"), ctl = f.querySelector("input:not([type=hidden], [type=checkbox], [type=file]), select, textarea");
+    if (!label || !ctl || ctl.matches("[aria-label], [aria-labelledby]") || ctl.closest("label")) continue;
+    const c = label.cloneNode(true);
+    c.querySelectorAll(".hint, .size-readout, .auto, output").forEach((n) => n.remove());
+    if (c.textContent.trim()) ctl.setAttribute("aria-label", c.textContent.trim());
+  }
+}
+new MutationObserver(nameFields).observe(document.body, { childList: true, subtree: true });
+nameFields();

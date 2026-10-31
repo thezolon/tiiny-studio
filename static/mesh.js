@@ -172,7 +172,7 @@ const MeshWS = {
         el("a", { class: "tb primary", href: url, download: `tiiny-3d-${e.id}.glb` }, icon("i-down"), el("span", { class: "lbl" }, "Download GLB")),
         e.sources[0] ? el("button", { class: "tb", onclick: () => { setWs("image"); useAsSource("/images/" + e.sources[0]); } }, icon("i-brush"), el("span", { class: "lbl" }, "Edit source")) : null,
         el("button", { class: "tb", onclick: () => this.reuse(e) }, icon("i-copy"), el("span", { class: "lbl" }, "Reuse")),
-        el("button", { class: "tb danger", title: "Delete", onclick: () => this.del(e) }, icon("i-trash"))));
+        el("button", { class: "tb danger", title: "Delete", "aria-label": "Delete", onclick: () => this.del(e) }, icon("i-trash"))));
     const viewer = document.createElement("model-viewer");
     Object.entries({ src: url, "camera-controls": "", "auto-rotate": "", "shadow-intensity": "1", exposure: "1.05", "environment-image": "neutral", "interaction-prompt": "none", alt: "3D model" })
       .forEach(([k, v]) => viewer.setAttribute(k, v));
