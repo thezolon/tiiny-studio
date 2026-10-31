@@ -61,7 +61,7 @@ EXTRA = {
     "binary.bin": bytes(range(256)) * 4,
     "empty.txt": b"",
     "latin1.txt": "caf\xe9 \x80 na\xefve".encode("latin-1"),
-    "utf16.txt": "﻿Hello utf16\n\nsecond paragraph".encode("utf-16"),
+    "utf16.txt": "\ufeffHello utf16\n\nsecond paragraph".encode("utf-16"),
     "bom.txt": b"\xef\xbb\xbfBOM text\r\n\r\n\r\nafter blank lines\r\n",
     "paragraphs.txt": b"one\n \t \ntwo\nline\n\n\n\nthree\n  \n  four",
     "special.md": b"  # Title  \n\n- item *one*\n",

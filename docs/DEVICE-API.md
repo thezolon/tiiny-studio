@@ -1,7 +1,8 @@
 # Tiiny device API reference
 
-Everything the Tiiny Pocket answers on the network, in one place. Collected 2026-10-25 against
-**TiinyOS 0.1.35** (device system API 0.1.0, knowledge base 2.0.0) from four sources, marked per endpoint:
+Everything the Tiiny Pocket answers on the network, in one place. Collected from 2026-10-25 against
+**TiinyOS 0.1.35** (device system API 0.1.0, knowledge base 2.0.0) and kept current through **0.1.38**; an entry
+that changed or was added later names the version it was tested on. Four sources, marked per endpoint:
 
 | mark | meaning |
 |---|---|
@@ -237,10 +238,10 @@ From Tiiny's docs (**docs**), not tested here.
 `/api/services`, `/api/services/{id}`, `/download/{id}/status`, `/updates/check`, `/resource-usage/ws`
 (**docs**/**app**): the app farm.
 
-## Known quirks (TiinyOS 0.1.35)
+## Known quirks (TiinyOS 0.1.35 to 0.1.38)
 
 - One request at a time; images are one per request (`n` > 1 fails).
-- Port 80 returns 502 until the TiinyOS app has connected since boot.
+- Port 80 returns 502 until the TiinyOS app has connected since boot (or `tiiny login` from the Tiiny CLI has run).
 - Over USB only port 80 (and 3588) is open: no model ports, so no GLM-OCR and no SongGeneration direct
   route (separate tracks, exact-length songs). The USB /30 is derived from the serial and can land in
   Docker's `172.17.x.x`.

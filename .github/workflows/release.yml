@@ -2,7 +2,7 @@
 #  - desktop app installers (Tauri; no Python or Docker needed) for Windows (x64 + ARM), macOS (Intel + Apple Silicon) and Linux (x64 + ARM)
 #  - the source package (tools/release.py)
 #  - a prebuilt Docker image for amd64 + arm64 on GitHub's registry (ghcr.io/<owner>/tiiny-studio)
-# and attaches the files to a GitHub release. Run it by hand (workflow_dispatch) to test without releasing.
+# and attaches the files to a GitHub release. Run it by hand (workflow_dispatch, on any branch or tag) to test without releasing.
 name: Release
 
 on:
@@ -125,7 +125,7 @@ jobs:
         with:
           context: .
           platforms: linux/amd64,linux/arm64
-          push: ${{ startsWith(github.ref, 'refs/tags/v') }}
+          push: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}   # a run by hand never publishes, even on a tag
           tags: ${{ steps.meta.outputs.tags }}
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
@@ -137,7 +137,7 @@ jobs:
     needs: [check, apps, docker]
     # still release with the downloads that did build if one platform fails (e.g. a runner label changes),
     # but never when the version check failed
-    if: ${{ !cancelled() && needs.check.result == 'success' && startsWith(github.ref, 'refs/tags/v') }}
+    if: ${{ !cancelled() && needs.check.result == 'success' && github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}
     runs-on: ubuntu-latest
     permissions:
       contents: write   # create the release

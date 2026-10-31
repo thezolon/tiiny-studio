@@ -6,7 +6,10 @@ POST /__flags {..} switches on test behaviour until the next reset: "fail" {path
 "html" [paths] (answer 200 with a web page instead of JSON, like a login portal or proxy in the way),
 "closed_port", "no_music_gateway", "speech_text", "task_polls" N, "task_hold", "fail_stage" name, "rich_texture", "song_tracks",
 "disk_free_gb" N (free storage in /api/v1/sys/status; plenty by default), "no_disk" (sys/status without disk keys).
-"task_flaky" N / "artifact_flaky" N (the next N 3D task polls / artifact fetches answer 502).
+"task_flaky" N / "artifact_flaky" N (the next N 3D task polls / artifact fetches answer 502), "ignore_cancel" (a 3D task that
+never stops), "image_warmup" N (the next N image requests fail like Qwen-Image just after loading), "cutout_png" (images
+come back as RGBA cut-outs), "video_flaky" N / "content_flaky" N (the next N video polls answer 502 / downloads 503),
+"video_hold" (a clip renders until it's cancelled).
 POST /__seed {"videos": [{"id", "status", "age", "seconds"}], "sessions": [{"session_id", "model_id", "route", "status", "age"}]} plants results the studio never
 saw (a finished clip, music sessions made `age` seconds ago), like ones left on the device by a restart or another studio.
 Everything except GET / and /__* needs `Authorization: Bearer <key>`, like the device. stdlib only."""
@@ -76,6 +79,15 @@ MP3 = b"ID3" + bytes(2000)
 MP4 = struct.pack(">I", 24) + b"ftypisom" + bytes(12) + bytes(3000)  # an ftyp box and padding: recognisable, not playable
 VIDEO = "lightx2v/MiniMax-H3-Turbo"
 # /v1/video/info as probed on 0.1.38 (trimmed)
+VIDEO_MAX_SECONDS = 7  # 0.1.38: 8 s and longer fail with "no exported bucket fits"
+
+
+def rendered_length(secs):
+    """A finished clip reports the length it really has: 0.1.38 rendered 2 s as 56 frames, "2.29167" seconds."""
+    frames = secs * 24 + 8
+    return {"seconds": str(round((frames - 1) / 24, 5)), "frames": frames}
+
+
 VIDEO_INFO = {"family": "minimax_h3", "id": "MiniMax-H3-Turbo", "fps": 24, "default_steps": 7, "step_options": [4, 5, 6, 7, 8], "max_keyframes": 2,
               "audio": {"channels": 2, "sample_rate": 32000},
               "canvases": [{"height": 768, "width": 1344}, {"height": 1344, "width": 768}, {"height": 480, "width": 832}, {"height": 832, "width": 480}]}
@@ -316,8 +328,7 @@ class Handler(BaseHTTPRequestHandler):
             vid = v.get("id") or f"video_{len(st.videos) + 1:032x}"
             secs = int(v.get("seconds") or 2)
             st.videos[vid] = {"id": vid, "object": "video", "model": v.get("model") or VIDEO, "status": v.get("status") or "completed", "progress": 100,
-                              "size": "832x480", "seconds": str(secs + 0.29167), "frames": secs * 24 + 1, "fps": 24, "error": None, "looks": 0,
-                              "created_at": int(now - v.get("age", 60))}
+                              "size": "832x480", **rendered_length(secs), "fps": 24, "error": None, "looks": 0, "created_at": int(now - v.get("age", 60))}
         for s in b.get("sessions", []):
             sid = s.get("session_id") or f"sess-{len(st.sessions) + 1}"
             st.sessions[sid] = s.get("status") or "completed"
@@ -390,7 +401,7 @@ class Handler(BaseHTTPRequestHandler):
         elif method == "POST" and p == "/api/v1/sys/shutdown/":
             with st.lock:
                 st.shutdowns += 1
-            self.send_json(200, {"status": "ok", "message": "System shutdown will be initiated in seconds via host API"})
+            self.send_json(200, {"status": "ok", "message": "System shutdown will be initiated in seconds via D-Bus"})  # 0.1.37+
         elif method == "GET" and p == "/api/v1/sys/status":
             self.send_json(200, {"cpu": {"total_percent": 12.5}, "memory": {"usage_percent": 40.0}, "gpu": {}, "npus": [], "disk": self.disk()})
         elif method == "GET" and p == "/api/v1/sys/device_info":
@@ -518,6 +529,8 @@ class Handler(BaseHTTPRequestHandler):
             sizes = [f"{c['width']}x{c['height']}" for c in VIDEO_INFO["canvases"]]
             err = None if b.get("size") in sizes else {"code": "invalid_request", "message": f"this model was exported for [{', '.join(sizes)}], got {b.get('size')}"}
             secs = int(b.get("seconds") or 4)
+            if not err and secs > VIDEO_MAX_SECONDS:  # accepted, then failed within seconds
+                err = {"code": "invalid_request", "message": f"no exported bucket fits a request needing [audio={secs * 81}, cond_video=0, target_video={secs * 2808}]"}
             st.videos[vid] = {"id": vid, "object": "video", "model": b["model"], "status": "queued", "progress": 0, "size": b.get("size"),
                               "seconds": str(secs), "frames": secs * 24 + 1, "fps": 24, "error": err, "looks": 0, "created_at": int(time.time())}
             return self.send_json(200, {k: v for k, v in st.videos[vid].items() if k != "looks"})
@@ -534,6 +547,8 @@ class Handler(BaseHTTPRequestHandler):
             v["looks"] += 1
             if v["status"] != "cancelled" and not st.flags.get("video_hold"):  # video_hold: renders until cancelled
                 v["status"], v["progress"] = ("failed", 0) if v["error"] else ("completed", 100) if v["looks"] > 1 else ("in_progress", 50)
+                if v["status"] == "completed":
+                    v.update(rendered_length(int(v["seconds"])))
             return self.send_json(200, {k: x for k, x in v.items() if k != "looks"})
         if method == "GET" and parts[3:] == ["content"]:
             if st.flags.get("content_flaky", 0) > 0:

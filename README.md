@@ -203,7 +203,7 @@ Everything the studio saves stays on your machine: results, prompts, sources and
 | `docs/CONNECTING.md` | finding the address and API key; USB notes; troubleshooting |
 | `testdata/` | probe and smoke-test scripts used while building it (not in release packages) |
 | `.github/workflows/release.yml` | on a `v*` tag: desktop installers for every OS, the source zip and the Docker image, attached to a GitHub release |
-| `.github/workflows/rust.yml` | on every push: Rust tests, contract tests and document parity on Windows, macOS and Linux |
+| `.github/workflows/rust.yml` | on pull requests and on `main` when code changes: Rust tests, contract tests and document parity on Windows, macOS and Linux |
 | `tools/api_snapshot.py` | snapshots the device's API specs into `docs/api/` and lists what changed after an update |
 | `tools/release.py` | builds `dist/tiiny-studio-<version>.zip` from the committed tree (`--tag` also tags it) |
 
