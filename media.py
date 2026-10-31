@@ -1384,6 +1384,7 @@ def run_video(m, job, req):
     for k in ("steps", "seed"):
         if isinstance(req.get(k), int) and not isinstance(req.get(k), bool):
             body[k] = req[k]
+    body.setdefault("steps", 4)  # the device's own default (7) makes a 2 s clip take ~12 minutes instead of ~7
     sources = []
     for i, k in enumerate(("image", "last_image")):
         if req.get(k):

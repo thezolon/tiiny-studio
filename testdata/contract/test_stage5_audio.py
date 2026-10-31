@@ -441,6 +441,14 @@ class Video(Jobs):
             got = request(base, "GET", "/images/" + job["entry"]["outputs"][0])
             self.assertEqual((got.status, got.headers["Content-Type"], got.body[4:8]), (200, "video/mp4", b"ftyp"))
 
+    def test_video_without_steps_defaults_to_four(self):
+        # the device's own default is 7, which turns a 2 s clip into ~12 minutes instead of ~7
+        py, rs = self.same_job(self.video())
+        self.assertEqual((py["status"], rs["status"]), ("done", "done"), py.get("error"))
+        self.assertEqual(py["entry"]["params"]["steps"], 4)
+        sent = next(c[3] for c in self.calls() if c[:2] == ("POST", "/v1/videos"))
+        self.assertEqual(sent, {"model": VIDEO, "prompt": "RUST TEST a red apple rolls", "size": "832x480", "seconds": "2", "steps": 4})
+
     def test_video_from_frames(self):
         py, rs = self.same_job(self.video(prompt="", image=PNG, last_image=PNG))
         self.assertEqual(py["status"], "done", py.get("error"))
