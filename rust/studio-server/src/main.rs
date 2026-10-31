@@ -57,8 +57,14 @@ fn run_as_data_owner(data: &std::path::Path) {
         }
     }
     walk(data, uid, gid);
-    unsafe {
-        libc::setgid(gid);
-        libc::setuid(uid);
+    // drop root's supplementary groups first (only root may), then the group, then the user; say so if any fails
+    // (a rootless container may refuse setgroups) instead of carrying on as root without a word
+    let (groups, group, user) = unsafe { (libc::setgroups(0, std::ptr::null()), libc::setgid(gid), libc::setuid(uid)) };
+    if groups != 0 || group != 0 || user != 0 {
+        eprintln!(
+            "warning: couldn't fully switch to the data folder's owner (uid {uid}, gid {gid}): {}; still running as uid {}",
+            std::io::Error::last_os_error(),
+            unsafe { libc::geteuid() }
+        );
     }
 }
