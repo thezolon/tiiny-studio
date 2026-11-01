@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- **New version notice:** when a newer release is out, a small pill in the top bar says so; click it for the release notes and a link to the release page, or ✕ to hide it until the next version. The studio asks GitHub once a day (anonymous, nothing about you or your Tiiny); **Settings → Check for updates** turns it off, and it is off by default in Docker. Nothing is downloaded or installed for you (#45, requested on the Tiiny Discord).
+- **New version notice:** when a newer release is out, a small pill in the top bar says so; click it for the release notes and a link to the release page, or ✕ to hide it until the next version. The studio asks GitHub once a day (anonymous, nothing about you or your Tiiny); **Settings → Check for updates** turns it off, and it is off by default in Docker. Nothing is downloaded or installed for you (#45).
 - **Model icons:** a model the Tiiny has no icon for (MiniMax-H3-Turbo) shows a plain chip tile instead of a broken image, and the studio stops asking the Tiiny for it on every redraw (#43).
 - **Video:** a clip with no step count now uses 4 steps (the app always did) instead of the device's 7, so a 2 s clip takes about 7 minutes rather than 12.
 - **Accessibility:** the studio now follows WCAG 2.2 level AA (#54). Everything works from the keyboard (the workspace tabs take the arrow keys, thumbnails, voices and the seed are real buttons), dialogs and the Models drawer trap and restore focus, controls have names, jobs are announced to screen readers, both themes meet the contrast ratios, and animations stop when your system asks for reduced motion.
