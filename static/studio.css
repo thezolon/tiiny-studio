@@ -784,10 +784,11 @@ details.adv summary .sum { margin-left: auto; color: var(--faint); font-weight: 
 
 .model-hint { margin-top: 10px; color: var(--faint); font-size: 12px; display: flex; flex-wrap: wrap; gap: 4px 10px; }
 .model-hint b { color: var(--muted); font-weight: 600; }
-.pick-btn { display: flex; align-items: center; gap: 10px; width: 100%; flex-basis: 100%; margin-bottom: 12px; padding: 8px 10px 8px 8px;
-  border-radius: 12px; border: 1px solid var(--line); background: var(--panel-2); color: var(--text); text-align: left; cursor: pointer;
-  transition: border-color .15s, box-shadow .15s; }
-.pick-btn:hover, .pick-btn[aria-expanded="true"] { border-color: var(--accent-line); box-shadow: 0 0 0 3px var(--accent-soft); }
+.pick-card { display: flex; align-items: center; gap: 8px; flex-basis: 100%; margin-bottom: 12px; padding-right: 10px; border-radius: 12px;
+  border: 1px solid var(--line); background: var(--panel-2); transition: border-color .15s, box-shadow .15s; }
+.pick-card:hover, .pick-card:has([aria-expanded="true"]) { border-color: var(--accent-line); box-shadow: 0 0 0 3px var(--accent-soft); }
+.pick-btn { flex: 1; min-width: 0; display: flex; align-items: center; gap: 10px; padding: 8px 4px 8px 8px; border: 0; border-radius: 12px;
+  background: none; color: var(--text); text-align: left; cursor: pointer; }
 .pick-ico { width: 34px; height: 34px; border-radius: 9px; flex: none; object-fit: cover; background: var(--line); }
 .pick-name { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .pick-name b { font-size: 13.5px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

@@ -259,13 +259,15 @@ function modelForTool(tool) {
  *  The list floats over the page (like the jobs menu), so the panel can redraw under it while it's open. */
 function modelPicker(models, cur, choose) {
   if (models.length < 2) return null;
-  const m = models.find((x) => x.id === cur) || models[0], ready = m.status === "running";
+  const m = models.find((x) => x.id === cur) || models[0], ready = m.status === "running", loading = S.loading[m.id] != null || m.status === "loading";
   const btn = el("button", { class: "pick-btn", "aria-haspopup": "true", "aria-expanded": "false", title: "Change model",
     onclick: (e) => { e.stopPropagation(); openPicker(btn, models, m.id, choose, e.detail === 0); } },
     modelImg(m, { class: "pick-ico" }),
-    el("span", { class: "pick-name" }, el("b", {}, shortName(m.id)), el("small", {}, el("i", { class: "dot " + (ready ? "ok" : "") }), ready ? "Loaded" : "Not loaded")),
-    el("span", { class: "pick-change" }, `${models.length} models`, icon("i-chev")));
-  return btn;
+    el("span", { class: "pick-name" }, el("b", {}, shortName(m.id)), el("small", {}, el("i", { class: "dot " + (ready ? "ok" : loading ? "busy" : "") }),
+      ready ? "Loaded" : loading ? "Loading…" : `Not loaded · ${m.npu_usage ?? "?"}% NPU`)),
+    el("span", { class: "pick-change" }, ready ? `${models.length} models` : "", icon("i-chev")));
+  return el("div", { class: "pick-card" }, btn, ready ? null
+    : el("button", { class: "btn-sm accent", disabled: loading, "aria-label": `Load ${shortName(m.id)}`, title: `Loads in about ${fmtSec(m.load_time || 30)}`, onclick: () => loadModel(m.id) }, loading ? "Loading…" : "Load"));
 }
 function openPicker(btn, models, cur, choose, byKey) {
   let menu = $("#pickMenu");
@@ -330,7 +332,7 @@ function mediaBadges(m) {
   return [m.type];
 }
 /** A card that blocks a tool until its model is loaded (or explains it isn't installed). */
-function modelGate(tool, what) {
+function modelGate(tool, what, picker) {
   if (S.deviceOk === false && S.locked)  // it answers, but needs TiinyOS to unlock it: Settings wouldn't help
     return el("div", { class: "gate" }, el("div", { class: "grow" }, el("b", {}, "Your Tiiny is locked after a restart."), el("p", {}, UNLOCK_HOW)));
   if (S.deviceOk === false)  // no model list to go on: say why rather than "not installed"
@@ -339,7 +341,7 @@ function modelGate(tool, what) {
       el("button", { class: "btn-sm accent", onclick: () => openSettings(false) }, "Settings"));
   const m = modelForTool(tool);
   // Music used to need the models' own ports (blocked over USB); the gateway's /v1/music routes now cover it.
-  if (m && m.status === "running") return null;
+  if (m && (m.status === "running" || picker)) return null;  // with a picker, its card offers Load
   if (!m) return el("div", { class: "gate" }, el("b", {}, `No ${what} model installed.`), el("p", {}, `Download one in the TiinyOS app (${TOOL_TYPES[tool]}).`));
   const loading = S.loading[m.id] != null || m.status === "loading";
   return el("div", { class: "gate" },
@@ -592,7 +594,7 @@ function mediaWS(c) {
     },
     seg(items, val, set, key) { return el("div", { class: "seg small" }, items.map(([v, label]) => el("button", { "aria-pressed": val === v, onclick: () => { set(v); store.set(key, v); this.render(); } }, label))); },
     renderGate() {
-      const g = modelGate(...c.gate()), pick = toolPicker(c.gate()[0], () => this.render());
+      const pick = toolPicker(c.gate()[0], () => this.render()), g = modelGate(...c.gate(), !!pick);
       $(`#${p}Gate`).replaceChildren(...[pick, g].filter(Boolean));
       this.renderFoot();
     },
