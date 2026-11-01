@@ -19,3 +19,4 @@ build/
 # maintainer notes, kept locally only
 CLAUDE.md
 tools/PLAN-*.md
+docs/DEVICE-INTERNALS.md
