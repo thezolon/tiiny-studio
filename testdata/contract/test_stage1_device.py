@@ -105,6 +105,21 @@ class Device(ContractCase):
         self.assertEqual((py.status, rs.status), (200, 200))
         self.assertEqual(py.body, rs.body)
 
+    def test_locked_after_restart(self):
+        # after a power cycle the Tiiny's web server answers 502 until TiinyOS unlocks it: say so, not "can't reach"
+        self.addCleanup(request, self.h.fake_url, "POST", "/__flags", {"locked": False, "fail": {}})
+        request(self.h.fake_url, "POST", "/__flags", {"locked": True})
+        py, rs = self.get("/api/catalog")
+        self.assertEqual((py.status, rs.status), (502, 502))
+        self.assertEqual(py.json, rs.json)
+        self.assertEqual(py.json["error"]["type"], "device_locked")
+        self.assertIn("TiinyOS app", py.json["error"]["message"])
+        # any other error from the device is passed on as before
+        request(self.h.fake_url, "POST", "/__flags", {"locked": False, "fail": {"/api/v1/models/": [500, "boom"]}})
+        py, rs = self.get("/api/catalog")
+        self.assertEqual((py.status, rs.status, py.json), (500, 500, rs.json))
+        self.assertNotIn("type", py.json["error"])
+
     def test_missing_icon_is_asked_for_once(self):
         # 0.1.38 has no icon for MiniMax-H3-Turbo (404); the drawer redraws every few seconds, so remember that
         request(self.h.fake_url, "POST", "/__reset_log")

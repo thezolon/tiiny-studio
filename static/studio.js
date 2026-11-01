@@ -70,11 +70,13 @@ function announce(msg) {
 async function api(path, opts = {}) {
   const r = await fetch(path, { headers: { "Content-Type": "application/json" }, ...opts });
   let j = {}; try { j = await r.json(); } catch {}
-  if (!r.ok) { const e = new Error(j?.error?.message || j?.detail || `HTTP ${r.status}`); e.status = r.status; throw e; }
+  if (!r.ok) { const e = new Error(j?.error?.message || j?.detail || `HTTP ${r.status}`); e.status = r.status; e.type = j?.error?.type; throw e; }
   return j;
 }
 
 const KEY_REJECTED = "Your Tiiny rejected the API key. Copy the API key (not the device ID) from TiinyOS: avatar → Settings → API Key.";
+// After a power cycle the Tiiny answers but stays locked until TiinyOS unlocks it (the servers' LOCKED says the same)
+const UNLOCK_HOW = "Open the TiinyOS app once (or run \"tiiny login\" with the Tiiny CLI) to unlock it. The studio checks again by itself.";
 async function loadModels(quiet = false) {
   try {
     const j = await api("/api/catalog");
@@ -82,7 +84,8 @@ async function loadModels(quiet = false) {
     if (typeof noteActiveDevice === "function") noteActiveDevice(j.device, j.last_switch);
     S.models = S.allModels.filter((m) => m.workspace === "image");
     S.others = S.allModels.filter((m) => m.workspace !== "image");
-    S.deviceOk = true; S.keyRejected = false;
+    if (S.locked) toast("Your Tiiny is unlocked");
+    S.deviceOk = true; S.keyRejected = false; S.locked = false;
     if (typeof recoverFromDevice === "function") recoverFromDevice();
     for (const id of Object.keys(S.loading)) {
       const m = modelById(id);
@@ -102,7 +105,9 @@ async function loadModels(quiet = false) {
   } catch (e) {
     S.deviceOk = false;
     S.keyRejected = e.status === 401 || e.status === 403;  // the Tiiny answers, but not to this key
-    if (!quiet && e.status !== 503) toast(S.keyRejected ? KEY_REJECTED : e.message, "err");  // 503 = not configured; Settings opens itself
+    const wasLocked = S.locked;
+    S.locked = e.type === "device_locked";
+    if (!quiet && e.status !== 503 && !(S.locked && wasLocked)) toast(S.keyRejected ? KEY_REJECTED : e.message, "err");  // 503 = not configured; Settings opens itself
   }
   renderModelBtn(); renderDrawer(); renderComposer();
   if (typeof onModelsChanged === "function") onModelsChanged();
@@ -164,14 +169,14 @@ function renderModelBtn() {
     const run = (S.allModels || []).filter((x) => x.status === "running");
     $("#modelIco").style.visibility = "hidden";
     $("#modelName").textContent = "Models";
-    $("#modelCaps").textContent = `${run.length} loaded · ${S.npu.used}% NPU`;
+    $("#modelCaps").textContent = S.deviceOk === false ? (S.keyRejected ? "API key rejected" : S.locked ? "Tiiny locked" : "Device offline") : `${run.length} loaded · ${S.npu.used}% NPU`;
     return;
   }
   const m = modelById(S.model);
   $("#modelIco").onerror = noIcon;
   $("#modelIco").src = m ? "/api/icon/" + m.id : "";
   $("#modelIco").style.visibility = m ? "visible" : "hidden";
-  $("#modelName").textContent = m ? shortName(m.id) : S.deviceOk === false ? (S.keyRejected ? "API key rejected" : "Device offline") : Object.keys(S.loading).length ? "Loading model…" : "No model loaded";
+  $("#modelName").textContent = m ? shortName(m.id) : S.deviceOk === false ? (S.keyRejected ? "API key rejected" : S.locked ? "Tiiny locked" : "Device offline") : Object.keys(S.loading).length ? "Loading model…" : "No model loaded";
   $("#modelCaps").textContent = m ? capsLine(m) : "Click to manage models";
 }
 
@@ -188,6 +193,7 @@ function drawDrawer() {
       ? el("div", { class: "empty", style: "margin:40px auto" }, el("h2", {}, "API key rejected"),
         el("p", {}, "Your Tiiny answers, but not to this key. Copy the API key (not the device ID) from TiinyOS: avatar → Settings → API Key."),
         el("button", { class: "btn-sm accent", onclick: () => openSettings(false) }, "Open Settings"))
+      : S.locked ? el("div", { class: "empty", style: "margin:40px auto" }, el("h2", {}, "Your Tiiny is locked after a restart"), el("p", {}, UNLOCK_HOW))
       : el("div", { class: "empty", style: "margin:40px auto" }, el("h2", {}, "Device offline"), el("p", {}, "Can't reach the Tiiny.")));
     return;
   }
@@ -381,10 +387,10 @@ $("#drawerClose").onclick = closeDrawer;
 $("#scrim").onclick = closeDrawer;
 $("#drawerRefresh").onclick = () => loadModels();
 
-// Poll fast while the drawer is open or a model is loading, slowly otherwise.
+// Poll fast while the drawer is open, a model is loading or the Tiiny is locked, slowly otherwise.
 let lastPoll = Date.now();
 setInterval(() => {
-  const fast = S.drawer || Object.keys(S.loading).length;
+  const fast = S.drawer || S.locked || Object.keys(S.loading).length;  // locked: notice the unlock within seconds
   if (Date.now() - lastPoll < (fast ? 2500 : 30000)) return;
   lastPoll = Date.now(); loadModels(true);
 }, 1000);
