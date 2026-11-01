@@ -1,7 +1,6 @@
 """Stage 3 contract tests: image create/edit, OCR and the chat-model helpers, run as real jobs on both servers
 against the fake Tiiny. Compares the finished job, the saved files and the requests each server made."""
 import base64
-import json
 import time
 import unittest
 
@@ -14,40 +13,14 @@ IGNORE = ("id", "created", "started", "finished", "seconds", "t", "outputs", "so
 
 
 class Media(ContractCase):
-    def run_job(self, base, req):
-        request(self.h.fake_url, "POST", "/__reset")
-        if req.get("load"):  # a model the job needs loaded first (the reset leaves only the chat model running)
-            path = "/api/v1/models/" + req["load"].replace("/", "%2F") + "/launch"
-            request(self.h.fake_url, "POST", path, {"model_id": req["load"]}, headers={"Authorization": "Bearer fake-key"})
-            time.sleep(0.4)
-            request(self.h.fake_url, "POST", "/__reset_log")
-        if req.get("flags"):  # fake device behaviour for this run only (the reset above cleared the last)
-            request(self.h.fake_url, "POST", "/__flags", req["flags"])
-        req = {k: v for k, v in req.items() if k not in ("load", "flags")}
-        job = request(base, "POST", "/api/jobs", req).json
-        if "id" not in job:  # refused at submit (e.g. unknown kind)
-            return job, []
-        for _ in range(300):
-            job = request(base, "GET", f"/api/jobs/{job['id']}").json
-            if job.get("finished"):
-                break
-            time.sleep(0.05)
-        log = json.loads(request(self.h.fake_url, "GET", "/__requests").body)
-        return job, [(r["method"], r["path"], r["body"]) for r in log if r["path"] != "/"]
+    def view(self, job):
+        return strip(job)
 
-    def same_job(self, req):
-        py, py_calls = self.run_job(self.h.py_url, req)
-        rs, rs_calls = self.run_job(self.h.rs_url, req)
-        self.assertEqual(strip(py), strip(rs))
-        self.assertEqual(scrub(py_calls), scrub(rs_calls))
-        return py, rs
+    def shape(self, r):
+        return (r["method"], r["path"], r["body"])
 
-    def files_equal(self, py, rs, key="outputs"):
-        p, r = py["entry"][key], rs["entry"][key]
-        self.assertEqual(len(p), len(r))
-        for a, b in zip(p, r, strict=True):
-            self.assertEqual(a.rsplit("-", 1)[-1], b.rsplit("-", 1)[-1])  # "-0.png", "-src0.png"
-            self.assertEqual(request(self.h.py_url, "GET", "/images/" + a).body, request(self.h.rs_url, "GET", "/images/" + b).body)
+    def comparable(self, calls):
+        return scrub(calls)
 
     def test_image_create_two(self):
         py, rs = self.same_job({"kind": "image", "model": "Qwen/Qwen-Image-2.1", "prompt": "RUST TEST duck", "n": 2, "seed": 7, "size": "512x512"})
@@ -60,14 +33,8 @@ class Media(ContractCase):
         def run(base):
             request(self.h.fake_url, "POST", "/__reset")
             request(self.h.fake_url, "POST", "/__flags", {"image_warmup": 2})
-            job = request(base, "POST", "/api/jobs", {"kind": "image", "model": "Qwen/Qwen-Image-2.1", "prompt": "RUST TEST warm"}).json
-            for _ in range(300):
-                job = request(base, "GET", f"/api/jobs/{job['id']}").json
-                if job.get("finished"):
-                    break
-                time.sleep(0.05)
-            log = json.loads(request(self.h.fake_url, "GET", "/__requests").body)
-            return job["status"], [r["path"] for r in log if r["path"] not in ("/", "/api/v1/sys/status")]
+            job, calls = self.finish(base, request(base, "POST", "/api/jobs", {"kind": "image", "model": "Qwen/Qwen-Image-2.1", "prompt": "RUST TEST warm"}).json)
+            return job["status"], [p for _, p, _ in calls if p != "/api/v1/sys/status"]
         py, rs = run(self.h.py_url), run(self.h.rs_url)
         self.assertEqual(py, rs)
         self.assertEqual(py, ("done", ["/v1/images/generations"] * 3))
@@ -78,17 +45,12 @@ class Media(ContractCase):
             request(self.h.fake_url, "POST", "/__reset")
             request(self.h.fake_url, "POST", "/__flags", {"delay": {"/v1/images/generations": 1.5}})
             job = request(base, "POST", "/api/jobs", {"kind": "image", "model": "Qwen/Qwen-Image-2.1", "prompt": "RUST TEST cancel"}).json
-            time.sleep(0.4)
+            self.wait_sent("POST", "/v1/images/generations")  # the device is working on it
             request(base, "POST", f"/api/jobs/{job['id']}/cancel")
             mid = request(base, "GET", f"/api/jobs/{job['id']}").json
-            for _ in range(100):
-                job = request(base, "GET", f"/api/jobs/{job['id']}").json
-                if job.get("finished"):
-                    break
-                time.sleep(0.05)
-            time.sleep(0.5)  # the model is unloaded and loaded back in the background
-            log = json.loads(request(self.h.fake_url, "GET", "/__requests").body)
-            halts = [(r["method"], r["path"]) for r in log if r["path"].endswith(("/stop", "/launch", "/interrupt"))]
+            job, _ = self.finish(base, job)
+            self.wait_sent("POST", "/api/v1/models/Qwen%2FQwen-Image-2.1/launch")  # unloaded and loaded back in the background
+            halts = [(m, p) for m, p, _ in self.calls() if p.endswith(("/stop", "/launch", "/interrupt"))]
             return (mid["status"], mid.get("stopping"), job["status"], job["message"], len(request(base, "GET", "/api/history").json), halts)
         py, rs = run(self.h.py_url), run(self.h.rs_url)
         self.assertEqual(py, rs)

@@ -20,6 +20,7 @@ sys.path.insert(0, str(ROOT / "testdata"))
 import fake_tiiny  # noqa: E402
 
 KEY = "fake-key"
+AUTH = {"Authorization": f"Bearer {KEY}"}
 # STUDIO_RUST_IMAGE=tiiny-studio:rust runs the Rust side as that Docker image instead of the local binary; both
 # servers then reach the fake Tiiny as host.docker.internal (it listens on all interfaces for the test).
 IMAGE = os.environ.get("STUDIO_RUST_IMAGE", "")
@@ -184,3 +185,95 @@ class ContractCase(unittest.TestCase):
         # in Docker the studio correctly can't open a folder on this computer
         ignore = tuple(ignore) + (("can_open_folder",) if IMAGE else ())
         self.assertEqual(strip(py.json, ignore), strip(rs.json, ignore))
+
+    # ---------- jobs against the fake ----------
+    def wait_until(self, cond, what, timeout=10):
+        """Poll cond() until it's truthy and return that; on timeout, fail saying what never happened (what may be a
+        function, for a message that reports the last state)."""
+        end = time.monotonic() + timeout
+        while not (v := cond()):
+            if time.monotonic() > end:
+                self.fail(f"timed out after {timeout} s waiting for {what() if callable(what) else what}")
+            time.sleep(0.05)
+        return v
+
+    def load_on_fake(self, *models):
+        """Load models on the fake one after another (the order of its running list decides what a swap unloads) and wait
+        until each is running (a launch takes the fake's launch_delay)."""
+        for m in models:
+            request(self.h.fake_url, "POST", "/api/v1/models/" + m.replace("/", "%2F") + "/launch", {"model_id": m}, headers=AUTH)
+            self.wait_until(lambda m=m: m in self.fake.state.running, "the fake to run " + m)
+
+    def shape(self, r):
+        """One logged device request as a test compares it; a test class can keep less."""
+        return (r["method"], r["path"], r["query"], r["body"], r.get("multipart"))
+
+    def calls(self):
+        """The requests the fake has logged since the last reset (page loads left out)."""
+        return [self.shape(r) for r in json.loads(request(self.h.fake_url, "GET", "/__requests").body) if r["path"] != "/"]
+
+    def wait_sent(self, method, path, timeout=10):
+        """Wait until the studio has sent this request to the fake (for work it does in the background)."""
+        self.wait_until(lambda: any(c[:2] == (method, path) for c in self.calls()), f"the studio to send {method} {path}", timeout)
+
+    def run_job(self, base, req, reset=True):
+        """Run one job to the end; returns (job, requests made to the fake). `load` loads models first (a name or a list),
+        `flags` sets fake behaviour (see fake_tiiny.py); reset=False keeps the fake's state (with a fresh log)."""
+        req = dict(req)
+        load, flags = req.pop("load", None), req.pop("flags", None)
+        if reset:
+            request(self.h.fake_url, "POST", "/__reset")
+            if load:
+                self.load_on_fake(*([load] if isinstance(load, str) else load))
+        request(self.h.fake_url, "POST", "/__reset_log")
+        if flags:
+            request(self.h.fake_url, "POST", "/__flags", flags)
+        job = request(base, "POST", "/api/jobs", req).json
+        if "id" not in job:  # refused at submit (e.g. an unknown kind)
+            return job, []
+        return self.finish(base, job)
+
+    def finish(self, base, job, timeout=60):
+        """Poll a job until it ends; returns (job, the requests the fake logged)."""
+        last = {}
+
+        def ended():
+            last.clear()
+            last.update(request(base, "GET", f"/api/jobs/{job['id']}").json)
+            return last.get("finished")
+
+        self.wait_until(ended, lambda: f"job {job['id']} ({job.get('kind')}) to end; last: {last.get('status')} {last.get('message')!r}", timeout)
+        return dict(last), self.calls()
+
+    def wait_job(self, base, job, cond, what, timeout=20):
+        """Poll a job until cond(job) holds (e.g. it reached a stage) and return it."""
+        def check():
+            j = request(base, "GET", f"/api/jobs/{job['id']}").json
+            return j if cond(j) else None
+
+        return self.wait_until(check, what, timeout)
+
+    def view(self, job):
+        """A job as same_job compares it: without what differs per run (ids, times); a test class sets its own."""
+        return strip(job, IGNORE)
+
+    def comparable(self, calls):
+        """The device requests as same_job compares them; a test class can drop what legitimately differs."""
+        return calls
+
+    def same_job(self, req, **kw):
+        """Run a job on both servers; same job result and same device requests. self.last_calls keeps Rust's."""
+        py, py_calls = self.run_job(self.h.py_url, req, **kw)
+        rs, rs_calls = self.run_job(self.h.rs_url, req, **kw)
+        self.assertEqual(self.view(py), self.view(rs))
+        self.assertEqual(self.comparable(py_calls), self.comparable(rs_calls))
+        self.last_calls = rs_calls
+        return py, rs
+
+    def files_equal(self, py, rs, key="outputs"):
+        """Both servers saved the same files (same suffix, same bytes)."""
+        p, r = py["entry"][key], rs["entry"][key]
+        self.assertEqual(len(p), len(r))
+        for a, b in zip(p, r, strict=True):
+            self.assertEqual(a.split("-", 1)[-1], b.split("-", 1)[-1])  # "-0.png", "-speech.wav"
+            self.assertEqual(request(self.h.py_url, "GET", "/images/" + a).body, request(self.h.rs_url, "GET", "/images/" + b).body)

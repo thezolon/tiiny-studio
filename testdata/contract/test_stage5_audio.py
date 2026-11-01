@@ -3,13 +3,11 @@ against the fake Tiiny. Compares the finished job, the saved files and the reque
 bodies compared as parsed fields, file names and file checksums, since the boundaries differ)."""
 import base64
 import json
-import time
 import unittest
 
 from harness import ContractCase, request  # first: puts testdata/ on the path
 import fake_tiiny  # noqa: E402
 
-AUTH = {"Authorization": "Bearer fake-key"}
 TTS, ASR, LOOP, SONG, MESH = "Qwen/Qwen3-TTS-Base", "Fake/Whisper-ASR", "Fake/Foundation-1", "Fake/SongGeneration-v2", "Tencent/Hunyuan3D-2.1"
 IMAGE = "Qwen/Qwen-Image-2.1"
 TRELLIS = "microsoft/TRELLIS.2-4B"
@@ -41,47 +39,8 @@ class Jobs(ContractCase):
     """Runs media jobs on both servers against the fake and compares them."""
     maxDiff = None
 
-    def run_job(self, base, req, reset=True):
-        """Run one job to the end; returns (job, requests made to the fake). `load` loads a model first, `flags`
-        sets fake behaviour (see fake_tiiny.py); reset=False continues with the same fake state (and a fresh log)."""
-        req = dict(req)
-        load, flags = req.pop("load", None), req.pop("flags", None)
-        if reset:
-            request(self.h.fake_url, "POST", "/__reset")
-            for one in [load] if isinstance(load, str) else load or []:  # several: e.g. two 3D models at once
-                request(self.h.fake_url, "POST", "/api/v1/models/" + one.replace("/", "%2F") + "/launch", {"model_id": one}, headers=AUTH)
-                time.sleep(0.4)
-        request(self.h.fake_url, "POST", "/__reset_log")
-        if flags:
-            request(self.h.fake_url, "POST", "/__flags", flags)
-        job = request(base, "POST", "/api/jobs", req).json
-        return self.finish(base, job)
-
-    def finish(self, base, job):
-        for _ in range(1200):
-            job = request(base, "GET", f"/api/jobs/{job['id']}").json
-            if job.get("finished"):
-                break
-            time.sleep(0.05)
-        return job, self.calls()
-
-    def calls(self):
-        log = json.loads(request(self.h.fake_url, "GET", "/__requests").body)
-        return [(r["method"], r["path"], r["query"], r["body"], r.get("multipart")) for r in log if r["path"] != "/"]
-
-    def same_job(self, req, **kw):
-        py, py_calls = self.run_job(self.h.py_url, req, **kw)
-        rs, rs_calls = self.run_job(self.h.rs_url, req, **kw)
-        self.assertEqual(strip(py), strip(rs))
-        self.assertEqual(py_calls, rs_calls)
-        return py, rs
-
-    def files_equal(self, py, rs, key="outputs"):
-        p, r = py["entry"][key], rs["entry"][key]
-        self.assertEqual(len(p), len(r))
-        for a, b in zip(p, r, strict=True):
-            self.assertEqual(a.split("-", 1)[-1], b.split("-", 1)[-1])  # "-speech.wav", "-song.wav"
-            self.assertEqual(request(self.h.py_url, "GET", "/images/" + a).body, request(self.h.rs_url, "GET", "/images/" + b).body)
+    def view(self, job):
+        return strip(job)
 
     def failed(self, req, text=None, **kw):
         py, _ = self.same_job(req, **kw)
@@ -241,9 +200,7 @@ class Audio(Jobs):
         py, _ = self.same_job(broken)
         self.assertEqual(py["status"], "done", py.get("error"))
         self.assertEqual([c[3]["model"] for c in self.calls() if c[:2] == ("POST", "/v1/audio/speech")], ["Fake/Broken-TTS", "Broken-TTS"])
-        for mid in ("Fake/CustomVoice", "Qwen/Qwen3-TTS-Base"):  # what the panel reads
-            request(self.h.fake_url, "POST", "/api/v1/models/" + mid.replace("/", "%2F") + "/launch", {"model_id": mid}, headers=AUTH)
-        time.sleep(0.4)
+        self.load_on_fake("Fake/CustomVoice", "Qwen/Qwen3-TTS-Base")  # what the panel reads
         infos = [request(b, "GET", "/api/model/info?id=Fake%2FCustomVoice").json for b in (self.h.py_url, self.h.rs_url)]
         self.assertEqual(infos[0], infos[1])
         self.assertEqual(infos[0]["info"]["supported_speakers"], ["ryan", "ono_anna"])
@@ -379,16 +336,11 @@ class Audio(Jobs):
         results = []
         for base in (self.h.py_url, self.h.rs_url):
             request(self.h.fake_url, "POST", "/__reset")
-            request(self.h.fake_url, "POST", "/api/v1/models/" + MESH.replace("/", "%2F") + "/launch", {"model_id": MESH}, headers=AUTH)
-            time.sleep(0.4)
+            self.load_on_fake(MESH)
             request(self.h.fake_url, "POST", "/__reset_log")
             request(self.h.fake_url, "POST", "/__flags", {"task_hold": True})
             job = request(base, "POST", "/api/jobs", {"kind": "mesh", "model": MESH, "image": PNG}).json
-            for _ in range(400):  # until the first poll of the task has been answered
-                job = request(base, "GET", f"/api/jobs/{job['id']}").json
-                if job.get("stage"):
-                    break
-                time.sleep(0.05)
+            job = self.wait_job(base, job, lambda j: j.get("stage"), "the 3D job's first answered poll")
             self.assertEqual(job.get("stage"), "shape")
             self.assertEqual(request(base, "POST", f"/api/jobs/{job['id']}/cancel").status, 200)
             job, calls = self.finish(base, job)
@@ -404,16 +356,11 @@ class Audio(Jobs):
         results = []
         for base in (self.h.py_url, self.h.rs_url):
             request(self.h.fake_url, "POST", "/__reset")
-            request(self.h.fake_url, "POST", "/api/v1/models/" + MESH.replace("/", "%2F") + "/launch", {"model_id": MESH}, headers=AUTH)
-            time.sleep(0.4)
+            self.load_on_fake(MESH)
             request(self.h.fake_url, "POST", "/__reset_log")
             request(self.h.fake_url, "POST", "/__flags", {"task_hold": True, "ignore_cancel": True})
             job = request(base, "POST", "/api/jobs", {"kind": "mesh", "model": MESH, "image": PNG}).json
-            for _ in range(400):
-                job = request(base, "GET", f"/api/jobs/{job['id']}").json
-                if job.get("stage"):
-                    break
-                time.sleep(0.05)
+            job = self.wait_job(base, job, lambda j: j.get("stage"), "the 3D job's first answered poll")
             request(base, "POST", f"/api/jobs/{job['id']}/cancel")
             job, _ = self.finish(base, job)
             results.append((job["status"], job["message"]))
@@ -478,12 +425,11 @@ class Video(Jobs):
         results = []
         for base in (self.h.py_url, self.h.rs_url):
             request(self.h.fake_url, "POST", "/__reset")
-            request(self.h.fake_url, "POST", "/api/v1/models/" + VIDEO.replace("/", "%2F") + "/launch", {"model_id": VIDEO}, headers=AUTH)
-            time.sleep(0.4)
+            self.load_on_fake(VIDEO)
             request(self.h.fake_url, "POST", "/__reset_log")
             request(self.h.fake_url, "POST", "/__flags", {"video_hold": True})
             job = request(base, "POST", "/api/jobs", {k: v for k, v in self.video().items() if k != "load"}).json
-            time.sleep(4)
+            self.wait_until(lambda: any(m == "GET" and p.startswith("/v1/videos/") for m, p, *_ in self.calls()), "the studio's first poll of the clip")
             self.assertEqual(request(base, "POST", f"/api/jobs/{job['id']}/cancel").status, 200)
             job, calls = self.finish(base, job)
             self.assertEqual(job["status"], "cancelled")
@@ -493,8 +439,7 @@ class Video(Jobs):
 
     def test_video_info_and_workspace(self):
         request(self.h.fake_url, "POST", "/__reset")
-        request(self.h.fake_url, "POST", "/api/v1/models/" + VIDEO.replace("/", "%2F") + "/launch", {"model_id": VIDEO}, headers=AUTH)
-        time.sleep(0.4)
+        self.load_on_fake(VIDEO)
         infos = [request(b, "GET", "/api/model/info?id=" + VIDEO.replace("/", "%2F")).json for b in (self.h.py_url, self.h.rs_url)]
         self.assertEqual(infos[0], infos[1])
         self.assertEqual(infos[0]["info"]["step_options"], [4, 5, 6, 7, 8])

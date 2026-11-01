@@ -1,7 +1,6 @@
 """Stage 4 contract tests: chat turns (streaming, thinking, tool calls with model swaps) on both servers
 against the fake Tiiny. Compares the finished job, the gallery and every request made to the device."""
 import json
-import time
 import unittest
 
 from harness import ContractCase, request  # first: puts testdata/ on the path
@@ -19,32 +18,11 @@ def strip(obj):
 
 
 class Chat(ContractCase):
-    def run_job(self, base, req):
-        request(self.h.fake_url, "POST", "/__reset")
-        if req.get("load"):  # fill the fake's NPU first so a tool has to make room
-            path = "/api/v1/models/" + req["load"].replace("/", "%2F") + "/launch"
-            request(self.h.fake_url, "POST", path, {"model_id": req["load"]}, headers={"Authorization": "Bearer fake-key"})
-            time.sleep(0.4)
-            request(self.h.fake_url, "POST", "/__reset_log")
-        req = {k: v for k, v in req.items() if k != "load"}
-        job = request(base, "POST", "/api/jobs", req).json
-        if "id" not in job:
-            return job, []
-        for _ in range(600):
-            job = request(base, "GET", f"/api/jobs/{job['id']}").json
-            if job.get("finished"):
-                break
-            time.sleep(0.05)
-        log = json.loads(request(self.h.fake_url, "GET", "/__requests").body)
-        return job, [(r["method"], r["path"], strip(r["body"])) for r in log if r["path"] != "/"]
+    def view(self, job):
+        return strip(job)
 
-    def same_job(self, req):
-        py, py_calls = self.run_job(self.h.py_url, req)
-        rs, rs_calls = self.run_job(self.h.rs_url, req)
-        self.assertEqual(strip(py), strip(rs))
-        self.assertEqual(py_calls, rs_calls)
-        self.calls = rs_calls
-        return py, rs
+    def shape(self, r):
+        return (r["method"], r["path"], strip(r["body"]))
 
     def test_plain_reply(self):
         py, _ = self.same_job({"kind": "chat", "messages": [{"role": "user", "content": "RUST TEST hello"}], "tools": ["create_image"]})
@@ -62,7 +40,7 @@ class Chat(ContractCase):
                                 "messages": [{"role": "user", "content": "RUST TEST FAKE_TOOL make a duck"}]})
         self.assertEqual(py["status"], "done")
         self.assertEqual(len(py["entry"]["artifacts"]), 1)
-        paths = [p for m, p, _ in self.calls if m == "POST"]
+        paths = [p for m, p, _ in self.last_calls if m == "POST"]
         chat = fake_tiiny.CHAT_MODEL.replace("/", "%2F")
         for expected in (f"/api/v1/models/{chat}/stop", "/api/v1/models/Qwen%2FQwen-Image-2.1/launch", "/v1/images/generations",
                          "/api/v1/models/Qwen%2FQwen-Image-2.1/stop", f"/api/v1/models/{chat}/launch"):
@@ -83,7 +61,7 @@ class Chat(ContractCase):
         py, rs = self.same_job({"kind": "chat", "messages": [{"role": "user", "content": [{"type": "text", "text": "Summarise these." + docs}]}]})
         self.assertEqual(py["status"], "done")
         self.assertEqual([w["source"] for w in py["entry"]["warnings"]], [f"document: RUST TEST {i}.txt" for i in range(1, 7)])
-        sent = next(b for m, p, b in self.calls if p == "/v1/chat/completions")
+        sent = next(b for m, p, b in self.last_calls if p == "/v1/chat/completions")
         self.assertIn("<untrusted source=", json.dumps(sent))
 
     def test_errors(self):
@@ -104,13 +82,13 @@ class Chat(ContractCase):
                 req["load"] = model
             py, rs = self.same_job(req)
             self.assertEqual(py["status"], "done", (model, py.get("error")))
-            body = next(b for m, p, b in self.calls if p == "/v1/chat/completions")
+            body = next(b for m, p, b in self.last_calls if p == "/v1/chat/completions")
             if sent:
                 self.assertIn(sent, body, model)
             self.assertNotIn(not_sent, body, model)
         # a helper on a model that always reasons gets room for it
         py, _ = self.same_job({"kind": "assist", "model": "Fake/Always-Thinks", "task": "prompt", "text": "RUST TEST fox", "load": "Fake/Always-Thinks"})
-        body = next(b for m, p, b in self.calls if p == "/v1/chat/completions")
+        body = next(b for m, p, b in self.last_calls if p == "/v1/chat/completions")
         self.assertEqual((body.get("reasoning_effort"), body["max_tokens"]), ("low", 1700))
 
     def test_reasoned_without_answer(self):
@@ -141,18 +119,10 @@ class Chat(ContractCase):
         auth = {"Authorization": "Bearer fake-key"}
         request(self.h.fake_url, "POST", "/__reset")
         request(self.h.fake_url, "POST", "/api/v1/models/unload_all", {}, headers=auth)
-        for mid in ("Qwen%2FQwen-Image-2.1", "Fake%2FFoundation-1"):  # 60 + 25 of 100: the chat model (30) doesn't fit
-            request(self.h.fake_url, "POST", f"/api/v1/models/{mid}/launch", {}, headers=auth)
-            time.sleep(0.4)
+        self.load_on_fake("Qwen/Qwen-Image-2.1", "Fake/Foundation-1")  # 60 + 25 of 100: the chat model (30) doesn't fit
         request(self.h.fake_url, "POST", "/__reset_log")
-        job = request(base, "POST", "/api/jobs", req).json
-        for _ in range(600):
-            job = request(base, "GET", f"/api/jobs/{job['id']}").json
-            if job.get("finished"):
-                break
-            time.sleep(0.05)
-        log = json.loads(request(self.h.fake_url, "GET", "/__requests").body)
-        return job, [(r["method"], r["path"]) for r in log if r["path"] != "/"]
+        job, calls = self.finish(base, request(base, "POST", "/api/jobs", req).json)
+        return job, [c[:2] for c in calls]
 
     def test_helper_swaps_models(self):
         req = {"kind": "assist", "model": fake_tiiny.CHAT_MODEL, "task": "prompt", "text": "RUST TEST a fox"}
@@ -187,8 +157,8 @@ class Chat(ContractCase):
                                 "tool_models": {"image": "Qwen/Qwen-Image-2.1"},
                                 "messages": [{"role": "user", "content": "RUST TEST FAKE_TOOL make a duck"}]})
         self.assertEqual(py["status"], "done")
-        self.assertFalse([p for m, p, _ in self.calls if m == "POST" and ("/launch" in p or "/stop" in p or "/images/" in p)])
-        tool_reply = [b for m, p, b in self.calls if p == "/v1/chat/completions"][-1]
+        self.assertFalse([p for m, p, _ in self.last_calls if m == "POST" and ("/launch" in p or "/stop" in p or "/images/" in p)])
+        tool_reply = [b for m, p, b in self.last_calls if p == "/v1/chat/completions"][-1]
         self.assertIn("turned off model swapping", json.dumps(tool_reply))
 
 
