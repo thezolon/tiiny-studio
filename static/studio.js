@@ -159,7 +159,8 @@ document.addEventListener("keydown", (e) => {
 function keepFocus(box, fn) {
   const i = box.contains(document.activeElement) ? focusables(box).indexOf(document.activeElement) : -1;
   fn();
-  if (i >= 0 && !box.contains(document.activeElement)) { const l = focusables(box); (l[i] || l[l.length - 1])?.focus(); }
+  // back on the same spot without scrolling to it: the box redraws while the user scrolls (the Models list every poll)
+  if (i >= 0 && !box.contains(document.activeElement)) { const l = focusables(box); (l[i] || l[l.length - 1])?.focus({ preventScroll: true }); }
 }
 syncModals();
 
