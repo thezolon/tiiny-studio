@@ -80,6 +80,10 @@ Ideas and requests are welcome as [feature requests](https://github.com/thezolon
 - **Energy per job,** from the power the Tiiny reports.
 - **Install and remove models from the studio,** without the TiinyOS app.
 
+**Help**
+- **Built-in help:** a short guide per tab and a troubleshooting page, in the app and on GitHub
+  ([#68](https://github.com/thezolon/tiiny-studio/issues/68)).
+
 **Library**
 - **Projects and tags** instead of one long gallery per tab.
 - **The prompt and settings stored in the files themselves** (PNG text, MP3/MP4 tags), so they travel with them.

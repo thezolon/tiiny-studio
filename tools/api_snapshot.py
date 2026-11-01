@@ -8,8 +8,8 @@
 Only GET requests are sent, and never to anything that changes the device.
 
 Usage: python tools/api_snapshot.py [--check]     (--check: compare and probe, don't overwrite)
-Device address and key: TIINY_URL / TIINY_KEY, else the studio's data/config.json (active device),
-else ~/.local/tiiny/config.json (TiinyOS)."""
+Device address and key: TIINY_URL / TIINY_KEY, else the studio's data/config.json or the desktop app's config
+(active device), else ~/.local/tiiny/config.json (TiinyOS)."""
 import json
 import os
 import sys
@@ -30,13 +30,23 @@ PROBES = [
 ]
 
 
+def app_config():
+    """The desktop app's settings: the per-user folder server.py's user_data_dir() names."""
+    if sys.platform == "win32":
+        return Path(os.environ.get("APPDATA") or Path.home() / "AppData" / "Roaming") / "Tiiny Studio" / "config.json"
+    if sys.platform == "darwin":
+        return Path.home() / "Library" / "Application Support" / "Tiiny Studio" / "config.json"
+    return Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local" / "share") / "tiiny-studio" / "config.json"
+
+
 def device():
     url, key = os.environ.get("TIINY_URL"), os.environ.get("TIINY_KEY")
-    if not url:
+    for saved in [] if url else [ROOT / "data" / "config.json", app_config()]:  # a source checkout, then the desktop app
         try:
-            c = json.loads((ROOT / "data" / "config.json").read_text("utf-8"))
+            c = json.loads(saved.read_text("utf-8"))
             d = next((d for d in c.get("devices", []) if d.get("id") == c.get("active")), (c.get("devices") or [{}])[0])
             url, key = d.get("url"), key or d.get("key")
+            break
         except (OSError, ValueError, StopIteration):
             pass
     if not url or not key:
