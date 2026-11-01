@@ -147,9 +147,15 @@ class Settings:
         # "on" is the global switch; each section's switch only counts while it's on. All on by default.
         self.swap = {k: bool((saved.get("swap") or {}).get(k, True)) for k in SWAP_KEYS}
         self.helper_model = str(saved.get("helper_model") or "")  # the text model helpers use ("" = automatic)
+        # "Check for updates": None until the user decides, then the default applies (on, but off in Docker)
+        self.update_check = saved["update_check"] if isinstance(saved.get("update_check"), bool) else None
         self.status = {}        # device id -> {"ok": bool, "ms": int}
         self.pinned = None      # a device picked by hand stays in use while it answers
         self.last_switch = None  # {"to": name, "from": name, "t": epoch}
+
+    @property
+    def update_check_on(self):
+        return (not STUDIO_DOCKER) if self.update_check is None else self.update_check
 
     def current(self):
         return next((d for d in self.devices if d["id"] == self.active), self.devices[0] if self.devices else None)
@@ -179,13 +185,15 @@ class Settings:
                 "active": cur.get("id"), "name": cur.get("name", ""), "url": self.url, "host": self.host, "auto": self.auto,
                 "key_set": bool(self.key), "key_hint": hint(self.key), "configured": self.configured, "source": self.source,
                 "lan_access": LAN_ACCESS, "password": bool(PASSWORD), "last_switch": self.last_switch, "version": VERSION,
-                "swap": self.swap, "helper_model": self.helper_model, "docker": STUDIO_DOCKER,
+                "swap": self.swap, "helper_model": self.helper_model, "docker": STUDIO_DOCKER, "update_check": self.update_check_on,
                 "app": FROZEN}  # the standalone app: no .env to edit, so the UI words the network notes differently
 
     def _save(self):
         tmp = CONFIG.with_suffix(".tmp")
-        tmp.write_text(json.dumps({"devices": self.devices, "active": self.active, "auto": self.auto, "swap": self.swap,
-                                   "helper_model": self.helper_model}, indent=1), "utf-8")
+        saved = {"devices": self.devices, "active": self.active, "auto": self.auto, "swap": self.swap, "helper_model": self.helper_model}
+        if self.update_check is not None:
+            saved["update_check"] = self.update_check
+        tmp.write_text(json.dumps(saved, indent=1), "utf-8")
         try:
             os.chmod(tmp, 0o600)
         except OSError:
@@ -253,6 +261,11 @@ class Settings:
                 self.helper_model = req["helper_model"].strip()[:200]
             self._save()
 
+    def set_update_check(self, on):
+        with self.lock:
+            self.update_check = bool(on)
+            self._save()
+
     def swap_allowed(self, section):
         return self.swap["on"] and self.swap.get(section, False)
 
@@ -318,6 +331,56 @@ def normalize_url(url):
 
 
 SETTINGS = Settings()
+
+UPDATE_URL = "https://api.github.com/repos/thezolon/tiiny-studio/releases/latest"  # STUDIO_UPDATE_URL points tests elsewhere
+UPDATE_TTL = 24 * 3600  # an answer, or a failure, is remembered this long
+UPDATE = {"t": 0.0, "answer": None}
+UPDATE_LOCK = threading.Lock()
+
+
+def version_parts(tag):
+    """"v0.10.0" -> [0, 10, 0]; None for anything else (a "-rc1" suffix, "dev"): only plain releases are offered."""
+    m = re.fullmatch(r"v?(\d+(?:\.\d+)*)", str(tag).strip())
+    return [int(n) for n in m.group(1).split(".")] if m else None
+
+
+def newer_version(latest, current):
+    a, b = version_parts(latest), version_parts(current)
+    if a is None or b is None:
+        return False
+    n = max(len(a), len(b))
+    return a + [0] * (n - len(a)) > b + [0] * (n - len(b))
+
+
+def fetch_update():
+    """Ask GitHub once (anonymous: no identifiers, nothing about the device) for the latest release. Never raises;
+    any failure (offline, 403/429, bad JSON) answers "not available"."""
+    none = {"available": False}
+    req = urllib.request.Request(os.environ.get("STUDIO_UPDATE_URL") or UPDATE_URL,
+                                 headers={"User-Agent": f"tiiny-studio/{VERSION}", "Accept": "application/vnd.github+json"})
+    try:
+        with urllib.request.urlopen(req, timeout=10) as r:
+            rel = json.loads(r.read(1_000_000))
+    except (OSError, ValueError):  # URLError and HTTPError are OSErrors
+        return none
+    if not isinstance(rel, dict) or rel.get("draft") or rel.get("prerelease"):
+        return none
+    tag = rel.get("tag_name")
+    if not isinstance(tag, str) or not newer_version(tag, VERSION):
+        return none
+    notes, url = rel.get("body"), rel.get("html_url")
+    return {"available": True, "version": tag.strip().lstrip("v"), "notes": notes[:20000] if isinstance(notes, str) else "",
+            "url": url if isinstance(url, str) else ""}
+
+
+def check_update():
+    """GET /api/update: the newest release if it is newer than this one, cached for a day. Off: GitHub isn't contacted."""
+    if not SETTINGS.update_check_on:
+        return {"available": False}
+    with UPDATE_LOCK:
+        if UPDATE["answer"] is None or time.time() - UPDATE["t"] >= UPDATE_TTL:
+            UPDATE["answer"], UPDATE["t"] = fetch_update(), time.time()
+        return UPDATE["answer"]
 
 
 def load_history():
@@ -671,6 +734,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(200, load_history())
         if p == "/api/settings":
             return self.send_json(200, {**SETTINGS.public(), "can_open_folder": can_open_folder(self.client_address[0])})
+        if p == "/api/update":
+            return self.send_json(200, check_update())
         if p == "/api/stats":
             return self.send_json(200, device_stats())
         if p == "/api/busy":
@@ -778,7 +843,7 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_json(200, {"ok": True})
         if self.path == "/api/settings/test":
             return self.test_settings()
-        m = re.fullmatch(r"/api/settings/(delete|move|activate|auto|swap|check)", self.path)
+        m = re.fullmatch(r"/api/settings/(delete|move|activate|auto|swap|updates|check)", self.path)
         if m:
             return self.device_action(m.group(1))
         if self.path == "/api/model/launch":
@@ -870,6 +935,10 @@ class Handler(BaseHTTPRequestHandler):
             SETTINGS.set_auto(req.get("auto", True))
         elif action == "swap":
             SETTINGS.set_swap(req)
+        elif action == "updates":
+            SETTINGS.set_update_check(req.get("update_check"))
+            with UPDATE_LOCK:
+                UPDATE["answer"] = None  # a fresh answer the next time it's on
         elif action == "check":
             SETTINGS.check()
         self.send_json(200, SETTINGS.public())

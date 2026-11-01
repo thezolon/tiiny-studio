@@ -12,6 +12,7 @@ mod routes;
 pub mod safety;
 pub mod settings;
 pub mod store;
+mod update;
 
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
@@ -48,6 +49,8 @@ pub struct AppState {
     pub store: Arc<store::Store>,
     /// entry id -> (text, vector) for smart search; memory only, dropped on delete/wipe
     pub(crate) search_cache: Arc<Mutex<SearchCache>>,
+    /// (when asked, the answer) of GET /api/update; a failure is cached too
+    pub(crate) update_cache: Arc<tokio::sync::Mutex<Option<(Instant, serde_json::Value)>>>,
 }
 
 impl AppState {
@@ -71,6 +74,7 @@ impl AppState {
             jobs: Arc::default(),
             store: Arc::new(store::Store::new(&config_dir)),
             search_cache: Arc::default(),
+            update_cache: Arc::default(),
         }
     }
 

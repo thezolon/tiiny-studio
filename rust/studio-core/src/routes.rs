@@ -42,6 +42,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/catalog", get(catalog))
         .route("/api/stats", get(stats))
         .route("/api/busy", get(busy))
+        .route("/api/update", get(update))
         .route("/api/model/plan", get(model_plan))
         .route("/api/model/info", get(model_info))
         .route("/api/model/launch", post(model_launch))
@@ -413,6 +414,12 @@ async fn device_action(
             .settings
             .set_auto(req.get("auto").map(device::truthy).unwrap_or(true)),
         "swap" => state.settings.set_swap(&req),
+        "updates" => {
+            state
+                .settings
+                .set_update_check(req.get("update_check").map(device::truthy).unwrap_or(false));
+            state.update_cache.lock().await.take(); // a fresh answer the next time it's on
+        }
         "check" => state.settings.check(&state.http).await,
         _ => return not_found().await,
     }
@@ -521,6 +528,10 @@ async fn stats(State(state): State<AppState>) -> Json<Value> {
 
 async fn busy(State(state): State<AppState>) -> Json<Value> {
     Json(json!({"busy": state.device_lock.try_lock().is_err()}))
+}
+
+async fn update(State(state): State<AppState>) -> Json<Value> {
+    Json(crate::update::check(&state).await)
 }
 
 async fn model_plan(
