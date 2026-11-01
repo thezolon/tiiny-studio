@@ -729,6 +729,10 @@ fn percent_decode(s: &str) -> String {
     String::from_utf8_lossy(&out).into_owned()
 }
 
+/// "device url org/name" the device answered 404 for, until the studio restarts.
+static NO_ICON: std::sync::Mutex<std::collections::BTreeSet<String>> =
+    std::sync::Mutex::new(std::collections::BTreeSet::new());
+
 /// Model icons from the device (no key needed), cached in data/icons.
 async fn icon(
     State(state): State<AppState>,
@@ -741,10 +745,12 @@ async fn icon(
     let _ = std::fs::create_dir_all(&dir);
     let cached = dir.join(format!("{org}__{name}.png"));
     if !cached.exists() {
-        let url = format!(
-            "{}/api/v1/models/online_models/{org}/{name}/icon",
-            state.settings.current().url
-        );
+        let base = state.settings.current().url;
+        let key = format!("{base} {org}/{name}");
+        if NO_ICON.lock().unwrap().contains(&key) {
+            return error(StatusCode::NOT_FOUND, "no icon");
+        }
+        let url = format!("{base}/api/v1/models/online_models/{org}/{name}/icon");
         let bytes = match state
             .http
             .get(url)
@@ -753,6 +759,11 @@ async fn icon(
             .await
         {
             Ok(r) if r.status().is_success() => r.bytes().await.ok(),
+            Ok(r) if r.status() == StatusCode::NOT_FOUND => {
+                // the device has none: don't ask again on every redraw
+                NO_ICON.lock().unwrap().insert(key);
+                None
+            }
             _ => None,
         };
         match bytes {

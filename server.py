@@ -105,6 +105,7 @@ VERSION = (Path(__file__).with_name("VERSION").read_text("utf-8").strip() if Pat
 IMAGES = DATA / "images"
 IMAGES.mkdir(parents=True, exist_ok=True)
 ICONS = DATA / "icons"
+NO_ICON = set()  # (device url, model id) the device answered 404 for, until the studio restarts
 ICONS.mkdir(parents=True, exist_ok=True)
 HISTORY = DATA / "history.json"
 CONFIG = DATA / "config.json"
@@ -720,12 +721,16 @@ class Handler(BaseHTTPRequestHandler):
         return parse_qs(urlparse(self.path).query).get("id", [""])[0]
 
     def proxy_icon(self, mid):
-        cached = ICONS / (mid.replace("/", "__") + ".png")
+        cached, key = ICONS / (mid.replace("/", "__") + ".png"), (SETTINGS.url, mid)
         if not cached.exists():
+            if key in NO_ICON:
+                return self.send_json(404, {"error": {"message": "no icon"}})
             try:
                 with urllib.request.urlopen(f"{SETTINGS.url}/api/v1/models/online_models/{mid}/icon", timeout=10) as r:
                     cached.write_bytes(r.read())
-            except (urllib.error.URLError, OSError):
+            except (urllib.error.URLError, OSError) as e:
+                if getattr(e, "code", None) == 404:  # the device has none: don't ask again on every redraw
+                    NO_ICON.add(key)
                 return self.send_json(404, {"error": {"message": "no icon"}})
         return self.send_file(cached, "image/png", cache=True)
 

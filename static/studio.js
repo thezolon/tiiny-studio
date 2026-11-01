@@ -13,6 +13,10 @@ const el = (tag, attrs = {}, ...kids) => {
   return n;
 };
 const icon = (id) => { const s = document.createElementNS("http://www.w3.org/2000/svg", "svg"); s.innerHTML = `<use href="#${id}"/>`; return s; };
+/* Some models have no icon on the Tiiny (its icon route answers 404): show a plain chip tile, never a broken image. */
+const NO_ICON = "data:image/svg+xml," + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" fill="none" stroke="#8a909e" stroke-width="2" stroke-linecap="round"><rect x="10" y="10" width="12" height="12" rx="2"/><path d="M13 6v4M19 6v4M13 22v4M19 22v4M6 13h4M6 19h4M22 13h4M22 19h4"/></svg>');
+function noIcon(e) { if (!e.currentTarget.src.startsWith("data:")) e.currentTarget.src = NO_ICON; }
+const modelImg = (m, attrs = {}) => el("img", { src: "/api/icon/" + m.id, alt: "", onerror: noIcon, ...attrs });
 const REDUCED_MOTION = matchMedia("(prefers-reduced-motion: reduce)").matches;  // the CSS stills its own animations; this is for the moving media
 const store = {
   get(k, d) { try { const v = localStorage.getItem("tiiny." + k); return v == null ? d : JSON.parse(v); } catch { return d; } },
@@ -164,6 +168,7 @@ function renderModelBtn() {
     return;
   }
   const m = modelById(S.model);
+  $("#modelIco").onerror = noIcon;
   $("#modelIco").src = m ? "/api/icon/" + m.id : "";
   $("#modelIco").style.visibility = m ? "visible" : "hidden";
   $("#modelName").textContent = m ? shortName(m.id) : S.deviceOk === false ? (S.keyRejected ? "API key rejected" : "Device offline") : Object.keys(S.loading).length ? "Loading model…" : "No model loaded";
@@ -228,7 +233,7 @@ function modelCard(m) {
   const status = loading ? "loading" : m.status;
   const card = el("div", { class: "mcard" + (active ? " active" : "") });
   card.append(el("div", { class: "mcard-top" },
-    el("div", { class: "ico" }, el("img", { src: "/api/icon/" + m.id, alt: "" })),
+    el("div", { class: "ico" }, modelImg(m)),
     el("div", { class: "info" },
       el("div", { class: "nm" }, shortName(m.id), el("span", { class: "status " + status }, active ? "active" : status === "stopped" ? "not loaded" : status)),
       el("div", { class: "sub" }, [m.params, m.type, m.npu_usage != null && `${m.npu_usage}% NPU`].filter(Boolean).join(" · ")))));

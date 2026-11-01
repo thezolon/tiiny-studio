@@ -270,7 +270,7 @@ function modelGate(tool, what) {
   if (!m) return el("div", { class: "gate" }, el("b", {}, `No ${what} model installed.`), el("p", {}, `Download one in the TiinyOS app (${TOOL_TYPES[tool]}).`));
   const loading = S.loading[m.id] != null || m.status === "loading";
   return el("div", { class: "gate" },
-    el("img", { class: "gate-ico", src: "/api/icon/" + m.id, alt: "" }),
+    modelImg(m, { class: "gate-ico" }),
     el("div", { class: "grow" }, el("b", {}, `${shortName(m.id)} isn't loaded`), el("p", {}, loading ? "Loading… this takes a few seconds." : `Needs ${m.npu_usage ?? "?"}% NPU · loads in ~${fmtSec(m.load_time || 30)}`)),
     el("button", { class: "btn-sm accent", disabled: loading, onclick: () => loadModel(m.id) }, loading ? "Loading…" : "Load"));
 }

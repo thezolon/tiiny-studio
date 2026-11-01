@@ -352,6 +352,8 @@ class Handler(BaseHTTPRequestHandler):
             # the device answers a bare list here, keyed by model_id
             self.send_json(200, [{**{k: v for k, v in m.items() if k not in ("id", "display_name", "costMemory", "size", "version")}, "model_id": m["id"], "name": m["display_name"]} for m in CATALOG])
         elif method == "GET" and re.fullmatch(r"/api/v1/models/online_models/.+/icon", p):
+            if p.split("/online_models/", 1)[1].rsplit("/", 1)[0] == VIDEO:  # 0.1.38 has no icon for MiniMax-H3-Turbo
+                return self.send_json(404, {"error": {"code": "NOT_FOUND", "message": "Icon not found."}, "detail": "Icon not found."})
             self.send_bytes(200, PNG, "image/png")
         elif method == "GET" and p == "/api/v1/models/running":
             with st.lock:

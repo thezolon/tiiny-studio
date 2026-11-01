@@ -105,6 +105,15 @@ class Device(ContractCase):
         self.assertEqual((py.status, rs.status), (200, 200))
         self.assertEqual(py.body, rs.body)
 
+    def test_missing_icon_is_asked_for_once(self):
+        # 0.1.38 has no icon for MiniMax-H3-Turbo (404); the drawer redraws every few seconds, so remember that
+        request(self.h.fake_url, "POST", "/__reset_log")
+        for _ in range(2):
+            py, rs = self.get("/api/icon/lightx2v/MiniMax-H3-Turbo")
+            self.assertEqual((py.status, rs.status), (404, 404))
+        asked = [r["path"] for r in json.loads(request(self.h.fake_url, "GET", "/__requests").body) if r["path"].endswith("/icon")]
+        self.assertEqual(asked, ["/api/v1/models/online_models/lightx2v/MiniMax-H3-Turbo/icon"] * 2)  # once per server
+
     def test_devices_lifecycle(self):
         steps = [
             ("/api/settings", {"new": True, "name": "Hotspot", "url": "192.168.1.60", "key": "key-bbbb-2222"}),
