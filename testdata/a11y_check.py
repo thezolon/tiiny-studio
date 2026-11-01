@@ -86,6 +86,10 @@ def main():
                 for tab in ("Image", "Audio", "3D", "Video", "Chat"):
                     page.get_by_role("tab", name=tab, exact=True).first.click()
                     scan(tab)
+                    if tab == "3D":  # the fake has two 3D models: the model picker's list too
+                        page.locator("#wsMesh .pick-btn").click()
+                        scan("3D model list")
+                        page.keyboard.press("Escape")
                     for i in range(page.locator("#aTools button").count() if tab == "Audio" else 0):  # Audio: one panel per tool
                         page.locator("#aTools button").nth(i).click()
                         scan(f"Audio tool {i + 1}")
