@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- **Model icons:** a model the Tiiny has no icon for (MiniMax-H3-Turbo) shows a plain chip tile instead of a broken image, and the studio stops asking the Tiiny for it on every redraw (#43).
 - **Video:** a clip with no step count now uses 4 steps (the app always did) instead of the device's 7, so a 2 s clip takes about 7 minutes rather than 12.
 - **Accessibility:** the studio now follows WCAG 2.2 level AA (#54). Everything works from the keyboard (the workspace tabs take the arrow keys, thumbnails, voices and the seed are real buttons), dialogs and the Models drawer trap and restore focus, controls have names, jobs are announced to screen readers, both themes meet the contrast ratios, and animations stop when your system asks for reduced motion.
 - **Error handling:** a job keeps talking to the device it started on (and sends only that device's key) even if the studio switches devices meanwhile; a result the disk can't hold is reported ("Couldn't save the result") instead of silently missing; a failed or cancelled job leaves no files behind; an answer that isn't JSON, a bad request body or one over 150 MB gets a clear error instead of a crash.
