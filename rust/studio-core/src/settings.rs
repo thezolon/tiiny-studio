@@ -64,7 +64,8 @@ impl Default for Swap {
 #[derive(Default)]
 struct State {
     swap: Swap,
-    helper_model: String, // the text model helpers use ("" = automatic)
+    helper_model: String,       // the text model helpers use ("" = automatic)
+    update_check: Option<bool>, // "Check for updates": None until the user decides, then the default (on, off in Docker)
     devices: Vec<Device>,
     active: Option<String>,
     auto: bool,
@@ -234,6 +235,7 @@ impl Settings {
             .and_then(Value::as_str)
             .unwrap_or("")
             .to_string();
+        st.update_check = saved.get("update_check").and_then(Value::as_bool);
         Settings {
             path,
             lan_access,
@@ -271,7 +273,19 @@ impl Settings {
         self.lock().devices.clone()
     }
 
+    /// "Check for updates": on by default, off by default in Docker (updates come with the image).
+    pub fn update_check(&self) -> bool {
+        self.lock().update_check.unwrap_or(!in_docker())
+    }
+
+    pub fn set_update_check(&self, on: bool) {
+        let mut st = self.lock();
+        st.update_check = Some(on);
+        self.save(&mut st);
+    }
+
     pub fn public(&self) -> Value {
+        let update_check = self.update_check();
         let st = self.lock();
         let cur = st.current().cloned();
         let (url, key) = cur
@@ -289,12 +303,16 @@ impl Settings {
             "source": st.source, "lan_access": self.lan_access, "password": self.password,
             "last_switch": st.last_switch, "version": crate::version(),
             "swap": st.swap, "helper_model": st.helper_model, "docker": in_docker(),
+            "update_check": update_check,
             "app": self.app, // the desktop app: no .env to edit, so the UI words the network notes differently
         })
     }
 
     fn save(&self, st: &mut State) {
-        let body = json!({"devices": st.devices, "active": st.active, "auto": st.auto, "swap": st.swap, "helper_model": st.helper_model});
+        let mut body = json!({"devices": st.devices, "active": st.active, "auto": st.auto, "swap": st.swap, "helper_model": st.helper_model});
+        if let Some(on) = st.update_check {
+            body["update_check"] = json!(on);
+        }
         let tmp = self.path.with_extension("tmp");
         let written = std::fs::write(
             &tmp,

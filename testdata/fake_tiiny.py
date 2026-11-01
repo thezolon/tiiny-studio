@@ -11,6 +11,8 @@ POST /__flags {..} switches on test behaviour until the next reset: "fail" {path
 never stops), "image_warmup" N (the next N image requests fail like Qwen-Image just after loading), "cutout_png" (images
 come back as RGBA cut-outs), "video_flaky" N / "content_flaky" N (the next N video polls answer 502 / downloads 503),
 "video_hold" (a clip renders until it's cancelled).
+GET /__release (no auth) stands in for GitHub's releases/latest: it answers the "release" flag (a release JSON; 404 when unset), or
+"release_fail" N (that status instead), and logs each call: GET /__release_hits (User-Agent and Accept of every call).
 POST /__seed {"videos": [{"id", "status", "age", "seconds"}], "sessions": [{"session_id", "model_id", "route", "status", "age"}]} plants results the studio never
 saw (a finished clip, music sessions made `age` seconds ago), like ones left on the device by a restart or another studio.
 Everything except GET / and /__* needs `Authorization: Bearer <key>`, like the device. stdlib only."""
@@ -169,7 +171,7 @@ class State:
 
     def reset(self):
         with self.lock:
-            self.requests, self.shutdowns = [], 0
+            self.requests, self.shutdowns, self.release_hits = [], 0, []
             self.running = {mid: self._instance(mid) for mid in self.initial}
             self.pending, self.tasks, self.sessions, self.videos = set(), {}, {}, {}
             self.session_meta = {}  # session id -> model_id, route, created_at (what GET /v1/music/sessions adds)
@@ -318,6 +320,17 @@ class Handler(BaseHTTPRequestHandler):
             with self.st.lock:
                 self.st.requests = []
             return self.send_json(200, {"ok": True})
+        if method == "GET" and path == "/__release":
+            with self.st.lock:
+                self.st.release_hits.append({"user_agent": self.headers.get("User-Agent"), "accept": self.headers.get("Accept")})
+            if self.st.flags.get("release_fail"):
+                return self.err(self.st.flags["release_fail"], "API rate limit exceeded")
+            if "release" not in self.st.flags:
+                return self.err(404, "Not Found")
+            return self.send_json(200, self.st.flags["release"])
+        if method == "GET" and path == "/__release_hits":
+            with self.st.lock:
+                return self.send_json(200, list(self.st.release_hits))
         if method == "POST" and path == "/__seed":
             return self.seed(body or {})
         if method == "POST" and path == "/__flags":

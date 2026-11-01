@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- **New version notice:** when a newer release is out, a small pill in the top bar says so; click it for the release notes and a link to the release page, or ✕ to hide it until the next version. The studio asks GitHub once a day (anonymous, nothing about you or your Tiiny); **Settings → Check for updates** turns it off, and it is off by default in Docker. Nothing is downloaded or installed for you (#45).
 - **After a Tiiny restart:** the studio now says the Tiiny is locked and how to unlock it (open the TiinyOS app once, or
   run `tiiny login`), instead of "Can't reach the Tiiny", and notices the unlock within seconds (#46).
 - **Fixes:** chat no longer stays busy forever when the studio restarts mid-reply; Escape stops the OCR/document reader

@@ -141,6 +141,7 @@ function settingsBody(firstRun) {
   return [
     deviceList(),
     i.configured ? swapSettings() : null,
+    updateSettings(),
     el("div", { class: "set-privacy" },
       el("div", {}, el("b", {}, "Privacy"),
         el("p", {}, "What you make is saved only on this computer, in the studio's data folder, and the studio sends it nowhere but your Tiiny. Deleting a result removes it and its prompt, sources and cached copies. To clear it all at once:"),
