@@ -112,7 +112,7 @@ pub async fn run(ctx: Ctx) -> JobResult {
             return Err(JobError("Lost the Tiiny while it rendered this video. If it finished, it's kept on the device for an hour.".into()));
         }
         if lost > 0 {
-            ctx.update(json!({"message": "Can't reach the Tiiny, still trying…"}));
+            ctx.update(json!({"message": "No answer from the Tiiny yet (it's usually just busy). Still waiting…"}));
             continue;
         }
         ctx.update(json!({"progress": v.get("progress").and_then(Value::as_f64).unwrap_or(0.0) as i64,

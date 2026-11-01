@@ -382,7 +382,7 @@ pub async fn run(ctx: Ctx) -> JobResult {
                         "{stage}: lost the Tiiny while it worked on this task"
                     )));
                 }
-                ctx.update(json!({"message": "Can't reach the Tiiny, still trying…"}));
+                ctx.update(json!({"message": "No answer from the Tiiny yet (it's usually just busy). Still waiting…"}));
                 continue;
             }
             let d = st
