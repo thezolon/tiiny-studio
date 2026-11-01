@@ -3,7 +3,6 @@ and deleting a song or loop deletes the Tiiny's copy. Both servers run the same 
 answer the same and make the same device requests."""
 import hashlib
 import json
-import time
 import unittest
 from pathlib import Path
 
@@ -30,13 +29,6 @@ class RecoverBase(Jobs):
     def history(self, base):
         return request(base, "GET", "/api/history").json
 
-    def wait_for(self, method, path):
-        for _ in range(100):  # the Tiiny's copy goes in the background
-            if any(c[:2] == (method, path) for c in self.calls()):
-                return
-            time.sleep(0.05)
-        self.fail(f"the studio never sent {method} {path}")
-
     # ---------- the story ----------
     def story(self, base):
         """Everything one server does with the fake, as comparable observations."""
@@ -62,9 +54,9 @@ class RecoverBase(Jobs):
         self.assertEqual((song["device"], loop["device"]), ({"music_session": "s-song"}, {"music_session": "s-loop"}))
         self.post_fake("/__reset_log")
         request(base, "DELETE", "/api/history/" + song["id"])
-        self.wait_for("DELETE", "/v1/music/sessions/s-song")
+        self.wait_sent("DELETE", "/v1/music/sessions/s-song")
         request(base, "POST", "/api/history/delete", {"ids": [loop["id"]]})
-        self.wait_for("DELETE", "/v1/music/sessions/s-loop")
+        self.wait_sent("DELETE", "/v1/music/sessions/s-loop")
         seen["deleted"] = [c for c in self.calls() if c[0] == "DELETE"]
         seen["after"] = self.recover(base)
         return seen
@@ -109,9 +101,9 @@ class RecoverJobs(RecoverBase):
             self.assertLessEqual(set(sessions), set(json.loads((Path(tmp) / "device_seen.json").read_text("utf-8"))))
             self.post_fake("/__reset_log")
             request(base, "DELETE", "/api/history/" + song["entry"]["id"])
-            self.wait_for("DELETE", "/v1/music/sessions/" + sessions[0])
+            self.wait_sent("DELETE", "/v1/music/sessions/" + sessions[0])
             request(base, "POST", "/api/history/delete", {"ids": [loop["entry"]["id"]]})
-            self.wait_for("DELETE", "/v1/music/sessions/" + sessions[1])
+            self.wait_sent("DELETE", "/v1/music/sessions/" + sessions[1])
 
     def test_unreadable_device_recovers_nothing(self):
         for base in (self.h.py_url, self.h.rs_url):

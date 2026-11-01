@@ -4,9 +4,7 @@ import time
 import unittest
 
 import harness
-from harness import ContractCase, request
-
-AUTH = {"Authorization": "Bearer fake-key"}
+from harness import AUTH, ContractCase, request
 
 
 class Scaffold(ContractCase):

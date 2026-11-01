@@ -3,11 +3,10 @@ behind by failed jobs. Both servers run against the fake Tiiny and must answer a
 import contextlib
 import json
 import shutil
-import time
 import unittest
 
 from harness import IMAGE as DOCKER, request  # first: puts testdata/ on the path
-from test_stage5_audio import ASR, AUTH, Jobs, PNG, SONG, VIDEO, WAV  # noqa: E402
+from test_stage5_audio import ASR, Jobs, PNG, SONG, VIDEO, WAV  # noqa: E402
 import fake_tiiny  # noqa: E402
 
 IMAGE_MODEL = "Qwen/Qwen-Image-2.1"
@@ -33,12 +32,11 @@ class Hardening(Jobs):
             request(base, "POST", "/api/settings/auto", {"auto": False})
             request(other_url, "POST", "/__reset")
             request(self.h.fake_url, "POST", "/__reset")
-            request(self.h.fake_url, "POST", "/api/v1/models/" + VIDEO.replace("/", "%2F") + "/launch", {"model_id": VIDEO}, headers=AUTH)
-            time.sleep(0.4)
+            self.load_on_fake(VIDEO)
             request(self.h.fake_url, "POST", "/__reset_log")
             request(self.h.fake_url, "POST", "/__flags", {"delay": {"/v1/videos": 1.5}})
             job = request(base, "POST", "/api/jobs", {"kind": "video", "model": VIDEO, "prompt": "RUST TEST duck", "seconds": 1}).json
-            time.sleep(0.7)  # inside the slow submit
+            self.wait_sent("POST", "/v1/videos")  # inside the slow submit
             request(base, "POST", "/api/settings/activate", {"id": second})
             job, calls = self.finish(base, job)
             request(base, "POST", "/api/settings/activate", {"id": first})
