@@ -1,11 +1,22 @@
 # Changelog
 
-## Unreleased
+## 0.5.1 (2026-11-01)
+
+Pick the model each tab uses, plus fixes from a day of real use: clearer messages during long jobs, drag and drop in
+the desktop app, and a Models list that stays put.
 
 - **Pick the model a tab uses:** when more than one installed model can do a tab's job (two image models, Hunyuan3D and
   TRELLIS.2, several voice or song models), the tab shows a card with the model in use. Click it for the list: pick a
   loaded model, or load or unload any of them with its own button. Nothing loads by itself, and each tab remembers its
   choice (#44).
+- **Long 3D and video jobs:** while the Tiiny is too busy to answer, the studio now says "No answer from the Tiiny yet
+  (it's usually just busy)" instead of "Can't reach the Tiiny". A job running past its estimate says "taking longer
+  than usual" instead of a finish time that kept moving, and the jobs menu no longer shows a stray "null".
+- **Desktop app:** dropping a picture from Explorer onto the studio works again (Windows).
+- **Models list:** stays where you scrolled while it updates, instead of jumping back to the last thing you clicked.
+- **Good to know:** the Tiiny stops a video after 1 hour (TiinyOS 0.1.38), and the render may keep the NPU busy
+  afterwards; unloading the video model frees it. Keep long clips at 480p and 4 steps (7 s takes about 12 minutes).
+  A warning in the studio is planned (#80).
 
 ## 0.5.0 (2026-10-31)
 

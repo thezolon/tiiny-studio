@@ -278,7 +278,7 @@ Things on the Tiiny's side (TiinyOS 0.1.35 to 0.1.38) that the studio works arou
 
 ## Status
 
-Version 0.5.0 (see [CHANGELOG.md](CHANGELOG.md)). An unofficial community project, not affiliated with
+Version 0.5.1 (see [CHANGELOG.md](CHANGELOG.md)). An unofficial community project, not affiliated with
 Tiiny. Tested against TiinyOS 0.1.35 to 0.1.38; device APIs may change with firmware updates
 (`python tools/api_snapshot.py --check` shows what changed).
 

@@ -1,6 +1,6 @@
 # Roadmap
 
-Where Tiiny Studio stands, what's next, and what doesn't work yet. Version **0.5.0**, checked against TiinyOS
+Where Tiiny Studio stands, what's next, and what doesn't work yet. Version **0.5.1**, checked against TiinyOS
 0.1.35 to 0.1.38 on a Tiiny Pocket.
 
 ## Works now
@@ -22,6 +22,8 @@ Where Tiiny Studio stands, what's next, and what doesn't work yet. Version **0.5
   background doesn't end up in the model.
 - **Gallery, models panel and device:** search and smart search, favourites, zip export, bulk delete; load and
   unload models with the NPU memory budget shown; live device activity; power off.
+- **Pick the model:** when several installed models can do a tab's job, the tab shows which one it uses and lets you
+  pick another, or load and unload any of them.
 - **Model swapping:** helpers (Improve prompt, Describe, Write lyrics, loop tags) and chat tools load the model they
   need and put yours back afterwards. A global switch and one per section in Settings (all on by default), and a
   choice of which text model the helpers use.
@@ -61,7 +63,8 @@ Ideas and requests are welcome as [feature requests](https://github.com/thezolon
 
 ### Next release
 
-- **Pick which model a tab uses** when several fit (Hunyuan3D or TRELLIS.2, the song models, voices) ([#44](https://github.com/thezolon/tiiny-studio/issues/44)).
+- **Long jobs:** a warning before a video that can't finish within the Tiiny's 1-hour limit, cleanup after one that
+  times out, and failed jobs that stay visible with their reason ([#80](https://github.com/thezolon/tiiny-studio/issues/80)).
 - The rest of the panels that should follow the loaded model: image steps and guidance, transcription languages, loops
   ([#41](https://github.com/thezolon/tiiny-studio/issues/41)).
 
