@@ -240,13 +240,28 @@ function wifiNote(m) {
   return el("div", { class: "hint-line warn" }, `${shortName(m.id)} needs a Wi-Fi/LAN connection: over this one (USB) the Tiiny's gateway can't run it. `
     + "Switch to the Tiiny's Wi-Fi address in Settings, or pick another model.");
 }
-function modelForTool(tool) {
-  if (tool === "chat" || tool === "vision") return helperModel(tool === "vision");
+/** The installed models that can do a tool's job. */
+function toolModels(tool) {
   const list = (S.allModels || []).filter((m) => m.type === TOOL_TYPES[tool]);
   const isSong = (m) => /song|lyric/i.test(m.id + " " + (m.desc || "").slice(0, 300));
-  const pick = tool === "song" ? list.filter(isSong) : tool === "loop" ? list.filter((m) => !isSong(m)) : tool === "ocr" ? list.filter((m) => !layoutOnly(m)) : list;
-  return pick.find((m) => m.status === "running") || pick[0] || null;
+  return tool === "song" ? list.filter(isSong) : tool === "loop" ? list.filter((m) => !isSong(m)) : tool === "ocr" ? list.filter((m) => !layoutOnly(m)) : list;
 }
+/** The model a tool uses: the one picked for it (#44), else a loaded one, else the first installed. */
+function modelForTool(tool) {
+  if (tool === "chat" || tool === "vision") return helperModel(tool === "vision");
+  const list = toolModels(tool), picked = store.get("pick." + tool, null);
+  return list.find((m) => m.id === picked) || list.find((m) => m.status === "running") || list[0] || null;
+}
+/** A "Model" menu when several models can do the job (loaded ones first), else null. */
+function modelPicker(models, cur, choose) {
+  if (models.length < 2) return null;
+  const sorted = [...models].sort((a, b) => (b.status === "running") - (a.status === "running"));
+  return el("label", { class: "tool-pick" }, el("span", {}, "Model"),
+    el("select", { class: "input", "aria-label": "Model", onchange: (e) => choose(e.target.value) }, sorted.map((m) =>
+      el("option", { value: m.id, selected: m.id === cur }, shortName(m.id) + (m.status === "running" ? " · loaded" : ` · needs ${m.npu_usage ?? "?"}% NPU`)))));
+}
+/** The picker for a tool; the choice is remembered per tool. */
+const toolPicker = (tool, done) => modelPicker(toolModels(tool), modelForTool(tool)?.id, (id) => { store.set("pick." + tool, id); done(); });
 function mediaBadges(m) {
   const d = m.desc || "";
   if (m.type === "Text-to-Speech") return [(m.supported || []).includes("Voice Clone") ? "Voice clone" : "Speech", /10 languages/i.test(d) && "10 languages", "Style instructions"].filter(Boolean);
@@ -521,8 +536,8 @@ function mediaWS(c) {
     },
     seg(items, val, set, key) { return el("div", { class: "seg small" }, items.map(([v, label]) => el("button", { "aria-pressed": val === v, onclick: () => { set(v); store.set(key, v); this.render(); } }, label))); },
     renderGate() {
-      const g = modelGate(...c.gate());
-      $(`#${p}Gate`).replaceChildren(...(g ? [g] : []));
+      const g = modelGate(...c.gate()), pick = toolPicker(c.gate()[0], () => this.render());
+      $(`#${p}Gate`).replaceChildren(...[pick, g].filter(Boolean));
       this.renderFoot();
     },
     /** The tool's model and whether it's loaded; also writes the "name · not loaded" line in the footer. */
