@@ -1,6 +1,6 @@
 # Roadmap
 
-Where Tiiny Studio stands, what's next, and what doesn't work yet. Version **0.4.0**, checked against TiinyOS
+Where Tiiny Studio stands, what's next, and what doesn't work yet. Version **0.5.0**, checked against TiinyOS
 0.1.35 to 0.1.38 on a Tiiny Pocket.
 
 ## Works now
@@ -30,12 +30,17 @@ Where Tiiny Studio stands, what's next, and what doesn't work yet. Version **0.4
   them; **cancel** any running or queued job (or remove all waiting ones), and the Tiiny's work stops too. Quitting
   the app or stopping the server stops running work on the device first. Results left on the Tiiny are saved, and
   deleting a song or loop deletes the Tiiny's copy too. The Tiiny's free space is watched.
-- **Connections:** Wi-Fi/LAN and USB, several saved devices with auto-switch.
+- **Connections:** Wi-Fi/LAN and USB, several saved devices with auto-switch. After a Tiiny restart the studio says it
+  needs unlocking (TiinyOS app or `tiiny login`) and notices when it is.
+- **Accessible:** WCAG 2.2 level AA: everything works from the keyboard, with screen readers, in both themes, and
+  with reduced motion. An automated check (axe-core) runs on every change.
+- **Updates:** a quiet notice when a new version is out, with its release notes; nothing is downloaded for you.
 - **Private by default:** results stay on your computer, complete deletes, no telemetry, network access off
-  unless you turn it on (with an optional password).
+  unless you turn it on (with an optional password). The only outside request is one anonymous version check a day,
+  which Settings can turn off (off by default in Docker).
 
 Tested: unit tests and contract tests (the Rust server against the original Python one, both talking to a fake
-Tiiny) on Windows (x64 and ARM), macOS and Linux, plus live runs on a real Tiiny. **Hands-on, only the Windows x64
+Tiiny) on Windows (x64 and ARM), macOS and Linux, an accessibility check of the web UI, plus live runs on a real Tiiny. **Hands-on, only the Windows x64
 app and the Docker image (amd64) have been tested**; everything else is built and smoke-tested by CI only (see
 Known limits).
 
@@ -56,12 +61,9 @@ Ideas and requests are welcome as [feature requests](https://github.com/thezolon
 
 ### Next release
 
-- **After a Tiiny restart, say why it doesn't answer:** it stays locked until the TiinyOS app has been opened once
-  ([#46](https://github.com/thezolon/tiiny-studio/issues/46)).
 - **Pick which model a tab uses** when several fit (Hunyuan3D or TRELLIS.2, the song models, voices) ([#44](https://github.com/thezolon/tiiny-studio/issues/44)).
-- **A small notice when a new version is out,** with its release notes, and a Check for updates button ([#45](https://github.com/thezolon/tiiny-studio/issues/45)).
-- Fix the broken model icon on the Video tab ([#43](https://github.com/thezolon/tiiny-studio/issues/43)), and the rest of the panels that should follow the loaded
-  model: image steps and guidance, transcription languages, loops ([#41](https://github.com/thezolon/tiiny-studio/issues/41)).
+- The rest of the panels that should follow the loaded model: image steps and guidance, transcription languages, loops
+  ([#41](https://github.com/thezolon/tiiny-studio/issues/41)).
 
 ### Ideas
 

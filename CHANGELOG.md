@@ -1,22 +1,30 @@
 # Changelog
 
-## Unreleased
+## 0.5.0 (2026-10-31)
 
-- **New version notice:** when a newer release is out, a small pill in the top bar says so; click it for the release notes and a link to the release page, or ✕ to hide it until the next version. The studio asks GitHub once a day (anonymous, nothing about you or your Tiiny); **Settings → Check for updates** turns it off, and it is off by default in Docker. Nothing is downloaded or installed for you (#45).
+Cleanup and accessibility: the studio now works from the keyboard and with screen readers, explains a locked Tiiny,
+tells you when a new version is out, and the code underneath was audited and tidied from end to end.
+
+- **Accessibility:** the studio now follows WCAG 2.2 level AA (#54). Everything works from the keyboard (the workspace tabs take the arrow keys, thumbnails, voices and the seed are real buttons), dialogs and the Models drawer trap and restore focus, controls have names, jobs are announced to screen readers, both themes meet the contrast ratios, and animations stop when your system asks for reduced motion.
 - **After a Tiiny restart:** the studio now says the Tiiny is locked and how to unlock it (open the TiinyOS app once, or
   run `tiiny login`), instead of "Can't reach the Tiiny", and notices the unlock within seconds (#46).
+- **New version notice:** when a newer release is out, a small pill in the top bar says so; click it for the release notes and a link to the release page, or ✕ to hide it until the next version. The studio asks GitHub once a day (anonymous, nothing about you or your Tiiny); **Settings → Check for updates** turns it off, and it is off by default in Docker. Nothing is downloaded or installed for you (#45).
+- **Video:** a clip with no step count now uses 4 steps (the app always did) instead of the device's 7, so a 2 s clip takes about 7 minutes rather than 12.
+- **Model icons:** a model the Tiiny has no icon for (MiniMax-H3-Turbo) shows a plain chip tile instead of a broken image, and the studio stops asking the Tiiny for it on every redraw (#43).
 - **Fixes:** chat no longer stays busy forever when the studio restarts mid-reply; Escape stops the OCR/document reader
   as well as closing it; image shortcuts no longer fire behind open dialogs; the jobs pill's NPU % keeps updating; the
   recording level meter moves again; "Delete everything" also clears Chat and Video; a failed voice delete says so (#53).
-- **Model icons:** a model the Tiiny has no icon for (MiniMax-H3-Turbo) shows a plain chip tile instead of a broken image, and the studio stops asking the Tiiny for it on every redraw (#43).
-- **Video:** a clip with no step count now uses 4 steps (the app always did) instead of the device's 7, so a 2 s clip takes about 7 minutes rather than 12.
-- **Accessibility:** the studio now follows WCAG 2.2 level AA (#54). Everything works from the keyboard (the workspace tabs take the arrow keys, thumbnails, voices and the seed are real buttons), dialogs and the Models drawer trap and restore focus, controls have names, jobs are announced to screen readers, both themes meet the contrast ratios, and animations stop when your system asks for reduced motion.
 - **Error handling:** a job keeps talking to the device it started on (and sends only that device's key) even if the studio switches devices meanwhile; a result the disk can't hold is reported ("Couldn't save the result") instead of silently missing; a failed or cancelled job leaves no files behind; an answer that isn't JSON, a bad request body or one over 150 MB gets a clear error instead of a crash.
 - **Docker:** the server never keeps root. It switches to the data folder's owner as before, and to an unprivileged user
   (uid 10001) when root owns the folder (a named volume, or one Docker created); if neither works it says so and stops.
   Rootless Docker/Podman is unchanged.
 - **Release builds:** each job gets only the permissions it needs, the GitHub Actions, Tauri CLI and Docker base images
   are pinned to exact versions, and a release stops early if the tag, VERSION, Cargo.toml and tauri.conf.json disagree.
+- **Under the hood:** a full code audit (#55): the web page's code is split into files with shared helpers for the
+  Audio, 3D and Video panels; both servers share their helpers; the Rust code uses standard formatting; and every pull
+  request now runs formatting, lint (clippy, ruff) and an accessibility check (axe-core) on top of the tests. The
+  tests wait for what they need instead of sleeping, and `tools/device_watch.py` checks before each release whether
+  Tiiny has fixed any of the device issues the studio works around.
 
 ## 0.4.0 (2026-10-30)
 
