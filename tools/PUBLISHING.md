@@ -72,7 +72,9 @@ gh run watch
 
 ## Later releases
 
-After a TiinyOS update, `python tools/api_snapshot.py --check` and the live tests first. `main` only changes through
+After a TiinyOS update, `python tools/api_snapshot.py --check` and the live tests first. Before every release,
+`python tools/device_watch.py`: the Tiiny issues the studio works around, checked against the device (and how to check
+the rest by hand); if one is fixed, drop its workaround first. `main` only changes through
 pull requests, so a release is one too: on a `release-<version>` branch bump `VERSION`, `rust/Cargo.toml` and
 `tauri.conf.json`, turn `## Unreleased` in `CHANGELOG.md` into `## <version>`, update README and ROADMAP.md, open the
 PR and merge it once CI is green. Then tag the merged commit and push only the tag:

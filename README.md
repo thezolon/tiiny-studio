@@ -205,6 +205,7 @@ Everything the studio saves stays on your machine: results, prompts, sources and
 | `.github/workflows/release.yml` | on a `v*` tag: desktop installers for every OS, the source zip and the Docker image, attached to a GitHub release |
 | `.github/workflows/rust.yml` | on pull requests and on `main` when code changes: Rust tests, contract tests and document parity on Windows, macOS and Linux; formatting (`cargo fmt`) and lint (clippy, ruff); an accessibility check of the web UI |
 | `tools/api_snapshot.py` | snapshots the device's API specs into `docs/api/` and lists what changed after an update |
+| `tools/device_watch.py` | checks whether Tiiny fixed the device issues the studio works around (read-only) |
 | `tools/release.py` | builds `dist/tiiny-studio-<version>.zip` from the committed tree (`--tag` also tags it) |
 
 ## Device APIs (TiinyOS 0.1.35 to 0.1.38, found by probing)
@@ -248,7 +249,9 @@ ports (from `running`; no auth; not exposed over USB):
 main slot, and a toast says where it landed. Image drop zones also have a **Paste** button, handy on a
 phone or tablet. Browsers only paste images that way, so for audio use `Ctrl+V`, drag-and-drop or Browse.
 
-## Known device issues (TiinyOS 0.1.35 to 0.1.38)
+## Known device issues
+
+Things on the Tiiny's side (TiinyOS 0.1.35 to 0.1.38) that the studio works around.
 
 - The 3D models' `background` stage fails (BriefNet is missing; Hunyuan3D and TRELLIS.2 alike), so the studio cuts
   the subject out with Qwen-Image first and doesn't offer the stage.
@@ -264,6 +267,9 @@ phone or tablet. Browsers only paste images that way, so for audio use `Ctrl+V`,
   use it.
 - The device can't list 3D tasks, so a 3D build cut short (the studio closed mid-build) can't be recovered. Videos,
   songs and loops can.
+- MiniMax-H3-Turbo has no model icon (0.1.38), so the studio shows a plain placeholder tile for it.
+
+`python tools/device_watch.py` checks which of these are still there (before each release, and after a TiinyOS update).
 
 ## Status
 

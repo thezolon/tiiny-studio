@@ -159,6 +159,7 @@ jobs:
           v=$(cat VERSION)
           awk -v v="## $v" '$0 ~ "^## " { on = index($0, v) == 1 } on' CHANGELOG.md > notes.md
           printf '\n---\n\nShowcase and discussion: [Tiiny Studio on TiinyVerse](https://tiinyverse.com/posts/5abfe45c-3cf0-4f53-88ab-b397741702c3) · [Tiiny Discord](https://discord.com/invite/R5CHUuXy4A) (#project-showcase → Tiiny Studio)\n' >> notes.md
+          printf '\nKnown Tiiny-side issues and how the studio works around them: [Known device issues](https://github.com/%s#known-device-issues)\n' "$GITHUB_REPOSITORY" >> notes.md
       - uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64  # v3.0.3
         with:
           name: Tiiny Studio ${{ github.ref_name }}
