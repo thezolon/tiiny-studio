@@ -271,6 +271,8 @@ Things on the Tiiny's side (TiinyOS 0.1.35 to 0.1.38) that the studio works arou
 - The device can't list 3D tasks, so a 3D build cut short (the studio closed mid-build) can't be recovered. Videos,
   songs and loops can.
 - MiniMax-H3-Turbo has no model icon (0.1.38), so the studio shows a plain placeholder tile for it.
+- After a restart the Tiiny answers every request with 502 until it's unlocked: open the TiinyOS app once, or run
+  `tiiny login` with the Tiiny CLI. The studio says the Tiiny is locked (not "can't reach") and notices the unlock by itself.
 
 `python tools/device_watch.py` checks which of these are still there (before each release, and after a TiinyOS update).
 

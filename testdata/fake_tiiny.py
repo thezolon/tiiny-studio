@@ -5,7 +5,8 @@ Every request is recorded (minus the Authorization header): GET /__requests, POS
 POST /__flags {..} switches on test behaviour until the next reset: "fail" {path: [status, message]}, "delay" {path: seconds},
 "html" [paths] (answer 200 with a web page instead of JSON, like a login portal or proxy in the way),
 "closed_port", "no_music_gateway", "speech_text", "task_polls" N, "task_hold", "fail_stage" name, "rich_texture", "song_tracks",
-"disk_free_gb" N (free storage in /api/v1/sys/status; plenty by default), "no_disk" (sys/status without disk keys).
+"disk_free_gb" N (free storage in /api/v1/sys/status; plenty by default), "no_disk" (sys/status without disk keys),
+"locked" (every request answers nginx's 502 page, like a Tiiny after a restart until TiinyOS unlocks it).
 "task_flaky" N / "artifact_flaky" N (the next N 3D task polls / artifact fetches answer 502), "ignore_cancel" (a 3D task that
 never stops), "image_warmup" N (the next N image requests fail like Qwen-Image just after loading), "cutout_png" (images
 come back as RGBA cut-outs), "video_flaky" N / "content_flaky" N (the next N video polls answer 502 / downloads 503),
@@ -293,6 +294,8 @@ class Handler(BaseHTTPRequestHandler):
             self.st.sessions["live"] = "running"
             time.sleep(flags["delay"][path])
             self.st.sessions.pop("live", None)
+        if flags.get("locked"):  # after a power cycle, until TiinyOS unlocks it: the web server answers, nothing behind it
+            return self.send_bytes(502, b"<html><head><title>502 Bad Gateway</title></head><body>nginx</body></html>", "text/html")
         if path in flags.get("fail", {}):
             return self.err(*flags["fail"][path])
         if path in flags.get("html", ()):
