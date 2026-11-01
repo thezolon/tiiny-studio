@@ -8,6 +8,8 @@ use crate::AppState;
 
 pub const NOT_CONFIGURED: &str =
     "No device configured yet. Open Settings and enter your Tiiny's address and API key.";
+/// After a power cycle the Tiiny's web server answers 502 until TiinyOS unlocks it (server.py LOCKED).
+pub const LOCKED: &str = "Your Tiiny is locked after a restart. Open the TiinyOS app once (or run \"tiiny login\" with the Tiiny CLI) to unlock it.";
 
 /// JSON request to the device; answers (status, JSON) like server.py device(): 503 when nothing is
 /// configured, 502 when unreachable, the device's own status and JSON (or its text as an error) otherwise.
@@ -107,6 +109,17 @@ pub async fn catalog(state: &AppState) -> (u16, Value) {
         None,
     )
     .await;
+    let unreachable = inst
+        .pointer("/error/message")
+        .and_then(Value::as_str)
+        .is_some_and(|m| m.starts_with("Device unreachable"));
+    if code == 502 && !unreachable {
+        // it answers, but its services aren't up
+        return (
+            502,
+            json!({"error": {"message": LOCKED, "type": "device_locked"}}),
+        );
+    }
     if code != 200 {
         return (code, inst);
     }

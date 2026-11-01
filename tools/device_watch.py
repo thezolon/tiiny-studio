@@ -70,7 +70,7 @@ WATCH = [
      "A 3D build cut short can't be recovered (media/recover.rs, media.py recover)."),
     ("manual", "API answers 502 after a restart until TiinyOS unlocks it",
      "Power-cycle the Tiiny; call /v1/models before opening the TiinyOS app or running `tiiny login`. Still there if 502.",
-     "Issue #46: the studio should say so instead of 'Can't reach the Tiiny'."),
+     "The studio says it's locked (LOCKED in server.py and rust/studio-core/src/device.rs, UNLOCK_HOW in static/studio.js)."),
 ]
 
 

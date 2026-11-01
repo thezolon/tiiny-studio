@@ -416,9 +416,15 @@ def model_info(mid):
     return 200, {"id": mid, "type": row.get("type"), "info": info}
 
 
+# After a power cycle the Tiiny's web server answers 502 until TiinyOS unlocks it.
+LOCKED = 'Your Tiiny is locked after a restart. Open the TiinyOS app once (or run "tiiny login" with the Tiiny CLI) to unlock it.'
+
+
 def catalog():
     """Every installed model with live status, tagged with the studio workspace that uses it."""
     code, inst = device("GET", "/api/v1/models/?including_downloading=false", timeout=15)
+    if code == 502 and not str((inst.get("error") or {}).get("message", "")).startswith("Device unreachable"):
+        return 502, {"error": {"message": LOCKED, "type": "device_locked"}}  # it answers, but its services aren't up
     if code != 200:
         return code, inst
     _, run = device("GET", "/api/v1/models/running", timeout=15)
