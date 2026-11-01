@@ -228,7 +228,9 @@ function renderComposer() {
   if (edit && S.sources[0]?.orig) feats.push(el("button", { class: "chip", onclick: () => insertChip("In the area marked in red, ", true) }, "In the marked area …"));
   $("#features").replaceChildren(...feats);
   const am = modelById(S.model);
-  $("#modelHint").replaceChildren(...(am ? [el("span", {}, el("b", {}, shortName(am.id)), " · " + capsLine(am))] : S.deviceOk ? [el("span", {}, "No image model loaded — "), el("a", { href: "#", style: "color:var(--accent-2)", onclick: (e) => { e.preventDefault(); openDrawer(); } }, "load one")] : []));
+  // several image models: pick a loaded one here (one that's loading is picked when it's ready)
+  const pick = am && modelPicker(S.models, am.id, (id) => { if (modelById(id)?.status === "running") selectModel(id); });
+  $("#modelHint").replaceChildren(...(am ? [pick || el("span", {}, el("b", {}, shortName(am.id))), el("span", {}, (pick ? "" : " · ") + capsLine(am))] : S.deviceOk ? [el("span", {}, "No image model loaded — "), el("a", { href: "#", style: "color:var(--accent-2)", onclick: (e) => { e.preventDefault(); openDrawer(); } }, "load one")] : []));
   $("#modeEdit").classList.toggle("locked", !!am && !C.edit);
   $("#modeEdit").title = am && !C.edit ? `${shortName(am.id)} can't edit images` : "Edit an existing image";
 

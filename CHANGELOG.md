@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- **Pick the model a tab uses:** when more than one installed model can do a tab's job (two image models, Hunyuan3D and
+  TRELLIS.2, several voice or song models), the tab shows a card with the model in use. Click it for the list: pick a
+  loaded model, or load or unload any of them with its own button. Nothing loads by itself, and each tab remembers its
+  choice (#44).
+
 ## 0.5.0 (2026-10-31)
 
 Cleanup and accessibility: the studio now works from the keyboard and with screen readers, explains a locked Tiiny,

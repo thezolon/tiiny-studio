@@ -784,6 +784,30 @@ details.adv summary .sum { margin-left: auto; color: var(--faint); font-weight: 
 
 .model-hint { margin-top: 10px; color: var(--faint); font-size: 12px; display: flex; flex-wrap: wrap; gap: 4px 10px; }
 .model-hint b { color: var(--muted); font-weight: 600; }
+.pick-card { display: flex; align-items: center; gap: 8px; flex-basis: 100%; margin-bottom: 12px; padding-right: 10px; border-radius: 12px;
+  border: 1px solid var(--line); background: var(--panel-2); transition: border-color .15s, box-shadow .15s; }
+.pick-card:hover, .pick-card:has([aria-expanded="true"]) { border-color: var(--accent-line); box-shadow: 0 0 0 3px var(--accent-soft); }
+.pick-btn { flex: 1; min-width: 0; display: flex; align-items: center; gap: 10px; padding: 8px 4px 8px 8px; border: 0; border-radius: 12px;
+  background: none; color: var(--text); text-align: left; cursor: pointer; }
+.pick-ico { width: 34px; height: 34px; border-radius: 9px; flex: none; object-fit: cover; background: var(--line); }
+.pick-name { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.pick-name b { font-size: 13.5px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pick-name small { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; }
+.pick-name small .dot { width: 7px; height: 7px; }
+.pick-change { display: flex; align-items: center; gap: 4px; color: var(--muted); font-size: 12px; white-space: nowrap; }
+.pick-change svg { width: 14px; height: 14px; transform: rotate(90deg); transition: transform .15s; }
+.pick-btn[aria-expanded="true"] .pick-change svg { transform: rotate(-90deg); }
+.pick-menu { overflow-y: auto; }
+.pick-head { padding: 8px 8px 4px; color: var(--faint); font-size: 11.5px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; }
+.pick-row { display: flex; align-items: center; gap: 8px; padding: 3px 6px 3px 3px; border-radius: 10px; }
+.pick-row:hover { background: var(--line); }
+.pick-use { flex: 1; min-width: 0; display: flex; align-items: center; gap: 10px; padding: 4px 5px; border: 0; border-radius: 8px; background: none;
+  color: var(--text); text-align: left; }
+button.pick-use { cursor: pointer; }
+span.pick-use { opacity: .85; }
+.pick-row[aria-current="true"] { background: var(--accent-soft); }
+.pick-row .pick-ico { width: 30px; height: 30px; border-radius: 8px; }
+.pick-check { color: var(--accent); font-weight: 700; padding: 0 4px; }
 .seg button.locked { opacity: .55; }
 .seg button.locked::after { content: "🔒"; font-size: 10px; margin-left: 2px; filter: grayscale(1); }
 .chip[aria-pressed="true"] { color: var(--accent-2); border-color: var(--accent); background: var(--accent-soft); }

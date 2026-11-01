@@ -240,13 +240,86 @@ function wifiNote(m) {
   return el("div", { class: "hint-line warn" }, `${shortName(m.id)} needs a Wi-Fi/LAN connection: over this one (USB) the Tiiny's gateway can't run it. `
     + "Switch to the Tiiny's Wi-Fi address in Settings, or pick another model.");
 }
-function modelForTool(tool) {
-  if (tool === "chat" || tool === "vision") return helperModel(tool === "vision");
+/** The installed models that can do a tool's job. */
+function toolModels(tool) {
   const list = (S.allModels || []).filter((m) => m.type === TOOL_TYPES[tool]);
   const isSong = (m) => /song|lyric/i.test(m.id + " " + (m.desc || "").slice(0, 300));
-  const pick = tool === "song" ? list.filter(isSong) : tool === "loop" ? list.filter((m) => !isSong(m)) : tool === "ocr" ? list.filter((m) => !layoutOnly(m)) : list;
-  return pick.find((m) => m.status === "running") || pick[0] || null;
+  return tool === "song" ? list.filter(isSong) : tool === "loop" ? list.filter((m) => !isSong(m)) : tool === "ocr" ? list.filter((m) => !layoutOnly(m)) : list;
 }
+/** The model a tool uses: the one picked for it (#44) while it's loaded or loading, else a loaded one, else the
+ *  picked or first installed one (its tab then offers to load it). */
+function modelForTool(tool) {
+  if (tool === "chat" || tool === "vision") return helperModel(tool === "vision");
+  const list = toolModels(tool), picked = list.find((m) => m.id === store.get("pick." + tool, null));
+  if (picked && (picked.status !== "stopped" || S.loading[picked.id] != null)) return picked;
+  return list.find((m) => m.status === "running") || picked || list[0] || null;
+}
+/** A card naming the model in use that opens a list of the others, when several can do the job; else null.
+ *  A loaded model in the list can be picked; each has its own Load or Unload button (nothing loads by itself).
+ *  The list floats over the page (like the jobs menu), so the panel can redraw under it while it's open. */
+function modelPicker(models, cur, choose) {
+  if (models.length < 2) return null;
+  const m = models.find((x) => x.id === cur) || models[0], ready = m.status === "running", loading = S.loading[m.id] != null || m.status === "loading";
+  const btn = el("button", { class: "pick-btn", "aria-haspopup": "true", "aria-expanded": "false", title: "Change model",
+    onclick: (e) => { e.stopPropagation(); openPicker(btn, models, m.id, choose, e.detail === 0); } },
+    modelImg(m, { class: "pick-ico" }),
+    el("span", { class: "pick-name" }, el("b", {}, shortName(m.id)), el("small", {}, el("i", { class: "dot " + (ready ? "ok" : loading ? "busy" : "") }),
+      ready ? "Loaded" : loading ? "Loading…" : `Not loaded · ${m.npu_usage ?? "?"}% NPU`)),
+    el("span", { class: "pick-change" }, ready ? `${models.length} models` : "", icon("i-chev")));
+  return el("div", { class: "pick-card" }, btn, ready ? null
+    : el("button", { class: "btn-sm accent", disabled: loading, "aria-label": `Load ${shortName(m.id)}`, title: `Loads in about ${fmtSec(m.load_time || 30)}`, onclick: () => loadModel(m.id) }, loading ? "Loading…" : "Load"));
+}
+function openPicker(btn, models, cur, choose, byKey) {
+  let menu = $("#pickMenu");
+  if (!menu) {
+    menu = el("div", { id: "pickMenu", class: "jobs-menu pick-menu", hidden: true, onclick: (e) => e.stopPropagation(), onkeydown: (e) => {
+      const rows = [...menu.querySelectorAll("button")], i = rows.indexOf(document.activeElement);
+      const to = { ArrowDown: i + 1, ArrowUp: i - 1, Home: 0, End: rows.length - 1 }[e.key];
+      if (to != null) { e.preventDefault(); rows[(to + rows.length) % rows.length].focus(); }
+      if (e.key === "Tab") closePicker();
+    } });
+    document.body.append(menu);
+    document.addEventListener("click", () => closePicker());
+    document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !menu.hidden) { e.stopPropagation(); closePicker(true); } }, true);
+  }
+  if (!menu.hidden && menu.anchor === btn) return closePicker();
+  const row = (x) => {
+    const ready = x.status === "running", loading = S.loading[x.id] != null || x.status === "loading";
+    const body = [modelImg(x, { class: "pick-ico" }),
+      el("span", { class: "pick-name" }, el("b", {}, shortName(x.id)),
+        el("small", {}, loading ? "Loading…" : ready ? (x.id === cur ? "In use" : x.busy ? "Working…" : "Ready to use") : `Needs ${x.npu_usage ?? "?"}% NPU · loads in ~${fmtSec(x.load_time || 60)}`)),
+      x.id === cur ? el("span", { class: "pick-check", "aria-hidden": "true" }, "✓") : null];
+    const act = ready
+      ? el("button", { class: "btn-sm ghost", disabled: !!x.busy, title: x.busy ? "Busy with a job" : "Free its NPU memory", "aria-label": `Unload ${shortName(x.id)}`, onclick: async () => { closePicker(true); await stopModel(x.id); if (document.activeElement === document.body) focusPicker(); } }, "Unload")
+      : el("button", { class: "btn-sm accent", disabled: loading, "aria-label": `Load ${shortName(x.id)}`, onclick: () => { closePicker(); choose(x.id); loadModel(x.id); } }, loading ? "Loading…" : "Load");
+    return el("div", { class: "pick-row", "aria-current": x.id === cur },
+      ready ? el("button", { class: "pick-use", title: x.id === cur ? "In use" : "Use this model", onclick: () => { if (x.id !== cur) choose(x.id); closePicker(true); } }, ...body)
+        : el("span", { class: "pick-use" }, ...body), act);
+  };
+  const loaded = models.filter((x) => x.status === "running"), rest = models.filter((x) => x.status !== "running");
+  menu.replaceChildren(...(loaded.length ? [el("div", { class: "pick-head" }, "Loaded"), ...loaded.map(row)] : []),
+    ...(rest.length ? [el("div", { class: "pick-head" }, "Not loaded"), ...rest.map(row)] : []));
+  menu.anchor = btn; menu.hidden = false; btn.setAttribute("aria-expanded", "true");
+  const r = btn.getBoundingClientRect(), below = innerHeight - r.bottom - 12, above = r.top - 12;
+  menu.style.width = `${Math.max(r.width, 280)}px`;
+  menu.style.left = `${Math.max(8, Math.min(r.left, innerWidth - Math.max(r.width, 280) - 8))}px`;
+  const up = below < 260 && above > below;  // near the bottom of the window: open upwards
+  menu.style.maxHeight = `${up ? above : below}px`;
+  menu.style.top = up ? "" : `${r.bottom + 6}px`; menu.style.bottom = up ? `${innerHeight - r.top + 6}px` : "";
+  if (byKey) (menu.querySelector("[aria-current=true] button") || menu.querySelector("button")).focus();
+}
+function closePicker(refocus) {
+  const menu = $("#pickMenu");
+  if (!menu || menu.hidden) return;
+  menu.hidden = true;
+  const btn = menu.anchor;
+  btn?.setAttribute("aria-expanded", "false");
+  // the panel may have redrawn while it was open: go back to the button that's there now
+  if (refocus) (btn?.isConnected ? btn.focus() : focusPicker());
+}
+const focusPicker = () => [...document.querySelectorAll(".pick-btn")].find((b) => b.offsetParent)?.focus();
+/** The picker for a tool; the choice is remembered per tool. */
+const toolPicker = (tool, done) => modelPicker(toolModels(tool), modelForTool(tool)?.id, (id) => { store.set("pick." + tool, id); done(); });
 function mediaBadges(m) {
   const d = m.desc || "";
   if (m.type === "Text-to-Speech") return [(m.supported || []).includes("Voice Clone") ? "Voice clone" : "Speech", /10 languages/i.test(d) && "10 languages", "Style instructions"].filter(Boolean);
@@ -259,7 +332,7 @@ function mediaBadges(m) {
   return [m.type];
 }
 /** A card that blocks a tool until its model is loaded (or explains it isn't installed). */
-function modelGate(tool, what) {
+function modelGate(tool, what, picker) {
   if (S.deviceOk === false && S.locked)  // it answers, but needs TiinyOS to unlock it: Settings wouldn't help
     return el("div", { class: "gate" }, el("div", { class: "grow" }, el("b", {}, "Your Tiiny is locked after a restart."), el("p", {}, UNLOCK_HOW)));
   if (S.deviceOk === false)  // no model list to go on: say why rather than "not installed"
@@ -268,7 +341,7 @@ function modelGate(tool, what) {
       el("button", { class: "btn-sm accent", onclick: () => openSettings(false) }, "Settings"));
   const m = modelForTool(tool);
   // Music used to need the models' own ports (blocked over USB); the gateway's /v1/music routes now cover it.
-  if (m && m.status === "running") return null;
+  if (m && (m.status === "running" || picker)) return null;  // with a picker, its card offers Load
   if (!m) return el("div", { class: "gate" }, el("b", {}, `No ${what} model installed.`), el("p", {}, `Download one in the TiinyOS app (${TOOL_TYPES[tool]}).`));
   const loading = S.loading[m.id] != null || m.status === "loading";
   return el("div", { class: "gate" },
@@ -521,8 +594,8 @@ function mediaWS(c) {
     },
     seg(items, val, set, key) { return el("div", { class: "seg small" }, items.map(([v, label]) => el("button", { "aria-pressed": val === v, onclick: () => { set(v); store.set(key, v); this.render(); } }, label))); },
     renderGate() {
-      const g = modelGate(...c.gate());
-      $(`#${p}Gate`).replaceChildren(...(g ? [g] : []));
+      const pick = toolPicker(c.gate()[0], () => this.render()), g = modelGate(...c.gate(), !!pick);
+      $(`#${p}Gate`).replaceChildren(...[pick, g].filter(Boolean));
       this.renderFoot();
     },
     /** The tool's model and whether it's loaded; also writes the "name · not loaded" line in the footer. */
