@@ -14,7 +14,10 @@ use super::{Doc, Fail, R};
 // ---------- html.unescape ----------
 
 fn named(k: &str) -> Option<&'static str> {
-    HTML5.binary_search_by(|(name, _)| (*name).cmp(k)).ok().map(|i| HTML5[i].1)
+    HTML5
+        .binary_search_by(|(name, _)| (*name).cmp(k))
+        .ok()
+        .map(|i| HTML5[i].1)
 }
 
 /// Length in bytes of the character reference after an '&' (Python's `_charref` regex), if there is one.
@@ -29,7 +32,12 @@ fn ref_len(rest: &str) -> Option<usize> {
         let h = hex.bytes().take_while(u8::is_ascii_hexdigit).count();
         return (h > 0).then(|| 2 + h + semi(hex, h));
     }
-    let n: usize = rest.chars().take(32).take_while(|c| !matches!(c, '\t' | '\n' | '\x0c' | ' ' | '<' | '&' | '#' | ';')).map(char::len_utf8).sum();
+    let n: usize = rest
+        .chars()
+        .take(32)
+        .take_while(|c| !matches!(c, '\t' | '\n' | '\x0c' | ' ' | '<' | '&' | '#' | ';'))
+        .map(char::len_utf8)
+        .sum();
     (n > 0).then(|| n + semi(rest, n))
 }
 
@@ -50,7 +58,9 @@ fn replace_ref(s: &str) -> String {
             // the code points HTML5 calls invalid are dropped (NUL is not among them, as in Python)
             0x1..=0x8 | 0xb | 0xe..=0x1f | 0x7f..=0x9f | 0xfdd0..=0xfdef => String::new(),
             n if n & 0xfffe == 0xfffe => String::new(),
-            n => char::from_u32(n as u32).map(String::from).unwrap_or_default(),
+            n => char::from_u32(n as u32)
+                .map(String::from)
+                .unwrap_or_default(),
         };
     }
     if let Some(v) = named(s) {
@@ -98,13 +108,18 @@ fn re(p: &str) -> Regex {
 }
 
 // Each pattern is anchored (\A) and run on a slice that starts where Python's `.match(rawdata, pos)` starts.
-static TAGFIND: LazyLock<Regex> = LazyLock::new(|| re(r"\A([a-zA-Z][^\t\n\r\f />\x00]*)(?:\s|/(?!>))*"));
+static TAGFIND: LazyLock<Regex> =
+    LazyLock::new(|| re(r"\A([a-zA-Z][^\t\n\r\f />\x00]*)(?:\s|/(?!>))*"));
 static ATTRFIND: LazyLock<Regex> = LazyLock::new(|| {
     // starts one character early so the look-behind sees what precedes the position
-    re(r#"(?s)\A.((?<=['"\s/])[^\s/>][^\s/=>]*)(\s*=+\s*('[^']*'|"[^"]*"|(?!['"])[^>\s]*))?(?:\s|/(?!>))*"#)
+    re(
+        r#"(?s)\A.((?<=['"\s/])[^\s/>][^\s/=>]*)(\s*=+\s*('[^']*'|"[^"]*"|(?!['"])[^>\s]*))?(?:\s|/(?!>))*"#,
+    )
 });
 static LOCATE: LazyLock<Regex> = LazyLock::new(|| {
-    re(r#"\A<[a-zA-Z][^\t\n\r\f />\x00]*(?:[\s/]*(?:(?<=['"\s/])[^\s/>][^\s/=>]*(?:\s*=+\s*(?:'[^']*'|"[^"]*"|(?!['"])[^>\s]*)\s*)?(?:\s|/(?!>))*)*)?\s*"#)
+    re(
+        r#"\A<[a-zA-Z][^\t\n\r\f />\x00]*(?:[\s/]*(?:(?<=['"\s/])[^\s/>][^\s/=>]*(?:\s*=+\s*(?:'[^']*'|"[^"]*"|(?!['"])[^>\s]*)\s*)?(?:\s|/(?!>))*)*)?\s*"#,
+    )
 });
 static ENDTAGFIND: LazyLock<Regex> = LazyLock::new(|| re(r"\A</\s*([a-zA-Z][-.a-zA-Z0-9:_]*)\s*>"));
 static DECLNAME: LazyLock<Regex> = LazyLock::new(|| re(r"\A[a-zA-Z][-_.a-zA-Z0-9]*\s*"));
@@ -120,11 +135,18 @@ fn bad(_: fancy_regex::Error) -> Fail {
 
 /// End offset of the anchored match on `raw[at..]`, with the first capture group.
 fn anchored<'a>(r: &Regex, raw: &'a str, at: usize) -> R<Option<(usize, &'a str)>> {
-    Ok(r.captures(&raw[at..]).map_err(bad)?.map(|c| (at + c.get(0).unwrap().end(), c.get(1).map_or("", |g| g.as_str()))))
+    Ok(r.captures(&raw[at..]).map_err(bad)?.map(|c| {
+        (
+            at + c.get(0).unwrap().end(),
+            c.get(1).map_or("", |g| g.as_str()),
+        )
+    }))
 }
 
 fn find_from(r: &Regex, raw: &str, at: usize) -> R<Option<(usize, usize)>> {
-    Ok(r.find_from_pos(raw, at).map_err(bad)?.map(|m| (m.start(), m.end())))
+    Ok(r.find_from_pos(raw, at)
+        .map_err(bad)?
+        .map(|m| (m.start(), m.end())))
 }
 
 fn find_char(raw: &str, c: char, from: usize) -> Option<usize> {
@@ -132,8 +154,24 @@ fn find_char(raw: &str, c: char, from: usize) -> Option<usize> {
 }
 
 const BLOCK: [&str; 18] = [
-    "p", "div", "section", "article", "blockquote", "header", "footer", "main", "aside", "nav", "figure", "figcaption", "dd", "dt",
-    "address", "hr", "title", "body",
+    "p",
+    "div",
+    "section",
+    "article",
+    "blockquote",
+    "header",
+    "footer",
+    "main",
+    "aside",
+    "nav",
+    "figure",
+    "figcaption",
+    "dd",
+    "dt",
+    "address",
+    "hr",
+    "title",
+    "body",
 ];
 const SKIP: [&str; 6] = ["script", "style", "head", "noscript", "svg", "template"];
 
@@ -166,12 +204,22 @@ impl Parser<'_, '_> {
         let kind = std::mem::replace(&mut self.kind, "p".into());
         self.buf.clear();
         if kind == "pre" {
-            self.doc.add(Block::Pre(String::new(), text.trim_matches('\n').to_string()));
+            self.doc.add(Block::Pre(
+                String::new(),
+                text.trim_matches('\n').to_string(),
+            ));
         } else if is_heading(&kind) {
-            self.doc.add(Block::H(i64::from(kind.as_bytes()[1] - b'0'), text.replace('\n', " ")));
+            self.doc.add(Block::H(
+                i64::from(kind.as_bytes()[1] - b'0'),
+                text.replace('\n', " "),
+            ));
         } else if kind == "li" {
             let depth = self.lists.len().saturating_sub(1) as i64;
-            self.doc.add(Block::Li(depth, self.lists.last().copied().unwrap_or(false), text.replace('\n', " ")));
+            self.doc.add(Block::Li(
+                depth,
+                self.lists.last().copied().unwrap_or(false),
+                text.replace('\n', " "),
+            ));
         } else {
             self.doc.add(Block::P(text));
         }
@@ -234,7 +282,11 @@ impl Parser<'_, '_> {
             let table = self.table.take().unwrap();
             let rows: Vec<Vec<String>> = table
                 .iter()
-                .map(|r| r.iter().map(|&c| strip(&collapse_ws(&self.cells[c].concat())).to_string()).collect::<Vec<_>>())
+                .map(|r| {
+                    r.iter()
+                        .map(|&c| strip(&collapse_ws(&self.cells[c].concat())).to_string())
+                        .collect::<Vec<_>>()
+                })
                 .filter(|r| !r.is_empty())
                 .collect();
             self.row = None;
@@ -253,7 +305,9 @@ impl Parser<'_, '_> {
 
     /// Everything from `<` at `i`: returns where parsing goes on, None when the construct isn't terminated.
     fn parse_starttag(&mut self, raw: &str, i: usize) -> R<Option<usize>> {
-        let Some(endpos) = check_for_whole_start_tag(raw, i)? else { return Ok(None) };
+        let Some(endpos) = check_for_whole_start_tag(raw, i)? else {
+            return Ok(None);
+        };
         let (mut k, name) = anchored(&TAGFIND, raw, i + 1)?.expect("a tag name follows <letter");
         let tag = name.to_lowercase();
         while k < endpos {
@@ -281,14 +335,20 @@ impl Parser<'_, '_> {
     }
 
     fn parse_endtag(&mut self, raw: &str, i: usize) -> R<Option<usize>> {
-        let Some(gt) = find_char(raw, '>', i + 1) else { return Ok(None) };
+        let Some(gt) = find_char(raw, '>', i + 1) else {
+            return Ok(None);
+        };
         let gtpos = gt + 1;
         if let Some((_, name)) = anchored(&ENDTAGFIND, raw, i)? {
             self.end_tag(&name.to_lowercase());
             return Ok(Some(gtpos));
         }
         let Some((name_end, name)) = anchored(&TAGFIND, raw, i + 2)? else {
-            return if raw[i..].starts_with("</>") { Ok(Some(i + 3)) } else { Ok(parse_bogus_comment(raw, i)) };
+            return if raw[i..].starts_with("</>") {
+                Ok(Some(i + 3))
+            } else {
+                Ok(parse_bogus_comment(raw, i))
+            };
         };
         let gtpos = find_char(raw, '>', name_end).map_or(0, |p| p + 1);
         self.end_tag(&name.to_lowercase());
@@ -301,7 +361,11 @@ impl Parser<'_, '_> {
         while i < n {
             if let Some(elem) = self.cdata {
                 // script/style contents are skipped; without a closing tag the rest is dropped
-                let close = if elem == "script" { &SCRIPT_CLOSE } else { &STYLE_CLOSE };
+                let close = if elem == "script" {
+                    &SCRIPT_CLOSE
+                } else {
+                    &STYLE_CLOSE
+                };
                 match find_from(close, raw, i)? {
                     Some((_, e)) => {
                         self.end_tag(elem);
@@ -359,7 +423,9 @@ impl Parser<'_, '_> {
 
 fn check_for_whole_start_tag(raw: &str, i: usize) -> R<Option<usize>> {
     let (j, _) = anchored(&LOCATE, raw, i)?.expect("LOCATE matches at <letter");
-    let Some(next) = raw[j..].chars().next() else { return Ok(None) };
+    let Some(next) = raw[j..].chars().next() else {
+        return Ok(None);
+    };
     Ok(match next {
         '>' => Some(j + 1),
         '/' if raw[j..].starts_with("/>") => Some(j + 2),
@@ -383,7 +449,10 @@ fn parse_html_declaration(raw: &str, i: usize) -> R<Option<usize>> {
         parse_comment(raw, i)
     } else if rest.starts_with("<![") {
         parse_marked_section(raw, i)
-    } else if rest.get(..9).is_some_and(|s| s.eq_ignore_ascii_case("<!doctype")) {
+    } else if rest
+        .get(..9)
+        .is_some_and(|s| s.eq_ignore_ascii_case("<!doctype"))
+    {
         Ok(find_char(raw, '>', i + 9).map(|p| p + 1))
     } else {
         Ok(parse_bogus_comment(raw, i))
@@ -394,7 +463,9 @@ fn parse_marked_section(raw: &str, i: usize) -> R<Option<usize>> {
     if i + 3 == raw.len() {
         return Ok(None);
     }
-    let Some(m) = DECLNAME.find(&raw[i + 3..]).map_err(bad)? else { return Err(Fail::Other("AssertionError")) };
+    let Some(m) = DECLNAME.find(&raw[i + 3..]).map_err(bad)? else {
+        return Err(Fail::Other("AssertionError"));
+    };
     if i + 3 + m.end() == raw.len() {
         return Ok(None); // end of buffer
     }
@@ -430,8 +501,16 @@ fn collapse(text: &str) -> String {
         .iter()
         .enumerate()
         .map(|(n, l)| {
-            let l = if n > 0 { l.trim_start_matches([' ', '\t']) } else { l };
-            if n < last { l.trim_end_matches([' ', '\t']) } else { l }
+            let l = if n > 0 {
+                l.trim_start_matches([' ', '\t'])
+            } else {
+                l
+            };
+            if n < last {
+                l.trim_end_matches([' ', '\t'])
+            } else {
+                l
+            }
         })
         .collect();
     strip(&joined.join("\n")).to_string()
@@ -481,8 +560,14 @@ mod tests {
 
     #[test]
     fn unescape_matches_python() {
-        assert_eq!(unescape("a &amp; b &lt;c&gt; &nbsp;|&copy 2020|&#65;&#x42;|&bogus;|&amp"), "a & b <c> \u{a0}|\u{a9} 2020|AB|&bogus;|&");
-        assert_eq!(unescape("&#0;&#x80;&#xD800;&#x110000;"), "\0\u{fffd}\u{fffd}");
+        assert_eq!(
+            unescape("a &amp; b &lt;c&gt; &nbsp;|&copy 2020|&#65;&#x42;|&bogus;|&amp"),
+            "a & b <c> \u{a0}|\u{a9} 2020|AB|&bogus;|&"
+        );
+        assert_eq!(
+            unescape("&#0;&#x80;&#xD800;&#x110000;"),
+            "\0\u{fffd}\u{fffd}"
+        );
         assert_eq!(unescape("5 & 6 &notit; &ampx"), "5 & 6 \u{ac}it; &x");
     }
 

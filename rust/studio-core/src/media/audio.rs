@@ -80,10 +80,17 @@ pub fn split_for_speech(text: &str, limit: usize) -> Vec<String> {
             // one very long sentence: split at the last comma/space before the limit
             let rfind = |pat: &str| -> i64 {
                 let p: Vec<char> = pat.chars().collect();
-                (0..=limit.saturating_sub(p.len())).rev().find(|&k| s[k..k + p.len()] == p[..]).map_or(-1, |k| k as i64)
+                (0..=limit.saturating_sub(p.len()))
+                    .rev()
+                    .find(|&k| s[k..k + p.len()] == p[..])
+                    .map_or(-1, |k| k as i64)
             };
             let cut = rfind(", ").max(rfind(" "));
-            let cut = if cut > (limit / 3) as i64 { cut as usize } else { limit };
+            let cut = if cut > (limit / 3) as i64 {
+                cut as usize
+            } else {
+                limit
+            };
             let head: String = s[..cut + 1].iter().collect();
             let rest: String = s[cut + 1..].iter().collect();
             if !cur.is_empty() {
@@ -112,7 +119,7 @@ struct Wav {
     channels: usize,
     sampwidth: usize,
     rate: u32,
-    nframes: u64, // as declared by the data chunk
+    nframes: u64,  // as declared by the data chunk
     data: Vec<u8>, // what readframes(nframes) returns: shorter when the file is cut off
 }
 
@@ -146,11 +153,18 @@ fn parse(buf: &[u8]) -> Result<Wav, WavError> {
         match &body[p..p + 4] {
             b"fmt " => fmt = Some(read_fmt(chunk)?),
             b"data" => {
-                let (channels, sampwidth, rate) = fmt.ok_or_else(|| err("data chunk before fmt chunk"))?;
+                let (channels, sampwidth, rate) =
+                    fmt.ok_or_else(|| err("data chunk before fmt chunk"))?;
                 let framesize = (channels * sampwidth) as u64;
                 let nframes = sz / framesize;
                 let want = (nframes * framesize).min(chunk.len() as u64) as usize;
-                return Ok(Wav { channels, sampwidth, rate, nframes, data: chunk[..want].to_vec() });
+                return Ok(Wav {
+                    channels,
+                    sampwidth,
+                    rate,
+                    nframes,
+                    data: chunk[..want].to_vec(),
+                });
             }
             _ => {}
         }
@@ -180,11 +194,19 @@ fn read_fmt(c: &[u8]) -> Result<(usize, usize, u32), WavError> {
             return Err(WavError::Eof);
         }
         let sub = &c[24..40];
-        if sub != [1, 0, 0, 0, 0, 0, 0x10, 0, 0x80, 0, 0, 0xaa, 0, 0x38, 0x9b, 0x71] {
+        if sub
+            != [
+                1, 0, 0, 0, 0, 0, 0x10, 0, 0x80, 0, 0, 0xaa, 0, 0x38, 0x9b, 0x71,
+            ]
+        {
             // uuid.UUID(bytes_le=sub)
             let (a, b, d) = (le32(sub), le16(&sub[4..]), le16(&sub[6..]));
             let tail: String = sub[8..].iter().map(|x| format!("{x:02x}")).collect();
-            return Err(WavError::Error(format!("unknown extended format: {a:08x}-{b:04x}-{d:04x}-{}-{}", &tail[..4], &tail[4..])));
+            return Err(WavError::Error(format!(
+                "unknown extended format: {a:08x}-{b:04x}-{d:04x}-{}-{}",
+                &tail[..4],
+                &tail[4..]
+            )));
         }
     }
     let sampwidth = bits.div_ceil(8);
@@ -244,7 +266,9 @@ pub fn join_wavs(parts: &[Vec<u8>]) -> Result<Vec<u8>, WavError> {
 /// Length in seconds, to 2 decimals; None when it isn't a readable WAV.
 pub fn wav_seconds(data: &[u8]) -> Result<Option<f64>, WavError> {
     match parse(data) {
-        Ok(w) if w.rate != 0 => Ok(format!("{:.2}", w.nframes as f64 / w.rate as f64).parse().ok()),
+        Ok(w) if w.rate != 0 => Ok(format!("{:.2}", w.nframes as f64 / w.rate as f64)
+            .parse()
+            .ok()),
         Ok(_) | Err(WavError::Error(_) | WavError::Eof) => Ok(None),
         Err(e) => Err(e),
     }
@@ -265,23 +289,45 @@ pub fn to_asr_wav(audio: &[u8]) -> Result<Option<Vec<u8>>, WavError> {
     let not_multiple = || WavError::Value("bytes length not a multiple of item size".into());
     let mut a: Vec<i32> = match sw {
         2 if raw.len() % 2 != 0 => return Err(not_multiple()),
-        2 => raw.chunks(2).map(|b| i16::from_le_bytes([b[0], b[1]]) as i32).collect(),
+        2 => raw
+            .chunks(2)
+            .map(|b| i16::from_le_bytes([b[0], b[1]]) as i32)
+            .collect(),
         4 if raw.len() % 4 != 0 => return Err(not_multiple()),
-        4 => raw.chunks(4).map(|b| i32::from_le_bytes([b[0], b[1], b[2], b[3]]) >> 16).collect(),
+        4 => raw
+            .chunks(4)
+            .map(|b| i32::from_le_bytes([b[0], b[1], b[2], b[3]]) >> 16)
+            .collect(),
         1 => raw.iter().map(|&b| (b as i32 - 128) << 8).collect(),
-        3 => (0..raw.len().saturating_sub(2)).step_by(3).map(|i| i16::from_le_bytes([raw[i + 1], raw[i + 2]]) as i32).collect(),
+        3 => (0..raw.len().saturating_sub(2))
+            .step_by(3)
+            .map(|i| i16::from_le_bytes([raw[i + 1], raw[i + 2]]) as i32)
+            .collect(),
         _ => return Ok(Some(audio.to_vec())),
     };
     if channels > 1 {
         let n = a.len() / channels;
-        a = (0..n).map(|i| a[i * channels..(i + 1) * channels].iter().sum::<i32>().div_euclid(channels as i32)).collect();
+        a = (0..n)
+            .map(|i| {
+                a[i * channels..(i + 1) * channels]
+                    .iter()
+                    .sum::<i32>()
+                    .div_euclid(channels as i32)
+            })
+            .collect();
     }
     if rate != 16000 {
         let step = rate as f64 / 16000.0;
         if step.fract() == 0.0 {
             // 32/48 kHz: average each group of samples (a simple low-pass)
             let k = step as usize;
-            a = if k == 0 { vec![] } else { a.chunks_exact(k).map(|g| g.iter().sum::<i32>().div_euclid(k as i32)).collect() };
+            a = if k == 0 {
+                vec![]
+            } else {
+                a.chunks_exact(k)
+                    .map(|g| g.iter().sum::<i32>().div_euclid(k as i32))
+                    .collect()
+            };
         } else {
             // linear interpolation
             let n = (a.len() as f64 / step) as usize;
@@ -307,7 +353,9 @@ mod tests {
     /// A canonical WAV whose sample bytes are (i*7919*seed) % 251; the expected values below come from running
     /// media.py's functions on the same input.
     fn wav(ch: usize, sw: usize, rate: u32, n: usize, seed: usize) -> Vec<u8> {
-        let data: Vec<u8> = (0..n * ch * sw).map(|i| ((i * 7919 * seed) % 251) as u8).collect();
+        let data: Vec<u8> = (0..n * ch * sw)
+            .map(|i| ((i * 7919 * seed) % 251) as u8)
+            .collect();
         write_wav(ch, sw, rate, &data)
     }
 
@@ -318,30 +366,64 @@ mod tests {
     #[test]
     fn splits_like_python() {
         let s = |t: &str, l: usize| split_for_speech(t, l);
-        assert_eq!(s("Hello world. How are you? Fine!", 320), ["Hello world. How are you? Fine!"]);
-        assert_eq!(s("One. Two! Three? Four… Five。 Six！ Seven？ Eight.", 20), ["One. Two! Three?", "Four… Five。 Six！", "Seven？ Eight."]);
+        assert_eq!(
+            s("Hello world. How are you? Fine!", 320),
+            ["Hello world. How are you? Fine!"]
+        );
+        assert_eq!(
+            s("One. Two! Three? Four… Five。 Six！ Seven？ Eight.", 20),
+            ["One. Two! Three?", "Four… Five。 Six！", "Seven？ Eight."]
+        );
         assert_eq!(
             s("A fairly long sentence, with several commas, that must be cut somewhere, around the limit value.", 30),
             ["A fairly long sentence, with", "several commas, that must be", "cut somewhere, around the", "limit value."]
         );
         // no comma or space to cut at: a piece of limit + 1 characters (Python's s[:cut + 1])
-        assert_eq!(s(&"x".repeat(50), 20), ["x".repeat(21), "x".repeat(21), "x".repeat(8)]);
-        assert_eq!(s("para one\n\npara two\n\n\npara three. And more.\nsame line", 15), ["para one", "para two", "para three.", "And more.", "same line"]);
+        assert_eq!(
+            s(&"x".repeat(50), 20),
+            ["x".repeat(21), "x".repeat(21), "x".repeat(8)]
+        );
+        assert_eq!(
+            s(
+                "para one\n\npara two\n\n\npara three. And more.\nsame line",
+                15
+            ),
+            [
+                "para one",
+                "para two",
+                "para three.",
+                "And more.",
+                "same line"
+            ]
+        );
         assert_eq!(s(" a. \n\n b ", 320), ["a. b"]);
         assert_eq!(s("   ", 320), ["   "]);
         assert_eq!(s("", 320), [""]);
         let long = format!("Short. {}end. Tail.", "word ".repeat(30));
         assert_eq!(
             s(&long, 40),
-            ["Short.", "word word word word word word word word", "word word word word word word word word", "word word word word word word word word", "word word word word word word end. Tail."]
+            [
+                "Short.",
+                "word word word word word word word word",
+                "word word word word word word word word",
+                "word word word word word word word word",
+                "word word word word word word end. Tail."
+            ]
         );
-        assert_eq!(s("ab, cd ef gh ij kl mn op qr st uv wx yz", 12), ["ab, cd ef", "gh ij kl mn", "op qr st uv", "wx yz"]);
-        assert_eq!(s("Ünï çödé. Naïve café. 日本語。English again.", 16), ["Ünï çödé.", "Naïve café.", "日本語。English", "again."]);
+        assert_eq!(
+            s("ab, cd ef gh ij kl mn op qr st uv wx yz", 12),
+            ["ab, cd ef", "gh ij kl mn", "op qr st uv", "wx yz"]
+        );
+        assert_eq!(
+            s("Ünï çödé. Naïve café. 日本語。English again.", 16),
+            ["Ünï çödé.", "Naïve café.", "日本語。English", "again."]
+        );
     }
 
     #[test]
     fn asr_conversion_like_python() {
-        let asr = |ch, sw, rate, n| hex(&to_asr_wav(&wav(ch, sw, rate, n, 1)).unwrap().unwrap()[44..]);
+        let asr =
+            |ch, sw, rate, n| hex(&to_asr_wav(&wav(ch, sw, rate, n, 1)).unwrap().unwrap()[44..]);
         assert_eq!(asr(1, 2, 16000, 6), "008a19a332bc4bd564ee7d0c"); // already 16 kHz mono: passed through
         assert_eq!(asr(2, 2, 16000, 5), "8c96bec870fd22325464");
         assert_eq!(asr(1, 2, 48000, 9), "19a30ef0af3e");
@@ -359,10 +441,18 @@ mod tests {
         // a cut-off file: odd byte counts fail where Python's array() does, 8-bit survives
         let mut cut = wav(2, 2, 8000, 4, 1);
         cut.truncate(cut.len() - 3);
-        assert_eq!(to_asr_wav(&cut), Err(WavError::Value("bytes length not a multiple of item size".into())));
+        assert_eq!(
+            to_asr_wav(&cut),
+            Err(WavError::Value(
+                "bytes length not a multiple of item size".into()
+            ))
+        );
         let mut cut = wav(2, 1, 8000, 4, 1);
         cut.truncate(cut.len() - 3);
-        assert_eq!(hex(&to_asr_wav(&cut).unwrap().unwrap()[44..]), "00c580d100de00de");
+        assert_eq!(
+            hex(&to_asr_wav(&cut).unwrap().unwrap()[44..]),
+            "00c580d100de00de"
+        );
     }
 
     #[test]
@@ -370,12 +460,23 @@ mod tests {
         let j = join_wavs(&[wav(1, 2, 16000, 3, 1), wav(1, 2, 16000, 2, 3)]).unwrap();
         assert_eq!(j.len(), 8054);
         assert_eq!(hex(&j[..44]), "524946466e1f000057415645666d74201000000001000100803e0000007d000002001000646174614a1f0000");
-        assert_eq!((hex(&j[44..50]), hex(&j[j.len() - 4..])), ("008a19a332bc".to_string(), "00a34bee".to_string()));
+        assert_eq!(
+            (hex(&j[44..50]), hex(&j[j.len() - 4..])),
+            ("008a19a332bc".to_string(), "00a34bee".to_string())
+        );
         assert!(j[50..j.len() - 4].iter().all(|b| *b == 0));
-        let j = join_wavs(&[wav(2, 1, 8000, 2, 1), wav(2, 1, 8000, 1, 2), wav(2, 1, 8000, 1, 4)]).unwrap();
+        let j = join_wavs(&[
+            wav(2, 1, 8000, 2, 1),
+            wav(2, 1, 8000, 1, 2),
+            wav(2, 1, 8000, 1, 4),
+        ])
+        .unwrap();
         assert_eq!(j.len(), 8052);
         assert_eq!(hex(&j[..44]), "524946466c1f000057415645666d74201000000001000200401f0000803e00000200080064617461481f0000");
-        assert_eq!((hex(&j[44..48]), hex(&j[j.len() - 4..])), ("008a19a3".to_string(), "00000032".to_string()));
+        assert_eq!(
+            (hex(&j[44..48]), hex(&j[j.len() - 4..])),
+            ("008a19a3".to_string(), "00000032".to_string())
+        );
         let one = wav(1, 2, 16000, 3, 1);
         assert_eq!(join_wavs(std::slice::from_ref(&one)).unwrap(), one);
     }

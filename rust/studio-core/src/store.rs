@@ -19,19 +19,26 @@ pub struct Store {
 }
 
 pub fn read_json_file(path: &Path) -> Option<Value> {
-    std::fs::read_to_string(path).ok().and_then(|s| serde_json::from_str(&s).ok())
+    std::fs::read_to_string(path)
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
 }
 
 /// What went wrong with a file, in a few words ("No space left on device"): Rust adds " (os error N)".
 pub fn io_reason(e: &std::io::Error) -> String {
     let s = e.to_string();
-    s.split(" (os error").next().unwrap_or(&s).trim_end_matches('.').to_string()
+    s.split(" (os error")
+        .next()
+        .unwrap_or(&s)
+        .trim_end_matches('.')
+        .to_string()
 }
 
 /// Write through a temp file so a crash never leaves half a file. Err is the reason it couldn't be written.
 pub fn save_json(path: &Path, v: &Value) -> Result<(), String> {
     let tmp = path.with_extension("tmp");
-    std::fs::write(&tmp, serde_json::to_string_pretty(v).unwrap_or_default()).map_err(|e| io_reason(&e))?;
+    std::fs::write(&tmp, serde_json::to_string_pretty(v).unwrap_or_default())
+        .map_err(|e| io_reason(&e))?;
     std::fs::rename(&tmp, path).map_err(|e| io_reason(&e))
 }
 
@@ -59,7 +66,12 @@ pub fn shred(path: &Path) {
 
 /// A file name inside images/ that can't climb out of it (server.py only accepts `[\w.-]+`).
 pub fn safe_file(name: &str) -> bool {
-    !name.is_empty() && name != "." && name != ".." && name.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '.' || c == '-')
+    !name.is_empty()
+        && name != "."
+        && name != ".."
+        && name
+            .chars()
+            .all(|c| c.is_alphanumeric() || c == '_' || c == '.' || c == '-')
 }
 
 pub fn word(id: &str) -> bool {
@@ -67,12 +79,22 @@ pub fn word(id: &str) -> bool {
 }
 
 fn list_of(v: &Value, k: &str) -> Vec<String> {
-    v.get(k).and_then(Value::as_array).into_iter().flatten().filter_map(|x| x.as_str().map(String::from)).collect()
+    v.get(k)
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|x| x.as_str().map(String::from))
+        .collect()
 }
 
 /// Every file an entry owns: outputs, sources and downloads.
 pub fn entry_files(e: &Value) -> Vec<String> {
-    [list_of(e, "outputs"), list_of(e, "sources"), list_of(e, "downloads")].concat()
+    [
+        list_of(e, "outputs"),
+        list_of(e, "sources"),
+        list_of(e, "downloads"),
+    ]
+    .concat()
 }
 
 impl Store {
@@ -97,7 +119,9 @@ impl Store {
     }
 
     pub fn load_history(&self) -> Vec<Value> {
-        read_json_file(&self.history).and_then(|v| v.as_array().cloned()).unwrap_or_default()
+        read_json_file(&self.history)
+            .and_then(|v| v.as_array().cloned())
+            .unwrap_or_default()
     }
 
     pub fn save_history(&self, items: &[Value]) -> Result<(), String> {
@@ -112,7 +136,11 @@ impl Store {
     }
 
     /// Apply `f` to one saved entry (e.g. clear a preview's resume token) and save.
-    pub fn edit_history(&self, id: &str, f: impl Fn(&mut serde_json::Map<String, Value>)) -> Result<(), String> {
+    pub fn edit_history(
+        &self,
+        id: &str,
+        f: impl Fn(&mut serde_json::Map<String, Value>),
+    ) -> Result<(), String> {
         let _g = self.lock();
         let mut items = self.load_history();
         for e in items.iter_mut() {
@@ -129,8 +157,11 @@ impl Store {
     pub fn delete_entries(&self, ids: &[String]) -> Result<(), String> {
         let _g = self.lock();
         let items = self.load_history();
-        let (gone, keep): (Vec<Value>, Vec<Value>) =
-            items.into_iter().partition(|e| e.get("id").and_then(Value::as_str).is_some_and(|i| ids.iter().any(|x| x == i)));
+        let (gone, keep): (Vec<Value>, Vec<Value>) = items.into_iter().partition(|e| {
+            e.get("id")
+                .and_then(Value::as_str)
+                .is_some_and(|i| ids.iter().any(|x| x == i))
+        });
         for e in &gone {
             for f in entry_files(e) {
                 if safe_file(&f) {
@@ -144,7 +175,12 @@ impl Store {
     /// The device ids already handled; None without a (usable) file: the next look at the device is a baseline.
     pub fn seen_ids(&self) -> Option<std::collections::BTreeSet<String>> {
         let v = read_json_file(&self.seen)?;
-        Some(v.as_array()?.iter().filter_map(|x| x.as_str().map(String::from)).collect())
+        Some(
+            v.as_array()?
+                .iter()
+                .filter_map(|x| x.as_str().map(String::from))
+                .collect(),
+        )
     }
 
     /// Add handled device ids. Only once the baseline exists (or when making it): until then everything on the device
@@ -161,7 +197,9 @@ impl Store {
     }
 
     pub fn load_voices(&self) -> Vec<Value> {
-        read_json_file(&self.voices).and_then(|v| v.as_array().cloned()).unwrap_or_default()
+        read_json_file(&self.voices)
+            .and_then(|v| v.as_array().cloned())
+            .unwrap_or_default()
     }
 
     pub fn save_voices(&self, voices: &[Value]) -> Result<(), String> {
@@ -171,7 +209,10 @@ impl Store {
     /// A saved voice as the speech model wants it: name, transcript and the clip as a data URI.
     pub fn voice_for(&self, vid: &str) -> Value {
         use base64::Engine;
-        let v = self.load_voices().into_iter().find(|v| v.get("id").and_then(Value::as_str) == Some(vid));
+        let v = self
+            .load_voices()
+            .into_iter()
+            .find(|v| v.get("id").and_then(Value::as_str) == Some(vid));
         let Some(v) = v else { return Value::Null };
         let file = v.get("file").and_then(Value::as_str).unwrap_or("");
         match std::fs::read(self.images.join(file)) {
@@ -185,13 +226,23 @@ impl Store {
 
     pub fn list_chats(&self) -> Vec<Value> {
         let mut out = vec![];
-        for entry in std::fs::read_dir(&self.chats).into_iter().flatten().flatten() {
+        for entry in std::fs::read_dir(&self.chats)
+            .into_iter()
+            .flatten()
+            .flatten()
+        {
             let path = entry.path();
             if path.extension().and_then(|e| e.to_str()) != Some("json") {
                 continue;
             }
-            let Some(c) = read_json_file(&path) else { continue };
-            let title = c.get("title").and_then(Value::as_str).filter(|t| !t.is_empty()).unwrap_or("Chat");
+            let Some(c) = read_json_file(&path) else {
+                continue;
+            };
+            let title = c
+                .get("title")
+                .and_then(Value::as_str)
+                .filter(|t| !t.is_empty())
+                .unwrap_or("Chat");
             out.push(json!({
                 "id": path.file_stem().and_then(|s| s.to_str()).unwrap_or(""), "title": title,
                 "updated": c.get("updated").cloned().unwrap_or(json!(0)),
@@ -199,7 +250,11 @@ impl Store {
             }));
         }
         let key = |c: &Value| c["updated"].as_f64().unwrap_or(0.0);
-        out.sort_by(|a, b| key(b).partial_cmp(&key(a)).unwrap_or(std::cmp::Ordering::Equal));
+        out.sort_by(|a, b| {
+            key(b)
+                .partial_cmp(&key(a))
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         out
     }
 
@@ -214,10 +269,12 @@ mod tests {
 
     #[test]
     fn history_round_trip_and_shred() {
-        let dir = std::env::temp_dir().join(format!("studio-store-{}", uuid::Uuid::new_v4().simple()));
+        let dir =
+            std::env::temp_dir().join(format!("studio-store-{}", uuid::Uuid::new_v4().simple()));
         let s = Store::new(&dir);
         std::fs::write(s.images.join("a.png"), b"png").unwrap();
-        s.add_history(json!({"id": "e1", "outputs": ["a.png"]})).unwrap();
+        s.add_history(json!({"id": "e1", "outputs": ["a.png"]}))
+            .unwrap();
         s.add_history(json!({"id": "e2"})).unwrap();
         s.edit_history("e1", |e| {
             e.insert("fav".into(), json!(true));
@@ -233,7 +290,8 @@ mod tests {
 
     #[test]
     fn a_failed_write_is_an_error_with_a_reason() {
-        let dir = std::env::temp_dir().join(format!("studio-store-{}", uuid::Uuid::new_v4().simple()));
+        let dir =
+            std::env::temp_dir().join(format!("studio-store-{}", uuid::Uuid::new_v4().simple()));
         let s = Store::new(&dir);
         // the folder is gone (a plain file in its place): nothing can be written, and the caller is told
         std::fs::remove_dir_all(&dir).unwrap();

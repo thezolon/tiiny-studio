@@ -22,11 +22,19 @@ pub struct Dialect {
 
 impl Dialect {
     pub fn excel() -> Self {
-        Dialect { delimiter: ',', quote: '"', doublequote: true, skipinitialspace: false }
+        Dialect {
+            delimiter: ',',
+            quote: '"',
+            doublequote: true,
+            skipinitialspace: false,
+        }
     }
 
     pub fn excel_tab() -> Self {
-        Dialect { delimiter: '\t', ..Self::excel() }
+        Dialect {
+            delimiter: '\t',
+            ..Self::excel()
+        }
     }
 }
 
@@ -52,7 +60,14 @@ pub struct Reader<'a> {
 
 impl<'a> Reader<'a> {
     pub fn new(text: &'a str, d: Dialect) -> Self {
-        Reader { lines: text.split_inclusive('\n'), d, state: State::StartRecord, fields: vec![], field: String::new(), field_len: 0 }
+        Reader {
+            lines: text.split_inclusive('\n'),
+            d,
+            state: State::StartRecord,
+            fields: vec![],
+            field: String::new(),
+            field_len: 0,
+        }
     }
 
     fn save_field(&mut self) {
@@ -72,7 +87,13 @@ impl<'a> Reader<'a> {
     /// One character of input (`None` is the end of a line).
     fn process(&mut self, c: Option<char>) -> R<()> {
         let nl = matches!(c, Some('\n' | '\r'));
-        let end = |c: Option<char>| if c.is_none() { State::StartRecord } else { State::EatCrnl };
+        let end = |c: Option<char>| {
+            if c.is_none() {
+                State::StartRecord
+            } else {
+                State::EatCrnl
+            }
+        };
         match self.state {
             State::StartRecord => {
                 if c.is_none() {
@@ -117,7 +138,13 @@ impl<'a> Reader<'a> {
             State::InQuotedField => {
                 match c {
                     None => {}
-                    Some(q) if q == self.d.quote => self.state = if self.d.doublequote { State::QuoteInQuotedField } else { State::InField },
+                    Some(q) if q == self.d.quote => {
+                        self.state = if self.d.doublequote {
+                            State::QuoteInQuotedField
+                        } else {
+                            State::InField
+                        }
+                    }
                     Some(ch) => self.add_char(ch)?,
                 }
                 Ok(())
@@ -203,7 +230,10 @@ fn bump<K: PartialEq>(d: &mut Vec<(K, usize)>, k: K) {
 }
 
 /// (quote char, double quote?, delimiter, skip initial space?)
-fn guess_quote_and_delimiter(data: &str, delimiters: &str) -> R<(Option<char>, bool, Option<char>, bool)> {
+fn guess_quote_and_delimiter(
+    data: &str,
+    delimiters: &str,
+) -> R<(Option<char>, bool, Option<char>, bool)> {
     let pats = [
         r#"(?sm)(?P<delim>[^\w\n"'])(?P<space> ?)(?P<quote>["']).*?(?P=quote)(?P=delim)"#,
         r#"(?sm)(?:^|\n)(?P<quote>["']).*?(?P=quote)(?P<delim>[^\w\n"'])(?P<space> ?)"#,
@@ -213,13 +243,18 @@ fn guess_quote_and_delimiter(data: &str, delimiters: &str) -> R<(Option<char>, b
     let mut found: Option<(Regex, Vec<fancy_regex::Captures>)> = None;
     for p in pats {
         let r = re(p)?;
-        let caps: Vec<_> = r.captures_iter(data).collect::<Result<_, _>>().map_err(|_| Fail::Other("error"))?;
+        let caps: Vec<_> = r
+            .captures_iter(data)
+            .collect::<Result<_, _>>()
+            .map_err(|_| Fail::Other("error"))?;
         if !caps.is_empty() {
             found = Some((r, caps));
             break;
         }
     }
-    let Some((r, matches)) = found else { return Ok((None, false, None, false)) };
+    let Some((r, matches)) = found else {
+        return Ok((None, false, None, false));
+    };
     let has = |n: &str| r.capture_names().flatten().any(|c| c == n);
     let (mut quotes, mut delims, mut spaces): (Tally, Tally, usize) = (vec![], vec![], 0);
     for m in &matches {
@@ -247,9 +282,13 @@ fn guess_quote_and_delimiter(data: &str, delimiters: &str) -> R<(Option<char>, b
         (Some(d).filter(|&d| d != '\n'), n == spaces)
     };
     // an extra quote between delimiters means a double-quoted format
-    let d = delim.map(|d| fancy_regex::escape(&d.to_string()).into_owned()).unwrap_or_default();
+    let d = delim
+        .map(|d| fancy_regex::escape(&d.to_string()).into_owned())
+        .unwrap_or_default();
     let q = quotechar;
-    let dq = re(&format!(r"(?m)(({d})|^)\W*{q}[^{d}\n]*{q}[^{d}\n]*{q}\W*(({d})|$)"))?;
+    let dq = re(&format!(
+        r"(?m)(({d})|^)\W*{q}[^{d}\n]*{q}[^{d}\n]*{q}\W*(({d})|$)"
+    ))?;
     let doublequote = rx(dq.is_match(data))?;
     Ok((Some(quotechar), doublequote, delim, skip))
 }
@@ -265,7 +304,8 @@ fn guess_delimiter(data: &str, delimiters: &str) -> (Option<char>, bool) {
     let mut freq: Vec<Vec<(usize, i64)>> = vec![vec![]; 127];
     let mut modes: HashMap<char, (i64, i64)> = HashMap::new();
     let mut delims: HashMap<char, (i64, i64)> = HashMap::new();
-    let skip_of = |d: char| count_sub(data[0], &d.to_string()) == count_sub(data[0], &format!("{d} "));
+    let skip_of =
+        |d: char| count_sub(data[0], &d.to_string()) == count_sub(data[0], &format!("{d} "));
     while start < data.len() {
         iteration += 1;
         for line in &data[start..end.min(data.len())] {
@@ -289,7 +329,12 @@ fn guess_delimiter(data: &str, delimiters: &str) -> (Option<char>, bool) {
                         best = n;
                     }
                 }
-                let others: i64 = items.iter().enumerate().filter(|(n, _)| *n != best).map(|(_, e)| e.1).sum();
+                let others: i64 = items
+                    .iter()
+                    .enumerate()
+                    .filter(|(n, _)| *n != best)
+                    .map(|(_, e)| e.1)
+                    .sum();
                 modes.insert(ch, (items[best].0 as i64, items[best].1 - others));
             } else {
                 modes.insert(ch, (items[0].0 as i64, items[0].1));
@@ -299,7 +344,11 @@ fn guess_delimiter(data: &str, delimiters: &str) -> (Option<char>, bool) {
         let mut consistency = 1.0f64;
         while delims.is_empty() && consistency >= 0.9 {
             for (&k, &v) in &modes {
-                if v.0 > 0 && v.1 > 0 && (v.1 as f64 / total) >= consistency && delimiters.contains(k) {
+                if v.0 > 0
+                    && v.1 > 0
+                    && (v.1 as f64 / total) >= consistency
+                    && delimiters.contains(k)
+                {
                     delims.insert(k, v);
                 }
             }
@@ -330,11 +379,17 @@ fn guess_delimiter(data: &str, delimiters: &str) -> (Option<char>, bool) {
 
 /// `csv.Sniffer().sniff(sample, delimiters)`; None where Python raises "Could not determine delimiter".
 pub fn sniff(sample: &str, delimiters: &str) -> R<Option<Dialect>> {
-    let (quote, doublequote, mut delimiter, mut skip) = guess_quote_and_delimiter(sample, delimiters)?;
+    let (quote, doublequote, mut delimiter, mut skip) =
+        guess_quote_and_delimiter(sample, delimiters)?;
     if delimiter.is_none() {
         (delimiter, skip) = guess_delimiter(sample, delimiters);
     }
-    Ok(delimiter.map(|delimiter| Dialect { delimiter, quote: quote.unwrap_or('"'), doublequote, skipinitialspace: skip }))
+    Ok(delimiter.map(|delimiter| Dialect {
+        delimiter,
+        quote: quote.unwrap_or('"'),
+        doublequote,
+        skipinitialspace: skip,
+    }))
 }
 
 #[cfg(test)]
@@ -349,14 +404,26 @@ mod tests {
     #[test]
     fn reads_quotes_and_embedded_newlines() {
         let got = rows("a,\"b,\"\"c\"\"\",d\n\"x\ny\",2\n\nlast", Dialect::excel());
-        assert_eq!(got, vec![vec!["a", "b,\"c\"", "d"], vec!["x\ny", "2"], vec![], vec!["last"]]);
+        assert_eq!(
+            got,
+            vec![
+                vec!["a", "b,\"c\"", "d"],
+                vec!["x\ny", "2"],
+                vec![],
+                vec!["last"]
+            ]
+        );
     }
 
     #[test]
     fn sniffs_delimiters() {
-        let d = sniff("Name;Qty\nApples;3\nPears;5\n", ",;\t|").unwrap().unwrap();
+        let d = sniff("Name;Qty\nApples;3\nPears;5\n", ",;\t|")
+            .unwrap()
+            .unwrap();
         assert_eq!(d.delimiter, ';');
-        let d = sniff("Name,Qty\nApples,3\n\"Pears, green\",5\n", ",;\t|").unwrap().unwrap();
+        let d = sniff("Name,Qty\nApples,3\n\"Pears, green\",5\n", ",;\t|")
+            .unwrap()
+            .unwrap();
         assert_eq!((d.delimiter, d.quote), (',', '"'));
     }
 }

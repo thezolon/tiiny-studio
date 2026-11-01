@@ -45,7 +45,8 @@ impl P<'_> {
             b'{' => {
                 self.i += 1;
                 let mut items: Vec<(String, J)> = vec![];
-                let mut index: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+                let mut index: std::collections::HashMap<String, usize> =
+                    std::collections::HashMap::new();
                 self.ws();
                 if self.b.get(self.i) == Some(&b'}') {
                     self.i += 1;
@@ -137,7 +138,9 @@ impl P<'_> {
         }
         let int_end = self.i;
         let mut float = false;
-        if self.b.get(self.i) == Some(&b'.') && self.b.get(self.i + 1).is_some_and(u8::is_ascii_digit) {
+        if self.b.get(self.i) == Some(&b'.')
+            && self.b.get(self.i + 1).is_some_and(u8::is_ascii_digit)
+        {
             self.i += 1;
             self.digits();
             float = true;
@@ -162,11 +165,17 @@ impl P<'_> {
         if int.trim_start_matches('-').len() > 4300 {
             return None; // Python refuses to turn longer integers into numbers
         }
-        Some(J::Int(if int == "-0" { "0".into() } else { int.to_string() }))
+        Some(J::Int(if int == "-0" {
+            "0".into()
+        } else {
+            int.to_string()
+        }))
     }
 
     fn hex4(&self, at: usize) -> Option<u32> {
-        u32::from_str_radix(self.s.get(at..at + 4)?, 16).ok().filter(|_| self.b[at..at + 4].iter().all(u8::is_ascii_hexdigit))
+        u32::from_str_radix(self.s.get(at..at + 4)?, 16)
+            .ok()
+            .filter(|_| self.b[at..at + 4].iter().all(u8::is_ascii_hexdigit))
     }
 
     fn string(&mut self) -> Option<String> {
@@ -174,7 +183,9 @@ impl P<'_> {
         let mut out = String::new();
         loop {
             let rest = &self.s[self.i..];
-            let stop = rest.bytes().position(|c| c == b'"' || c == b'\\' || c < 0x20)?;
+            let stop = rest
+                .bytes()
+                .position(|c| c == b'"' || c == b'\\' || c < 0x20)?;
             out.push_str(&rest[..stop]);
             self.i += stop;
             match self.b[self.i] {
@@ -197,8 +208,12 @@ impl P<'_> {
                         b'u' => {
                             let mut c = self.hex4(self.i)?;
                             self.i += 4;
-                            if (0xd800..0xdc00).contains(&c) && self.b[self.i..].starts_with(b"\\u") {
-                                if let Some(lo) = self.hex4(self.i + 2).filter(|lo| (0xdc00..0xe000).contains(lo)) {
+                            if (0xd800..0xdc00).contains(&c) && self.b[self.i..].starts_with(b"\\u")
+                            {
+                                if let Some(lo) = self
+                                    .hex4(self.i + 2)
+                                    .filter(|lo| (0xdc00..0xe000).contains(lo))
+                                {
                                     c = 0x10000 + ((c - 0xd800) << 10) + (lo - 0xdc00);
                                     self.i += 6;
                                 }
@@ -229,16 +244,28 @@ fn float_repr(f: f64) -> String {
     let n = digits.len() as i32;
     let body = if decpt > 16 || decpt <= -4 {
         let e = decpt - 1;
-        let m = if n > 1 { format!("{}.{}", &digits[..1], &digits[1..]) } else { digits.clone() };
+        let m = if n > 1 {
+            format!("{}.{}", &digits[..1], &digits[1..])
+        } else {
+            digits.clone()
+        };
         format!("{m}e{}{:02}", if e < 0 { '-' } else { '+' }, e.abs())
     } else if decpt <= 0 {
         format!("0.{}{digits}", "0".repeat((-decpt) as usize))
     } else if decpt >= n {
         format!("{digits}{}.0", "0".repeat((decpt - n) as usize))
     } else {
-        format!("{}.{}", &digits[..decpt as usize], &digits[decpt as usize..])
+        format!(
+            "{}.{}",
+            &digits[..decpt as usize],
+            &digits[decpt as usize..]
+        )
     };
-    if f.is_sign_negative() { format!("-{body}") } else { body }
+    if f.is_sign_negative() {
+        format!("-{body}")
+    } else {
+        body
+    }
 }
 
 fn quote(s: &str, out: &mut String) {
@@ -296,7 +323,11 @@ fn dump(j: &J, level: usize, out: &mut String) {
 
 /// The text re-printed with two-space indents, or None when it isn't JSON (Python's ValueError).
 pub fn pretty(text: &str) -> Option<String> {
-    let mut p = P { b: text.as_bytes(), s: text, i: 0 };
+    let mut p = P {
+        b: text.as_bytes(),
+        s: text,
+        i: 0,
+    };
     p.ws();
     let v = p.value(0)?;
     p.ws();
@@ -314,9 +345,20 @@ mod tests {
 
     #[test]
     fn prints_like_python() {
-        assert_eq!(pretty(r#"{"b":[1,2.50,{}],"a":"xé\n","b":null}"#).unwrap(), "{\n  \"b\": null,\n  \"a\": \"x\u{e9}\\n\"\n}");
-        assert_eq!(pretty("[1e22, 1e-7, 0.1, 100000000000000000000, -0, -0.0]").unwrap(), "[\n  1e+22,\n  1e-07,\n  0.1,\n  100000000000000000000,\n  0,\n  -0.0\n]");
-        assert_eq!(pretty("[1e15, 1.5e16, 12345.678]").unwrap(), "[\n  1000000000000000.0,\n  1.5e+16,\n  12345.678\n]");
-        assert!(pretty("{\"a\": 1,}").is_none() && pretty("[1] x").is_none() && pretty("tru").is_none());
+        assert_eq!(
+            pretty(r#"{"b":[1,2.50,{}],"a":"xé\n","b":null}"#).unwrap(),
+            "{\n  \"b\": null,\n  \"a\": \"x\u{e9}\\n\"\n}"
+        );
+        assert_eq!(
+            pretty("[1e22, 1e-7, 0.1, 100000000000000000000, -0, -0.0]").unwrap(),
+            "[\n  1e+22,\n  1e-07,\n  0.1,\n  100000000000000000000,\n  0,\n  -0.0\n]"
+        );
+        assert_eq!(
+            pretty("[1e15, 1.5e16, 12345.678]").unwrap(),
+            "[\n  1000000000000000.0,\n  1.5e+16,\n  12345.678\n]"
+        );
+        assert!(
+            pretty("{\"a\": 1,}").is_none() && pretty("[1] x").is_none() && pretty("tru").is_none()
+        );
     }
 }

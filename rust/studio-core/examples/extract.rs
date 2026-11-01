@@ -4,7 +4,10 @@
 fn main() {
     let path = std::env::args().nth(1).expect("usage: extract <file>");
     let data = std::fs::read(&path).expect("read file");
-    let name = std::path::Path::new(&path).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    let name = std::path::Path::new(&path)
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
     match studio_core::extract::extract(&name, &data) {
         Ok(parts) => println!("{parts}"),
         Err(e) => println!("{}", serde_json::json!({ "error": e.0 })),

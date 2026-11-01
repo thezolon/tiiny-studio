@@ -27,7 +27,10 @@ pub type JobResult = Result<Value, JobError>;
 pub type KindFn = fn(Ctx) -> Pin<Box<dyn Future<Output = JobResult> + Send>>;
 
 pub fn now() -> f64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs_f64()).unwrap_or(0.0)
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs_f64())
+        .unwrap_or(0.0)
 }
 
 struct Job {
@@ -63,18 +66,39 @@ pub struct Ctx {
 
 /// Stamp a finished job's history entry (id, created, kind, seconds); answers the entry's kind.
 pub(crate) fn stamp(e: &mut Map<String, Value>, id: &str, kind: &str, started: f64) -> String {
-    let k = e.get("kind").and_then(Value::as_str).unwrap_or(kind).to_string();
+    let k = e
+        .get("kind")
+        .and_then(Value::as_str)
+        .unwrap_or(kind)
+        .to_string();
     e.insert("id".into(), json!(id));
     e.insert("created".into(), json!(now() as i64));
     e.insert("kind".into(), json!(k));
-    e.insert("seconds".into(), json!(((now() - started) * 10.0).round() / 10.0));
+    e.insert(
+        "seconds".into(),
+        json!(((now() - started) * 10.0).round() / 10.0),
+    );
     k
 }
 
 impl Ctx {
     /// `device::call` on this job's device.
-    pub async fn call(&self, method: &str, path: &str, body: Option<Value>, timeout: u64) -> (u16, Value) {
-        crate::device::call(&self.state, method, path, body, timeout, Some((&self.target.url, &self.target.key))).await
+    pub async fn call(
+        &self,
+        method: &str,
+        path: &str,
+        body: Option<Value>,
+        timeout: u64,
+    ) -> (u16, Value) {
+        crate::device::call(
+            &self.state,
+            method,
+            path,
+            body,
+            timeout,
+            Some((&self.target.url, &self.target.key)),
+        )
+        .await
     }
 
     pub fn cancelled(&self) -> bool {
@@ -119,7 +143,11 @@ impl Ctx {
 
     /// The job's current value of one field.
     pub fn get(&self, key: &str) -> Option<Value> {
-        self.state.jobs.lock().get(&self.id).and_then(|j| j.data.get(key).cloned())
+        self.state
+            .jobs
+            .lock()
+            .get(&self.id)
+            .and_then(|j| j.data.get(key).cloned())
     }
 
     /// A tool's job run inline inside this one (chat): fresh id, own request, never sees this job's cancel.
@@ -157,7 +185,8 @@ fn params_of(req: &Value) -> Value {
     let mut out = Map::new();
     for (k, v) in req.as_object().into_iter().flatten() {
         // Python's isinstance(v, (int, float)) is true for booleans too
-        let keep = v.is_number() || v.is_boolean() || v.as_str().is_some_and(|s| s.chars().count() < 2000);
+        let keep =
+            v.is_number() || v.is_boolean() || v.as_str().is_some_and(|s| s.chars().count() < 2000);
         if keep {
             out.insert(k.clone(), v.clone());
         }
@@ -173,7 +202,16 @@ impl Jobs {
     /// A context for the plumbing tests in media/: not in the table, no task behind it.
     #[cfg(test)]
     pub(crate) fn test_ctx(&self, state: &AppState) -> Ctx {
-        Ctx { state: state.clone(), id: "t".into(), model: String::new(), req: json!({}), target: Target::default(), saved: Arc::default(), cancel: Arc::new(AtomicBool::new(false)), parent: None }
+        Ctx {
+            state: state.clone(),
+            id: "t".into(),
+            model: String::new(),
+            req: json!({}),
+            target: Target::default(),
+            saved: Arc::default(),
+            cancel: Arc::new(AtomicBool::new(false)),
+            parent: None,
+        }
     }
 
     fn lock(&self) -> MutexGuard<'_, HashMap<String, Job>> {
@@ -198,15 +236,23 @@ impl Jobs {
 
     /// Any job queued or running (blocks unload-all, power off, wipe).
     pub fn any_active(&self) -> bool {
-        self.lock().values().any(|j| matches!(Self::status_of(j), "queued" | "running"))
+        self.lock()
+            .values()
+            .any(|j| matches!(Self::status_of(j), "queued" | "running"))
     }
 
     pub fn active_on(&self, model: &str) -> bool {
-        self.lock().values().any(|j| j.data.get("model").and_then(Value::as_str) == Some(model) && matches!(Self::status_of(j), "queued" | "running"))
+        self.lock().values().any(|j| {
+            j.data.get("model").and_then(Value::as_str) == Some(model)
+                && matches!(Self::status_of(j), "queued" | "running")
+        })
     }
 
     pub fn running_on(&self, model: &str) -> bool {
-        self.lock().values().any(|j| j.data.get("model").and_then(Value::as_str) == Some(model) && Self::status_of(j) == "running")
+        self.lock().values().any(|j| {
+            j.data.get("model").and_then(Value::as_str) == Some(model)
+                && Self::status_of(j) == "running"
+        })
     }
 
     pub fn remove(&self, id: &str) {
@@ -218,10 +264,19 @@ impl Jobs {
     }
 
     pub fn submit(&self, state: &AppState, kind: &str, req: Value) -> Result<Value, JobError> {
-        let run = crate::media::kind(kind).ok_or_else(|| JobError(format!("unknown job kind {kind}")))?;
+        let run =
+            crate::media::kind(kind).ok_or_else(|| JobError(format!("unknown job kind {kind}")))?;
         let id = uuid::Uuid::new_v4().simple().to_string()[..12].to_string();
-        let model = req.get("model").and_then(Value::as_str).unwrap_or("").to_string();
-        let label = req.get("label").and_then(Value::as_str).filter(|l| !l.is_empty()).unwrap_or(kind);
+        let model = req
+            .get("model")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string();
+        let label = req
+            .get("label")
+            .and_then(Value::as_str)
+            .filter(|l| !l.is_empty())
+            .unwrap_or(kind);
         let data = json!({
             "id": id, "kind": kind, "model": model, "status": "queued", "progress": 0, "message": "Waiting for the model",
             "created": now(), "started": null, "label": label, "entry": null, "error": null,
@@ -229,10 +284,24 @@ impl Jobs {
         });
         let cancel = Arc::new(AtomicBool::new(false));
         let target = state.settings.current();
-        let job = Job { data: data.as_object().cloned().unwrap_or_default(), cancel: cancel.clone(), remote_task: None, target: target.clone() };
+        let job = Job {
+            data: data.as_object().cloned().unwrap_or_default(),
+            cancel: cancel.clone(),
+            remote_task: None,
+            target: target.clone(),
+        };
         let out = view(&job);
         self.lock().insert(id.clone(), job);
-        let ctx = Ctx { state: state.clone(), id, model, req, target, saved: Arc::default(), cancel, parent: None };
+        let ctx = Ctx {
+            state: state.clone(),
+            id,
+            model,
+            req,
+            target,
+            saved: Arc::default(),
+            cancel,
+            parent: None,
+        };
         tokio::spawn(work(ctx, kind.to_string(), run));
         Ok(out)
     }
@@ -242,7 +311,12 @@ impl Jobs {
         let mut map = self.lock();
         map.retain(|_, j| {
             let done = matches!(Self::status_of(j), "done" | "error" | "cancelled");
-            let t = j.data.get("finished").or(j.data.get("created")).and_then(Value::as_f64).unwrap_or(0.0);
+            let t = j
+                .data
+                .get("finished")
+                .or(j.data.get("created"))
+                .and_then(Value::as_f64)
+                .unwrap_or(0.0);
             !(done && t < cutoff)
         });
         let mut jobs: Vec<&Job> = map.values().collect();
@@ -267,13 +341,21 @@ impl Jobs {
     pub async fn cancel(&self, state: &AppState, id: &str) -> bool {
         let (remote, halt, target) = {
             let mut map = self.lock();
-            let Some(j) = map.get_mut(id) else { return false };
+            let Some(j) = map.get_mut(id) else {
+                return false;
+            };
             j.cancel.store(true, Ordering::Relaxed);
             let running = Self::status_of(j) == "running";
             if running {
                 j.data.insert("stopping".into(), json!(true)); // the result is thrown away when the device answers
             }
-            let s = |k: &str| j.data.get(k).and_then(Value::as_str).unwrap_or("").to_string();
+            let s = |k: &str| {
+                j.data
+                    .get(k)
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_string()
+            };
             let halt = running.then(|| (s("kind"), s("model")));
             if Self::status_of(j) == "queued" {
                 j.data.insert("status".into(), json!("cancelled"));
@@ -287,7 +369,11 @@ impl Jobs {
                 Some(url) => state.http.delete(url),
                 None => state.http.post(task).body(Vec::new()),
             };
-            let _ = req.bearer_auth(&target.key).timeout(std::time::Duration::from_secs(15)).send().await;
+            let _ = req
+                .bearer_auth(&target.key)
+                .timeout(std::time::Duration::from_secs(15))
+                .send()
+                .await;
         }
         if let Some((kind, model)) = halt {
             tokio::spawn(halt_device(state.clone(), target, kind, model));
@@ -305,7 +391,13 @@ impl Jobs {
             .iter()
             .filter(|(_, j)| Self::status_of(j) == "running")
             .map(|(id, j)| {
-                let s = |k: &str| j.data.get(k).and_then(Value::as_str).unwrap_or("").to_string();
+                let s = |k: &str| {
+                    j.data
+                        .get(k)
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .to_string()
+                };
                 (id.clone(), s("kind"), s("model"), j.target.clone())
             })
             .collect();
@@ -313,7 +405,8 @@ impl Jobs {
             if let Some(j) = self.lock().get_mut(&id) {
                 j.cancel.store(true, Ordering::Relaxed);
             }
-            let _ = tokio::time::timeout(wait, halt_device(state.clone(), target, kind, model)).await;
+            let _ =
+                tokio::time::timeout(wait, halt_device(state.clone(), target, kind, model)).await;
         }
     }
 }
@@ -325,14 +418,47 @@ async fn halt_device(state: AppState, target: Target, kind: String, model: Strin
     if model.is_empty() {
         return;
     }
-    let q: String = model.bytes().map(|b| if b.is_ascii_alphanumeric() || b"_.-~".contains(&b) { (b as char).to_string() } else { format!("%{b:02X}") }).collect();
+    let q: String = model
+        .bytes()
+        .map(|b| {
+            if b.is_ascii_alphanumeric() || b"_.-~".contains(&b) {
+                (b as char).to_string()
+            } else {
+                format!("%{b:02X}")
+            }
+        })
+        .collect();
     match kind.as_str() {
         "chat" | "assist" => {
-            crate::device::call(&state, "POST", &format!("/api/v1/models/{q}/interrupt"), Some(json!({})), 15, to).await;
+            crate::device::call(
+                &state,
+                "POST",
+                &format!("/api/v1/models/{q}/interrupt"),
+                Some(json!({})),
+                15,
+                to,
+            )
+            .await;
         }
         "image" => {
-            crate::device::call(&state, "POST", &format!("/api/v1/models/{q}/stop"), None, 120, to).await;
-            crate::device::call(&state, "POST", &format!("/api/v1/models/{q}/launch"), Some(json!({"model_id": model})), 120, to).await;
+            crate::device::call(
+                &state,
+                "POST",
+                &format!("/api/v1/models/{q}/stop"),
+                None,
+                120,
+                to,
+            )
+            .await;
+            crate::device::call(
+                &state,
+                "POST",
+                &format!("/api/v1/models/{q}/launch"),
+                Some(json!({"model_id": model})),
+                120,
+                to,
+            )
+            .await;
         }
         _ => {}
     }
@@ -341,21 +467,33 @@ async fn halt_device(state: AppState, target: Target, kind: String, model: Strin
 async fn work(ctx: Ctx, kind: String, run: KindFn) {
     let state = ctx.state.clone();
     let id = ctx.id.clone();
-    state.jobs.update(&id, json!({"message": "Waiting in the device queue"}));
+    state
+        .jobs
+        .update(&id, json!({"message": "Waiting in the device queue"}));
     {
         let _device = state.device_lock.lock().await;
         if ctx.cancelled() {
-            state.jobs.update(&id, json!({"status": "cancelled", "message": "Cancelled"}));
+            state
+                .jobs
+                .update(&id, json!({"status": "cancelled", "message": "Cancelled"}));
         } else {
             let started = now();
-            state.jobs.update(&id, json!({"status": "running", "started": started, "message": "Working…"}));
+            state.jobs.update(
+                &id,
+                json!({"status": "running", "started": started, "message": "Working…"}),
+            );
             let ephemeral = ctx.req.get("ephemeral").is_some_and(crate::device::truthy);
             let cancel = ctx.cancel.clone();
             let saved = ctx.saved.clone();
             // a panicking kind must not take the worker down: surface it as an error instead
             // kinds that make something on the device (results are written there first) need room for it
-            let full = if matches!(kind.as_str(), "image" | "speech" | "transcribe" | "loop" | "song" | "mesh" | "video" | "ocr") {
-                crate::device::disk_space(&state).await.filter(|(free, _)| *free < 2.0)
+            let full = if matches!(
+                kind.as_str(),
+                "image" | "speech" | "transcribe" | "loop" | "song" | "mesh" | "video" | "ocr"
+            ) {
+                crate::device::disk_space(&state)
+                    .await
+                    .filter(|(free, _)| *free < 2.0)
             } else {
                 None
             };
@@ -367,7 +505,10 @@ async fn work(ctx: Ctx, kind: String, run: KindFn) {
             };
             match result {
                 Ok(Ok(mut entry)) => {
-                    let mut e = entry.as_object_mut().map(std::mem::take).unwrap_or_default();
+                    let mut e = entry
+                        .as_object_mut()
+                        .map(std::mem::take)
+                        .unwrap_or_default();
                     let k = stamp(&mut e, &id, &kind, started);
                     let entry = Value::Object(e);
                     if cancel.load(Ordering::Relaxed) {
@@ -378,7 +519,9 @@ async fn work(ctx: Ctx, kind: String, run: KindFn) {
                             }
                         }
                         discard(&state, &saved);
-                        state.jobs.update(&id, json!({"status": "cancelled", "message": "Cancelled"}));
+                        state
+                            .jobs
+                            .update(&id, json!({"status": "cancelled", "message": "Cancelled"}));
                         state.jobs.update(&id, json!({"finished": now()}));
                         return;
                     }
@@ -387,7 +530,10 @@ async fn work(ctx: Ctx, kind: String, run: KindFn) {
                         if let Err(e) = state.store.add_history(entry.clone()) {
                             let msg = format!("Couldn't save the result: {e}");
                             discard(&state, &saved);
-                            state.jobs.update(&id, json!({"status": "error", "error": msg, "message": msg}));
+                            state.jobs.update(
+                                &id,
+                                json!({"status": "error", "error": msg, "message": msg}),
+                            );
                             state.jobs.update(&id, json!({"finished": now()}));
                             return;
                         }
@@ -398,9 +544,14 @@ async fn work(ctx: Ctx, kind: String, run: KindFn) {
                     discard(&state, &saved); // a failed job keeps nothing it saved
                     if cancel.load(Ordering::Relaxed) {
                         // the device's error is just the cancel taking effect
-                        state.jobs.update(&id, json!({"status": "cancelled", "message": "Cancelled"}));
+                        state
+                            .jobs
+                            .update(&id, json!({"status": "cancelled", "message": "Cancelled"}));
                     } else {
-                        state.jobs.update(&id, json!({"status": "error", "error": msg, "message": msg}));
+                        state.jobs.update(
+                            &id,
+                            json!({"status": "error", "error": msg, "message": msg}),
+                        );
                     }
                 }
                 Err(e) => {
@@ -425,7 +576,8 @@ mod tests {
             password: String::new(),
             lan_access: false,
             app: false,
-            data_dir: std::env::temp_dir().join(format!("studio-jobs-{}", uuid::Uuid::new_v4().simple())),
+            data_dir: std::env::temp_dir()
+                .join(format!("studio-jobs-{}", uuid::Uuid::new_v4().simple())),
         })
     }
 
@@ -443,8 +595,18 @@ mod tests {
     #[tokio::test]
     async fn runs_in_turn_and_saves_history() {
         let s = state();
-        let a = s.jobs.submit(&s, "test", json!({"model": "m", "ms": 100, "prompt": "duck"})).unwrap();
-        let b = s.jobs.submit(&s, "test", json!({"model": "m", "ms": 10, "as": "assist"})).unwrap();
+        let a = s
+            .jobs
+            .submit(
+                &s,
+                "test",
+                json!({"model": "m", "ms": 100, "prompt": "duck"}),
+            )
+            .unwrap();
+        let b = s
+            .jobs
+            .submit(&s, "test", json!({"model": "m", "ms": 10, "as": "assist"}))
+            .unwrap();
         assert_eq!(a["status"], json!("queued"));
         assert_eq!(a["params"]["prompt"], json!("duck"));
         tokio::time::sleep(std::time::Duration::from_millis(30)).await;
@@ -454,7 +616,10 @@ mod tests {
         assert!(s.jobs_active() && s.jobs.active_on("m") && s.jobs_running_on("m"));
         let a = wait_done(&s, a["id"].as_str().unwrap()).await;
         let b = wait_done(&s, b["id"].as_str().unwrap()).await;
-        assert_eq!((a["status"].as_str(), b["status"].as_str()), (Some("done"), Some("done")));
+        assert_eq!(
+            (a["status"].as_str(), b["status"].as_str()),
+            (Some("done"), Some("done"))
+        );
         assert_eq!(a["entry"]["id"], a["id"]);
         // assist results stay with the job; others go to the gallery
         let history = s.store.load_history();
@@ -466,26 +631,51 @@ mod tests {
     #[tokio::test]
     async fn a_job_keeps_the_device_it_was_submitted_to() {
         let s = state();
-        let a = s.settings.upsert(None, "A", "http://10.0.0.1", "key-a").unwrap();
-        let b = s.settings.upsert(None, "B", "http://10.0.0.2", "key-b").unwrap();
+        let a = s
+            .settings
+            .upsert(None, "A", "http://10.0.0.1", "key-a")
+            .unwrap();
+        let b = s
+            .settings
+            .upsert(None, "B", "http://10.0.0.2", "key-b")
+            .unwrap();
         s.settings.activate(&a, None);
-        let job = s.jobs.submit(&s, "test", json!({"model": "m", "ms": 50})).unwrap();
+        let job = s
+            .jobs
+            .submit(&s, "test", json!({"model": "m", "ms": 50}))
+            .unwrap();
         let id = job["id"].as_str().unwrap();
         s.settings.activate(&b, Some("A isn't answering".into()));
         assert_eq!(s.settings.current().key, "key-b");
         // the job (and so its cancel and every request it makes) stays on A with A's key
         let t = s.jobs.lock().get(id).unwrap().target.clone();
-        assert_eq!((t.url.as_str(), t.key.as_str()), ("http://10.0.0.1", "key-a"));
+        assert_eq!(
+            (t.url.as_str(), t.key.as_str()),
+            ("http://10.0.0.1", "key-a")
+        );
         wait_done(&s, id).await;
     }
 
     #[tokio::test]
     async fn a_failed_or_cancelled_job_keeps_no_files() {
         let s = state();
-        let ok = s.jobs.submit(&s, "test", json!({"save": 1, "ephemeral": true})).unwrap();
-        let failed = s.jobs.submit(&s, "test", json!({"save": 1, "fail": 1})).unwrap();
-        let cancelled = s.jobs.submit(&s, "test", json!({"save": 1, "ms": 200, "ephemeral": true})).unwrap();
-        let (ok, failed, cancelled) = (ok["id"].as_str().unwrap(), failed["id"].as_str().unwrap(), cancelled["id"].as_str().unwrap());
+        let ok = s
+            .jobs
+            .submit(&s, "test", json!({"save": 1, "ephemeral": true}))
+            .unwrap();
+        let failed = s
+            .jobs
+            .submit(&s, "test", json!({"save": 1, "fail": 1}))
+            .unwrap();
+        let cancelled = s
+            .jobs
+            .submit(&s, "test", json!({"save": 1, "ms": 200, "ephemeral": true}))
+            .unwrap();
+        let (ok, failed, cancelled) = (
+            ok["id"].as_str().unwrap(),
+            failed["id"].as_str().unwrap(),
+            cancelled["id"].as_str().unwrap(),
+        );
         let has = |id: &str| s.store.images.join(format!("{id}-x.png")).exists();
         wait_done(&s, ok).await;
         assert_eq!(wait_done(&s, failed).await["status"], json!("error"));
@@ -499,18 +689,33 @@ mod tests {
     #[tokio::test]
     async fn errors_cancel_and_unknown_kinds() {
         let s = state();
-        assert_eq!(s.jobs.submit(&s, "nope", json!({})).unwrap_err().0, "unknown job kind nope");
+        assert_eq!(
+            s.jobs.submit(&s, "nope", json!({})).unwrap_err().0,
+            "unknown job kind nope"
+        );
         let blocker = s.jobs.submit(&s, "test", json!({"ms": 150})).unwrap();
         let queued = s.jobs.submit(&s, "test", json!({})).unwrap();
-        let failing = s.jobs.submit(&s, "test", json!({"fail": 1, "ephemeral": true})).unwrap();
+        let failing = s
+            .jobs
+            .submit(&s, "test", json!({"fail": 1, "ephemeral": true}))
+            .unwrap();
         tokio::time::sleep(std::time::Duration::from_millis(20)).await;
         assert!(s.jobs.cancel(&s, queued["id"].as_str().unwrap()).await);
         assert!(!s.jobs.cancel(&s, "missing").await);
-        assert_eq!(s.jobs.get(queued["id"].as_str().unwrap()).unwrap()["status"], json!("cancelled"));
+        assert_eq!(
+            s.jobs.get(queued["id"].as_str().unwrap()).unwrap()["status"],
+            json!("cancelled")
+        );
         assert!(s.jobs.cancel(&s, blocker["id"].as_str().unwrap()).await);
-        assert_eq!(wait_done(&s, blocker["id"].as_str().unwrap()).await["status"], json!("cancelled"));
+        assert_eq!(
+            wait_done(&s, blocker["id"].as_str().unwrap()).await["status"],
+            json!("cancelled")
+        );
         let f = wait_done(&s, failing["id"].as_str().unwrap()).await;
-        assert_eq!((f["status"].as_str(), f["error"].as_str()), (Some("error"), Some("it failed")));
+        assert_eq!(
+            (f["status"].as_str(), f["error"].as_str()),
+            (Some("error"), Some("it failed"))
+        );
         assert!(s.store.load_history().is_empty());
     }
 }

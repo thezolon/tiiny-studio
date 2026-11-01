@@ -52,7 +52,17 @@ pub async fn running_ids(ctx: &Ctx) -> Vec<String> {
     if code != 200 {
         return vec![];
     }
-    run.pointer("/instances/running").and_then(Value::as_array).into_iter().flatten().map(|r| r.get("model_id").and_then(Value::as_str).unwrap_or("").to_string()).collect()
+    run.pointer("/instances/running")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .map(|r| {
+            r.get("model_id")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string()
+        })
+        .collect()
 }
 
 async fn wait_loaded(ctx: &Ctx, mid: &str) -> Result<(), JobError> {
@@ -77,16 +87,39 @@ pub async fn make_room(ctx: &Ctx, target: &str) -> Result<Vec<String>, JobError>
     let mut unloaded = vec![];
     for _ in 0..4 {
         // one unload may not be enough
-        let (code, plan) = ctx.call("GET", &format!("/api/v1/models/{}/unload_candidate", quote(target)), None, 30).await;
+        let (code, plan) = ctx
+            .call(
+                "GET",
+                &format!("/api/v1/models/{}/unload_candidate", quote(target)),
+                None,
+                30,
+            )
+            .await;
         if code != 200 {
             return Err(JobError(err(&plan)));
         }
-        if !plan.get("unload_required").is_some_and(crate::device::truthy) {
+        if !plan
+            .get("unload_required")
+            .is_some_and(crate::device::truthy)
+        {
             break;
         }
-        for victim in plan.get("model_id").and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_str) {
+        for victim in plan
+            .get("model_id")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+        {
             ctx.update(json!({"message": format!("Unloading {} to make room", short(victim))}));
-            let (code, res) = ctx.call("POST", &format!("/api/v1/models/{}/stop", quote(victim)), None, 120).await;
+            let (code, res) = ctx
+                .call(
+                    "POST",
+                    &format!("/api/v1/models/{}/stop", quote(victim)),
+                    None,
+                    120,
+                )
+                .await;
             if code != 200 {
                 return Err(JobError(err(&res)));
             }
@@ -94,7 +127,14 @@ pub async fn make_room(ctx: &Ctx, target: &str) -> Result<Vec<String>, JobError>
         }
     }
     ctx.update(json!({"message": format!("Loading {}", short(target))}));
-    let (code, res) = ctx.call("POST", &format!("/api/v1/models/{}/launch", quote(target)), Some(json!({"model_id": target})), 120).await;
+    let (code, res) = ctx
+        .call(
+            "POST",
+            &format!("/api/v1/models/{}/launch", quote(target)),
+            Some(json!({"model_id": target})),
+            120,
+        )
+        .await;
     if code != 200 {
         return Err(JobError(err(&res)));
     }
@@ -108,12 +148,29 @@ pub async fn put_back(ctx: &Ctx, target: &str, unloaded: &[String]) -> Result<()
         return Ok(()); // everything fitted: leave the model loaded for next time
     }
     ctx.update(json!({"message": format!("Unloading {}", short(target))}));
-    ctx.call("POST", &format!("/api/v1/models/{}/stop", quote(target)), None, 120).await;
+    ctx.call(
+        "POST",
+        &format!("/api/v1/models/{}/stop", quote(target)),
+        None,
+        120,
+    )
+    .await;
     for mid in unloaded {
         ctx.update(json!({"message": format!("Loading {} back", short(mid))}));
-        let (code, res) = ctx.call("POST", &format!("/api/v1/models/{}/launch", quote(mid)), Some(json!({"model_id": mid})), 120).await;
+        let (code, res) = ctx
+            .call(
+                "POST",
+                &format!("/api/v1/models/{}/launch", quote(mid)),
+                Some(json!({"model_id": mid})),
+                120,
+            )
+            .await;
         if code != 200 {
-            return Err(JobError(format!("Couldn't load {} back: {}", short(mid), err(&res))));
+            return Err(JobError(format!(
+                "Couldn't load {} back: {}",
+                short(mid),
+                err(&res)
+            )));
         }
     }
     for mid in unloaded {
@@ -129,7 +186,11 @@ pub async fn thinking_of(ctx: &Ctx, model: &str) -> Option<Value> {
     if code != 200 {
         return None;
     }
-    let item = res.get("data").and_then(Value::as_array)?.iter().find(|x| x.get("id").and_then(Value::as_str) == Some(model))?;
+    let item = res
+        .get("data")
+        .and_then(Value::as_array)?
+        .iter()
+        .find(|x| x.get("id").and_then(Value::as_str) == Some(model))?;
     item.get("thinking").filter(|t| t.is_object()).cloned()
 }
 
@@ -138,9 +199,21 @@ pub async fn thinking_of(ctx: &Ctx, model: &str) -> Option<Value> {
 pub fn thinking_mode(model: &str, thinking: Option<&Value>) -> &'static str {
     match thinking {
         // no thinking object: older TiinyOS, where gpt-oss also rejected enable_thinking
-        None => if model.contains("gpt-oss") { "always" } else { "switch" },
+        None => {
+            if model.contains("gpt-oss") {
+                "always"
+            } else {
+                "switch"
+            }
+        }
         Some(t) if !t.get("supported").is_some_and(crate::device::truthy) => "none",
-        Some(t) => if t.get("toggleable").is_some_and(crate::device::truthy) { "switch" } else { "always" },
+        Some(t) => {
+            if t.get("toggleable").is_some_and(crate::device::truthy) {
+                "switch"
+            } else {
+                "always"
+            }
+        }
     }
 }
 
@@ -149,8 +222,17 @@ pub async fn running_instance(ctx: &Ctx, model: &str) -> Result<Value, JobError>
     let (_, run) = ctx.call("GET", "/api/v1/models/running", None, 15).await;
     run.pointer("/instances/running")
         .and_then(Value::as_array)
-        .and_then(|r| r.iter().find(|r| r.get("model_id").and_then(Value::as_str) == Some(model)).cloned())
-        .ok_or_else(|| JobError(format!("{} isn't loaded. Load it from the Models panel.", short(model))))
+        .and_then(|r| {
+            r.iter()
+                .find(|r| r.get("model_id").and_then(Value::as_str) == Some(model))
+                .cloned()
+        })
+        .ok_or_else(|| {
+            JobError(format!(
+                "{} isn't loaded. Load it from the Models panel.",
+                short(model)
+            ))
+        })
 }
 
 /// For work routed through the gateway (port 80): just check the model is loaded.
@@ -182,46 +264,85 @@ pub async fn port_open(host: &str, port: Option<u64>) -> bool {
 
 /// A request outside the device client (a model's own port, or the gateway with a query string), like
 /// media.py Media.http: JSON answers (errors too) come back as (status, JSON); network failures are JobErrors.
-pub async fn http(ctx: &Ctx, method: &str, url: &str, body: Option<Value>, timeout: u64, gateway_auth: bool) -> Result<(u16, Value), JobError> {
+pub async fn http(
+    ctx: &Ctx,
+    method: &str,
+    url: &str,
+    body: Option<Value>,
+    timeout: u64,
+    gateway_auth: bool,
+) -> Result<(u16, Value), JobError> {
     let method = reqwest::Method::from_bytes(method.as_bytes()).unwrap_or(reqwest::Method::GET);
-    let mut req = ctx.state.http.request(method, url).timeout(Duration::from_secs(timeout));
+    let mut req = ctx
+        .state
+        .http
+        .request(method, url)
+        .timeout(Duration::from_secs(timeout));
     if gateway_auth {
         req = req.bearer_auth(&ctx.target.key);
     }
     if let Some(b) = body {
         req = req.json(&b);
     }
-    let res = req.send().await.map_err(|e| JobError(format!("Device unreachable: {e}")))?;
+    let res = req
+        .send()
+        .await
+        .map_err(|e| JobError(format!("Device unreachable: {e}")))?;
     let code = res.status().as_u16();
-    let raw = res.bytes().await.map_err(|e| JobError(format!("Device unreachable: {e}")))?;
+    let raw = res
+        .bytes()
+        .await
+        .map_err(|e| JobError(format!("Device unreachable: {e}")))?;
     if raw.is_empty() {
         return Ok((code, json!({})));
     }
     match serde_json::from_slice(&raw) {
         Ok(v) => Ok((code, v)),
         // an error answer's own text; a 200 that isn't JSON (a login page, a proxy) is an error answer too
-        Err(_) => Ok((if code >= 400 { code } else { 502 }, json!({"error": String::from_utf8_lossy(&raw).chars().take(500).collect::<String>()}))),
+        Err(_) => Ok((
+            if code >= 400 { code } else { 502 },
+            json!({"error": String::from_utf8_lossy(&raw).chars().take(500).collect::<String>()}),
+        )),
     }
 }
 
 /// Like `http` with a raw request body (bytes + content type) and raw bytes back for answers below 400 (media.py
 /// Media.http with raw=True); error answers come back as JSON like `http`.
-pub async fn http_bytes(ctx: &Ctx, method: &str, url: &str, body: Option<(Vec<u8>, String)>, timeout: u64, gateway_auth: bool) -> Result<(u16, Result<Vec<u8>, Value>), JobError> {
+pub async fn http_bytes(
+    ctx: &Ctx,
+    method: &str,
+    url: &str,
+    body: Option<(Vec<u8>, String)>,
+    timeout: u64,
+    gateway_auth: bool,
+) -> Result<(u16, Result<Vec<u8>, Value>), JobError> {
     let method = reqwest::Method::from_bytes(method.as_bytes()).unwrap_or(reqwest::Method::GET);
-    let mut req = ctx.state.http.request(method, url).timeout(Duration::from_secs(timeout));
+    let mut req = ctx
+        .state
+        .http
+        .request(method, url)
+        .timeout(Duration::from_secs(timeout));
     if gateway_auth {
         req = req.bearer_auth(&ctx.target.key);
     }
     if let Some((b, ctype)) = body {
         req = req.header("Content-Type", ctype).body(b);
     }
-    let res = req.send().await.map_err(|e| JobError(format!("Device unreachable: {e}")))?;
+    let res = req
+        .send()
+        .await
+        .map_err(|e| JobError(format!("Device unreachable: {e}")))?;
     let code = res.status().as_u16();
-    let raw = res.bytes().await.map_err(|e| JobError(format!("Device unreachable: {e}")))?;
+    let raw = res
+        .bytes()
+        .await
+        .map_err(|e| JobError(format!("Device unreachable: {e}")))?;
     if code < 400 {
         return Ok((code, Ok(raw.to_vec())));
     }
-    let v = serde_json::from_slice(&raw).unwrap_or_else(|_| json!({"error": String::from_utf8_lossy(&raw).chars().take(500).collect::<String>()}));
+    let v = serde_json::from_slice(&raw).unwrap_or_else(
+        |_| json!({"error": String::from_utf8_lossy(&raw).chars().take(500).collect::<String>()}),
+    );
     Ok((code, Err(v)))
 }
 
@@ -247,7 +368,10 @@ pub fn multipart(fields: &[(&str, String)], files: &[(&str, Upload)]) -> (Vec<u8
     let b = uuid::Uuid::new_v4().simple().to_string();
     let mut body = vec![];
     for (k, v) in fields {
-        body.extend_from_slice(format!("--{b}\r\nContent-Disposition: form-data; name=\"{k}\"\r\n\r\n{v}\r\n").as_bytes());
+        body.extend_from_slice(
+            format!("--{b}\r\nContent-Disposition: form-data; name=\"{k}\"\r\n\r\n{v}\r\n")
+                .as_bytes(),
+        );
     }
     for (k, (name, data, ctype)) in files {
         body.extend_from_slice(format!("--{b}\r\nContent-Disposition: form-data; name=\"{k}\"; filename=\"{name}\"\r\nContent-Type: {ctype}\r\n\r\n").as_bytes());
@@ -267,14 +391,33 @@ pub fn py_round(x: f64) -> i64 {
 pub fn err(res: &Value) -> String {
     let text = match res {
         Value::Object(o) => {
-            let e = [o.get("error"), o.get("detail")].into_iter().flatten().find(|v| crate::device::truthy(v)).cloned().unwrap_or(res.clone());
+            let e = [o.get("error"), o.get("detail")]
+                .into_iter()
+                .flatten()
+                .find(|v| crate::device::truthy(v))
+                .cloned()
+                .unwrap_or(res.clone());
             match e {
-                Value::Object(ref m) => m.get("message").filter(|v| crate::device::truthy(v)).map(py_str).unwrap_or_else(|| py_json(&e)),
+                Value::Object(ref m) => m
+                    .get("message")
+                    .filter(|v| crate::device::truthy(v))
+                    .map(py_str)
+                    .unwrap_or_else(|| py_json(&e)),
                 Value::Array(items) => items
                     .iter()
                     .map(|x| {
-                        let loc: Vec<String> = x.get("loc").and_then(Value::as_array).into_iter().flatten().map(py_str).collect();
-                        format!("{}: {}", loc.join("."), x.get("msg").map(py_str).unwrap_or_else(|| "None".into()))
+                        let loc: Vec<String> = x
+                            .get("loc")
+                            .and_then(Value::as_array)
+                            .into_iter()
+                            .flatten()
+                            .map(py_str)
+                            .collect();
+                        format!(
+                            "{}: {}",
+                            loc.join("."),
+                            x.get("msg").map(py_str).unwrap_or_else(|| "None".into())
+                        )
                     })
                     .collect::<Vec<_>>()
                     .join("; "),
@@ -299,7 +442,13 @@ fn py_str(v: &Value) -> String {
 /// json.dumps() spacing (", " and ": ").
 fn py_json(v: &Value) -> String {
     match v {
-        Value::Object(o) => format!("{{{}}}", o.iter().map(|(k, v)| format!("{}: {}", Value::String(k.clone()), py_json(v))).collect::<Vec<_>>().join(", ")),
+        Value::Object(o) => format!(
+            "{{{}}}",
+            o.iter()
+                .map(|(k, v)| format!("{}: {}", Value::String(k.clone()), py_json(v)))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
         Value::Array(a) => format!("[{}]", a.iter().map(py_json).collect::<Vec<_>>().join(", ")),
         other => other.to_string(),
     }
@@ -310,8 +459,16 @@ pub fn decode_uri(uri: &str) -> Result<(String, Vec<u8>), JobError> {
 }
 
 pub fn save(ctx: &Ctx, name: &str, data: &[u8]) -> Result<String, JobError> {
-    std::fs::write(ctx.state.store.images.join(name), data).map_err(|e| JobError(format!("Couldn't save the result: {}", crate::store::io_reason(&e))))?;
-    ctx.saved.lock().unwrap_or_else(|e| e.into_inner()).push(name.to_string());
+    std::fs::write(ctx.state.store.images.join(name), data).map_err(|e| {
+        JobError(format!(
+            "Couldn't save the result: {}",
+            crate::store::io_reason(&e)
+        ))
+    })?;
+    ctx.saved
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .push(name.to_string());
     Ok(name.to_string())
 }
 
@@ -342,7 +499,10 @@ mod tests {
     #[test]
     fn error_text() {
         assert_eq!(err(&json!({"error": {"message": "boom"}})), "boom");
-        assert_eq!(err(&json!({"detail": [{"loc": ["body", "n"], "msg": "bad"}]})), "body.n: bad");
+        assert_eq!(
+            err(&json!({"detail": [{"loc": ["body", "n"], "msg": "bad"}]})),
+            "body.n: bad"
+        );
         assert_eq!(err(&json!({"error": {"code": 1}})), r#"{"code": 1}"#);
         assert_eq!(err(&json!({"x": 1})), r#"{"x": 1}"#);
         assert_eq!(err(&json!("plain")), "plain");
@@ -356,20 +516,32 @@ mod tests {
             password: String::new(),
             lan_access: false,
             app: false,
-            data_dir: std::env::temp_dir().join(format!("studio-save-{}", uuid::Uuid::new_v4().simple())),
+            data_dir: std::env::temp_dir()
+                .join(format!("studio-save-{}", uuid::Uuid::new_v4().simple())),
         });
         let ctx = state.jobs.test_ctx(&state);
         assert_eq!(save(&ctx, "a.png", b"x").unwrap(), "a.png");
         std::fs::remove_dir_all(&state.store.images).unwrap();
         std::fs::write(&state.store.images, b"").unwrap(); // a file where the folder was
         let JobError(msg) = save(&ctx, "b.png", b"x").unwrap_err();
-        assert!(msg.starts_with("Couldn't save the result: ") && msg.len() > 26 && !msg.contains("os error"), "{msg}");
+        assert!(
+            msg.starts_with("Couldn't save the result: ")
+                && msg.len() > 26
+                && !msg.contains("os error"),
+            "{msg}"
+        );
     }
 
     #[test]
     fn a_200_that_is_not_json_is_an_error_answer() {
         let (code, v) = json_reply(200, Ok(b"<html>Please log in</html>".to_vec())).unwrap();
-        assert_eq!((code, err(&v).as_str()), (502, "<html>Please log in</html>"));
-        assert_eq!(json_reply(200, Ok(b"{\"a\": 1}".to_vec())).unwrap(), (200, json!({"a": 1})));
+        assert_eq!(
+            (code, err(&v).as_str()),
+            (502, "<html>Please log in</html>")
+        );
+        assert_eq!(
+            json_reply(200, Ok(b"{\"a\": 1}".to_vec())).unwrap(),
+            (200, json!({"a": 1}))
+        );
     }
 }

@@ -7,32 +7,50 @@ use roxmltree::{Document, Node, ParsingOptions};
 /// Namespace-qualified names as ElementTree writes them: `w!("p")` is "{...wordprocessingml/2006/main}p".
 macro_rules! w {
     ($t:literal) => {
-        concat!("{http://schemas.openxmlformats.org/wordprocessingml/2006/main}", $t)
+        concat!(
+            "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}",
+            $t
+        )
     };
 }
 macro_rules! a {
     ($t:literal) => {
-        concat!("{http://schemas.openxmlformats.org/drawingml/2006/main}", $t)
+        concat!(
+            "{http://schemas.openxmlformats.org/drawingml/2006/main}",
+            $t
+        )
     };
 }
 macro_rules! p {
     ($t:literal) => {
-        concat!("{http://schemas.openxmlformats.org/presentationml/2006/main}", $t)
+        concat!(
+            "{http://schemas.openxmlformats.org/presentationml/2006/main}",
+            $t
+        )
     };
 }
 macro_rules! r {
     ($t:literal) => {
-        concat!("{http://schemas.openxmlformats.org/officeDocument/2006/relationships}", $t)
+        concat!(
+            "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}",
+            $t
+        )
     };
 }
 macro_rules! s {
     ($t:literal) => {
-        concat!("{http://schemas.openxmlformats.org/spreadsheetml/2006/main}", $t)
+        concat!(
+            "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}",
+            $t
+        )
     };
 }
 macro_rules! rel {
     ($t:literal) => {
-        concat!("{http://schemas.openxmlformats.org/package/2006/relationships}", $t)
+        concat!(
+            "{http://schemas.openxmlformats.org/package/2006/relationships}",
+            $t
+        )
     };
 }
 macro_rules! v {
@@ -67,7 +85,10 @@ macro_rules! style {
 }
 macro_rules! pres {
     ($t:literal) => {
-        concat!("{urn:oasis:names:tc:opendocument:xmlns:presentation:1.0}", $t)
+        concat!(
+            "{urn:oasis:names:tc:opendocument:xmlns:presentation:1.0}",
+            $t
+        )
     };
 }
 macro_rules! xlink {
@@ -88,7 +109,10 @@ pub struct Elem {
 
 impl Elem {
     pub fn get(&self, name: &str) -> Option<&str> {
-        self.attrs.iter().find(|(k, _)| k == name).map(|(_, v)| v.as_str())
+        self.attrs
+            .iter()
+            .find(|(k, _)| k == name)
+            .map(|(_, v)| v.as_str())
     }
 
     /// `el.find(tag)`: the first direct child with that tag.
@@ -123,7 +147,9 @@ impl Elem {
 
     /// `el.find(".//tag")`: the first descendant (not the element itself).
     pub fn desc(&self, tag: &str) -> Option<&Elem> {
-        self.iter(Some(tag)).into_iter().find(|e| !std::ptr::eq(*e, self))
+        self.iter(Some(tag))
+            .into_iter()
+            .find(|e| !std::ptr::eq(*e, self))
     }
 }
 
@@ -136,8 +162,14 @@ fn qname(ns: Option<&str>, local: &str) -> String {
 
 fn convert(n: Node) -> Elem {
     let tn = n.tag_name();
-    let mut e = Elem { tag: qname(tn.namespace(), tn.name()), ..Elem::default() };
-    e.attrs = n.attributes().map(|a| (qname(a.namespace(), a.name()), a.value().to_string())).collect();
+    let mut e = Elem {
+        tag: qname(tn.namespace(), tn.name()),
+        ..Elem::default()
+    };
+    e.attrs = n
+        .attributes()
+        .map(|a| (qname(a.namespace(), a.name()), a.value().to_string()))
+        .collect();
     for c in n.children() {
         if c.is_element() {
             e.kids.push(convert(c));
@@ -156,7 +188,18 @@ fn convert(n: Node) -> Elem {
 fn to_text(b: &[u8]) -> Option<String> {
     if b.starts_with(&[0xff, 0xfe]) || b.starts_with(&[0xfe, 0xff]) {
         let be = b[0] == 0xfe;
-        let units: Vec<u16> = b[2..].as_chunks::<2>().0.iter().map(|&c| if be { u16::from_be_bytes(c) } else { u16::from_le_bytes(c) }).collect();
+        let units: Vec<u16> = b[2..]
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|&c| {
+                if be {
+                    u16::from_be_bytes(c)
+                } else {
+                    u16::from_le_bytes(c)
+                }
+            })
+            .collect();
         return String::from_utf16(&units).ok();
     }
     let b = b.strip_prefix(&[0xef, 0xbb, 0xbf][..]).unwrap_or(b);
@@ -164,15 +207,25 @@ fn to_text(b: &[u8]) -> Option<String> {
         return Some(s.to_string());
     }
     let head = String::from_utf8_lossy(&b[..b.len().min(200)]).to_lowercase();
-    let label = head.split("encoding=").nth(1)?.trim_start_matches(['"', '\'']).split(['"', '\'']).next()?.to_string();
+    let label = head
+        .split("encoding=")
+        .nth(1)?
+        .trim_start_matches(['"', '\''])
+        .split(['"', '\''])
+        .next()?
+        .to_string();
     let enc = encoding_rs::Encoding::for_label(label.as_bytes())?;
-    enc.decode_without_bom_handling_and_without_replacement(b).map(|c| c.into_owned())
+    enc.decode_without_bom_handling_and_without_replacement(b)
+        .map(|c| c.into_owned())
 }
 
 /// `ET.fromstring`; Err(()) is a parse error.
 pub fn parse(bytes: &[u8]) -> Result<Elem, ()> {
     let text = to_text(bytes).ok_or(())?;
-    let opts = ParsingOptions { allow_dtd: true, ..ParsingOptions::default() };
+    let opts = ParsingOptions {
+        allow_dtd: true,
+        ..ParsingOptions::default()
+    };
     let doc = Document::parse_with_options(&text, opts).map_err(|_| ())?;
     Ok(convert(doc.root_element()))
 }
