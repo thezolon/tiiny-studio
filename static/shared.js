@@ -123,7 +123,7 @@ function renderJobsMenu() {
   requestAnimationFrame(() => { menu.style.left = `${Math.max(8, Math.min(r.left, innerWidth - menu.offsetWidth - 8))}px`; });  // stay inside the window
   const times = queueTimes(act), waiting = act.filter((j) => j.status === "queued");
   const last = times.get(act[act.length - 1].id);
-  keepFocus(menu, () => menu.replaceChildren(...act.map((j) => el("div", { class: "jobs-menu-row" },
+  keepFocus(menu, () => menu.replaceChildren(...[...act.map((j) => el("div", { class: "jobs-menu-row" },
     el("span", { class: "dot " + (j.status === "running" ? "busy" : "") }),
     el("button", { class: "jobs-menu-label", title: "Open its workspace", onclick: () => { menu.hidden = true; setWs(wsOfJob(j)); } },
       el("b", {}, j.label || j.kind), el("small", {}, j.stopping ? STOPPING : (j.status === "running" ? (j.tool_message || j.message || "Working…") + (j.progress ? ` · ${j.progress}%` : "") : `Waiting · #${j.queue_pos || 1} in line`)
@@ -132,7 +132,7 @@ function renderJobsMenu() {
     act.length > 1 || waiting.length ? el("div", { class: "jobs-menu-foot" },
       el("span", {}, last?.end ? `Queue done around ${clock(last.end)}` : "The queue's end time isn't known yet"),
       waiting.length > 1 ? el("button", { class: "btn-sm ghost", ...onPress((b) => { b.disabled = true; b.textContent = "Removing…"; Promise.all(waiting.map((w) => api(`/api/jobs/${w.id}/cancel`, { method: "POST", body: "{}" }).catch(() => {}))).then(pollJobs); }) },
-        `Remove all ${waiting.length} waiting`) : null) : null));
+        `Remove all ${waiting.length} waiting`) : null) : null].filter(Boolean)));  // replaceChildren would print a null
 }
 /** When each job should start and finish, from its estimate (est, seconds) and the jobs ahead of it: a running job's
  *  remaining time, then each queued one in line. Unknown from the first job without an estimate on. */
@@ -143,7 +143,7 @@ function queueTimes(act) {
     if (t == null || !(j.est > 0)) { out.set(j.id, { start: j.status === "running" ? null : t }); t = null; continue; }
     const start = j.status === "running" ? (j.started || now) : t;
     const end = Math.max(now + 5, start + j.est);
-    out.set(j.id, { start, end });
+    out.set(j.id, { start, end, late: j.status === "running" && start + j.est < now });
     t = end;
   }
   return out;
@@ -151,6 +151,7 @@ function queueTimes(act) {
 const clock = (s) => new Date(s * 1000).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 function timeNote(j, t) {
   if (!t?.end) return t?.start && j.status === "queued" ? ` · starts ~${clock(t.start)}` : "";
+  if (t.late) return " · taking longer than usual";
   return j.status === "running" ? ` · done ~${clock(t.end)}` : ` · starts ~${clock(t.start)}, done ~${clock(t.end)}`;
 }
 function toggleJobsMenu(byKey) {

@@ -1158,7 +1158,7 @@ def run_mesh(m, job, req):
                 silent += 1
                 if silent >= MESH_LOST_POLLS:
                     raise JobError(f"{stage}: lost the Tiiny while it worked on this task")
-                job["message"] = "Can't reach the Tiiny, still trying…"
+                job["message"] = "No answer from the Tiiny yet (it's usually just busy). Still waiting…"
                 continue
             d = st.get("data") or {}
             p = d.get("progress") or 0
@@ -1412,7 +1412,7 @@ def run_video(m, job, req):
         if lost >= VIDEO_LOST_POLLS:
             raise JobError("Lost the Tiiny while it rendered this video. If it finished, it's kept on the device for an hour.")
         if lost:
-            job["message"] = "Can't reach the Tiiny, still trying…"
+            job["message"] = "No answer from the Tiiny yet (it's usually just busy). Still waiting…"
             continue
         job["progress"] = int(v.get("progress") or 0)
         job["message"] = "Rendering" if st == "in_progress" else "Waiting in the device queue"
