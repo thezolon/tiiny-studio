@@ -171,6 +171,9 @@ fn main() {
                     }
                     true
                 })
+                // the page takes dropped files itself (its drop zones); on Windows the app's own drop handler
+                // would swallow them before the page sees them
+                .disable_drag_drop_handler()
                 .title("Tiiny Studio")
                 .inner_size(1280.0, 860.0)
                 .min_inner_size(720.0, 520.0)
