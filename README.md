@@ -149,7 +149,9 @@ the studio behind a reverse proxy or open it by a hostname, turn network access 
 ## Privacy
 
 Everything the studio saves stays on your machine: results, prompts, sources and voices live only in
-`data/`, and requests go only to your Tiiny.
+`data/`, and requests go only to your Tiiny. The one exception: the studio may ask GitHub once a day which version
+is the latest (one anonymous request, nothing about you or your Tiiny); you can turn that off in Settings, and it is
+off by default in Docker.
 
 - **Deleting a result removes all of it**: the gallery entry with its prompt and settings, the output
   and source files, the server's in-memory copy of the job, and the browser's copy (images are served
@@ -195,6 +197,7 @@ Everything the studio saves stays on your machine: results, prompts, sources and
 | `server.py`, `media.py`, `chat.py`, `extract.py`, `safety.py` | the original Python server, kept as the behaviour reference (`testdata/contract/` runs the same requests against both) |
 | `static/index.html` | shell, Image workspace, Models panel |
 | `static/settings.js` | device settings and first-run setup |
+| `static/update.js` | the "new version is available" notice and its Settings switch |
 | `static/shared.js` | workspaces, job polling, model gating, audio helpers, waveform player |
 | `static/audio.js`, `static/mesh.js`, `static/video.js` | Audio, 3D and Video workspaces |
 | `static/extras.js` | gallery tools, live device stats, OCR and documents in Text mode |
