@@ -10,6 +10,13 @@
 .jobs-pill { display: inline-flex; align-items: center; gap: 8px; max-width: 300px; padding: 6px 12px; margin-right: 8px; border-radius: 999px;
   border: 1px solid var(--accent-line); background: var(--accent-soft); color: var(--text); font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .jobs-pill[hidden] { display: none; }
+.update-pill { display: inline-flex; align-items: center; margin-right: 8px; border-radius: 999px; border: 1px solid var(--line-2); background: var(--panel-2); font-size: 12.5px; }
+.update-pill[hidden] { display: none; }
+.update-pill button { min-width: 24px; min-height: 24px; padding: 3px 8px; border: 0; border-radius: 999px; background: transparent; color: var(--muted); font: inherit; white-space: nowrap; cursor: pointer; }
+.update-pill button:hover { color: var(--text); }
+#updateOpen { padding-left: 12px; max-width: 260px; overflow: hidden; text-overflow: ellipsis; }
+.update-notes { max-height: 50vh; overflow-y: auto; padding: 12px 14px; margin-top: 10px; border: 1px solid var(--line); border-radius: 10px; font-size: 13px; line-height: 1.5; }
+.update-card .modal-foot { padding-top: 12px; }
 .jobs-menu { position: fixed; z-index: 60; min-width: 280px; max-width: 420px; padding: 6px; border-radius: 12px;
   background: var(--panel); border: 1px solid var(--line-2); box-shadow: 0 12px 32px rgba(0,0,0,.35); }
 .jobs-menu[hidden] { display: none; }

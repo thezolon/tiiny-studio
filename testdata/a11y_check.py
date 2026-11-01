@@ -42,9 +42,14 @@ def main():
     strict = "--all" in sys.argv
     from playwright.sync_api import sync_playwright
     fake, device = fake_tiiny.start()
+    # a newer release on the fake "GitHub", so the update pill and its dialog are scanned too
+    fake.state.flags["release"] = {"tag_name": "v99.0.0", "body": "## What's new\n\n- A11Y TEST **notes** with a [link](https://example.com/x)",
+                                   "html_url": "https://github.com/thezolon/tiiny-studio/releases/tag/v99.0.0"}
     data = tempfile.mkdtemp(prefix="a11y-")
     port = 7960
-    env = {**os.environ, "DATA_DIR": data, "TIINY_URL": device, "TIINY_KEY": "fake-key", "PORT": str(port), "TIINY_NO_BROWSER": "1"}
+    env = {**os.environ, "DATA_DIR": data, "TIINY_URL": device, "TIINY_KEY": "fake-key", "PORT": str(port), "TIINY_NO_BROWSER": "1",
+           "STUDIO_UPDATE_URL": device + "/__release"}
+    env.pop("STUDIO_DOCKER", None)  # the check is on by default outside Docker
     server = subprocess.Popen([sys.executable, str(ROOT / "server.py")], env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     base = f"http://127.0.0.1:{port}"
     found = {}
@@ -77,6 +82,7 @@ def main():
 
                 page.goto(base + "/")
                 page.wait_for_load_state("networkidle")
+                page.locator("#updatePill").wait_for(state="visible", timeout=5000)  # the notice is up in every scan
                 for tab in ("Image", "Audio", "3D", "Video", "Chat"):
                     page.get_by_role("tab", name=tab, exact=True).first.click()
                     scan(tab)
@@ -86,6 +92,7 @@ def main():
                 page.get_by_role("tab", name="Image", exact=True).first.click()
                 for state, js in (("models drawer", "openDrawer()"), ("settings", "document.querySelector('#settingsBtn').click()"),
                                   ("add device", "openSettings(false); SET.editing = 'new'; refreshSettings()"),
+                                  ("update dialog", "document.querySelector('#updateOpen').click()"),
                                   ("annotate", ANNOTATE),  # openAnnot needs a source picture: the gallery's image
                                   ("text dialog", "textDialog('Text in this image', {}).set([{label: 'Image', text: 'A11Y TEST text'}])")):
                     page.evaluate(js)

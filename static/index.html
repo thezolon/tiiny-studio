@@ -46,6 +46,10 @@
       <button role="tab" id="tabChat" data-ws="chat" aria-selected="false" aria-controls="wsChat" tabindex="-1"><svg><use href="#i-chat"/></svg><span>Chat</span></button>
     </nav>
     <div class="spacer"></div>
+    <span class="update-pill" id="updatePill" hidden>
+      <button type="button" id="updateOpen" title="See what's new"></button>
+      <button type="button" id="updateDismiss" title="Dismiss until the next version" aria-label="Dismiss the update notice">✕</button>
+    </span>
     <button class="jobs-pill" id="jobsPill" hidden></button>
     <button class="model-btn" id="modelBtn" title="Choose, load or unload image models (M)">
       <span class="ico"><img id="modelIco" alt=""><span class="dot" id="statusDot"></span></span>
@@ -178,12 +182,14 @@
 </div>
 
 <div class="modal" id="settingsModal" role="dialog" aria-modal="true" aria-labelledby="settingsTitle"></div>
+<div class="modal" id="updateModal" role="dialog" aria-modal="true" aria-labelledby="updateTitle"></div>
 <div class="toasts" id="toasts" aria-live="polite"></div>
 <div class="dropveil" id="dropveil"><div id="dropveilText">Drop to use as source image</div></div>
 
 <script src="/static/studio.js"></script>
 <script src="/static/image.js"></script>
 <script src="/static/settings.js"></script>
+<script src="/static/update.js"></script>
 <script src="/static/shared.js"></script>
 <script src="/static/extras.js"></script>
 <script src="/static/audio.js"></script>
