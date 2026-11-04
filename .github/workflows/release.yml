@@ -57,6 +57,17 @@ jobs:
         # GStreamer: WebKitGTK plays audio and video through it, and the AppImage bundles the plugins installed here.
         # good: audio output, mp3, mp4 files; bad: the H.264 parser and fakevideosink; libav: H.264 and AAC decoders
         run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-plugins-bad gstreamer1.0-libav
+      - name: GStreamer plugins for the AppImage (none that pull in libsoup 2)
+        if: runner.os == 'Linux'
+        # WebKitGTK uses libsoup 3, and a process that loads libsoup 2 as well aborts (the WebRTC plugins bring it in
+        # through libnice). The bundler copies GSTREAMER_PLUGINS_DIR, so give it the system's plugins minus those.
+        run: |
+          dir="$RUNNER_TEMP/gst-plugins"; mkdir -p "$dir"
+          for f in /usr/lib/$(uname -m)-linux-gnu/gstreamer-1.0/*.so; do
+            ldd "$f" | grep -q libsoup-2 && { echo "skipping $(basename "$f")"; continue; }
+            cp "$f" "$dir/"
+          done
+          echo "GSTREAMER_PLUGINS_DIR=$dir" >> "$GITHUB_ENV"
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec  # stable branch, 2026-10-16
         with: { toolchain: stable }   # pinned by commit, so the toolchain can't come from the ref name
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0  # v2.9.3
@@ -89,6 +100,7 @@ jobs:
           for p in libgstautodetect.so libgstplayback.so libgstmpg123.so libgstwavparse.so libgstisomp4.so libgstvideoparsersbad.so libgstlibav.so; do
             find squashfs-root -name "$p" | grep -q . || { echo "missing $p"; exit 1; }
           done
+          if find squashfs-root -name "libsoup-2*" | grep -q .; then echo "libsoup 2 is inside: WebKit would abort"; exit 1; fi
           rm -rf squashfs-root
       - name: Collect the installers
         shell: bash
