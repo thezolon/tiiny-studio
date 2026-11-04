@@ -54,7 +54,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       - name: Linux desktop libraries (WebKitGTK)
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf
+        # GStreamer base + good: WebKitGTK plays audio through them (autoaudiosink, mp3 via mpg123); the AppImage bundles what's installed here
+        run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf gstreamer1.0-plugins-base gstreamer1.0-plugins-good
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec  # stable branch, 2026-10-16
         with: { toolchain: stable }   # pinned by commit, so the toolchain can't come from the ref name
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0  # v2.9.3
@@ -77,6 +78,17 @@ jobs:
           for i in $(seq 1 30); do curl -sf http://127.0.0.1:7999/ >/dev/null && break; sleep 1; done
           curl -sf http://127.0.0.1:7999/api/settings | grep -q '"version"'
           kill $pid || true
+      - name: The AppImage can play audio (its GStreamer plugins are inside)
+        if: runner.os == 'Linux'
+        shell: bash
+        working-directory: rust/target/release/bundle/appimage
+        run: |
+          f=$(ls *.AppImage | head -1); chmod +x "$f"
+          ./"$f" --appimage-extract >/dev/null
+          for p in libgstautodetect.so libgstmpg123.so libgstwavparse.so libgstplayback.so; do
+            find squashfs-root -name "$p" | grep -q . || { echo "missing $p"; exit 1; }
+          done
+          rm -rf squashfs-root
       - name: Collect the installers
         shell: bash
         run: |
