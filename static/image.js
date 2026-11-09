@@ -474,7 +474,8 @@ function renderPending(stage, head, job) {
   const pos = job.pos || S.queue.indexOf(job) + 1;
   head.append(el("div", { class: "crumb" }, el("b", {}, running ? (job.images.length ? "Editing" : "Generating") : `Queued #${pos}`), " · " + (job.params.model || "").split("/").pop()));
   const [w, h] = job.params.size.split("x").map(Number);
-  const box = el("div", { class: "pending", style: `aspect-ratio:${w}/${h};width:min(100%, calc((100vh - 290px) * ${w / h}))` });
+  // never narrower than its text: a tall shape in a short window would squeeze it to a sliver with the text spilling right
+  const box = el("div", { class: "pending", style: `aspect-ratio:${w}/${h};width:min(100%, max(260px, calc((100vh - 290px) * ${w / h})))` });
   if (job.images[0]) box.append(el("img", { class: "src-ghost", src: job.images[0], alt: "" }));
   const big = el("div", { class: "big" }, running ? "0s" : "Waiting");
   const sub = el("div", { class: "sub" }, running ? `about ${fmtSec(job.est)} · ${w}×${h}` : `starts after ${pos === 1 ? "the current job" : pos - 1 + " more"}`);
