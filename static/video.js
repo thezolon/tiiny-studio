@@ -56,11 +56,13 @@ ${e.params?.recovered ? "" : `Took ${fmtSec(e.seconds)} to render · `}${e.param
     return `At ${size.split("x").map(Number).sort((a, b) => a - b)[0]}p and ${steps} steps, ${secs} s should fit.`;
   },
   renderFoot() {
-    const { ready } = this.footModel("video");
-    const est = this.estimate(), over = est > VIDEO_LIMIT;
+    const { ready, loads } = this.footModel("video");
+    const est = this.estimate(), over = est > VIDEO_LIMIT;  // the render alone counts against the Tiiny's 1-hour limit
     if (!over) V.longOk = false;
     $("#vGo").disabled = !ready || !(V.prompt.trim() || V.first);
-    $("#vEst").textContent = ready ? "~" + fmtSec(est) + (over ? " ⚠" : "") : "";
+    $("#vGoLabel").textContent = loads ? `Queue (loads ${shortName(loads.id)})` : $("#vGoLabel").dataset.label;
+    $("#vGo").title = loads ? `${shortName(loads.id)} is loaded when this job's turn comes` : "";
+    $("#vEst").textContent = ready ? "~" + fmtSec(est + (loads ? LOAD_EST : 0)) + (over ? " ⚠" : "") : "";
     $("#vEst").title = over ? `Past the Tiiny's 1-hour limit for a video: it would stop unfinished. ${this.fitAdvice()}` : "";
   },
   panel() {

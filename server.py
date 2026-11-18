@@ -115,7 +115,7 @@ CHATS.mkdir(parents=True, exist_ok=True)
 LOCK = threading.Lock()
 DEVICE_LOCK = threading.Lock()  # the device runs one request at a time; every job (image, audio, 3D) takes this
 
-SWAP_KEYS = ("on", "chat", "image", "audio", "mesh")
+SWAP_KEYS = ("on", "chat", "image", "audio", "mesh", "queue")
 
 
 class Settings:

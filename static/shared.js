@@ -40,7 +40,8 @@ let jobTimer = null;
 async function submitJob(kind, payload, label) {
   const m = modelForTool(kind);
   const est = typeof payload.est === "number" ? payload.est : undefined;
-  const job = await api("/api/jobs", { method: "POST", body: JSON.stringify({ kind, model: m?.id, label, est, ...payload }) });
+  const load = m && m.status !== "running" ? true : undefined;  // the queue loads it at the job's turn (#78)
+  const job = await api("/api/jobs", { method: "POST", body: JSON.stringify({ kind, model: m?.id, label, est, load, ...payload }) });
   S.jobs.push(job); renderJobsPill(); pollJobs();
   return job;
 }
@@ -280,6 +281,7 @@ function helperModel(vision) {
   return (id && (S.allModels || []).find((m) => m.id === id && CHAT_TYPES.includes(m.type) && (!vision || seesImages(m)))) || chatModel(vision);
 }
 /** May the studio swap models on the device for this section (Settings → Model swapping)? All on by default. */
+const LOAD_EST = 60;  // about how long a model takes to load, added to a queued job's estimate when the queue loads it (#78)
 const swapOn = (section) => { const s = SET.info?.swap; return !s || (s.on && s[section] !== false); };
 const helperSection = (task) => (task === "lyrics" || task === "tags" ? "audio" : "image");
 /** An Image-to-Text model that finds a page's regions but doesn't read them (PP-DocLayoutV3): not an OCR model. */
@@ -643,7 +645,7 @@ function mediaWS(c) {
         el("aside", { class: "composer" },
           el("div", { class: "composer-scroll" }, ...top, el("div", { id: p + "Gate" }), el("div", { id: p + "Panel" })),
           el("div", { class: "composer-foot" },
-            el("button", { class: "go", id: p + "Go", onclick: () => this.submit() }, icon(ico), typeof label === "string" ? el("span", {}, label) : label, el("span", { class: "est", id: est })),
+            el("button", { class: "go", id: p + "Go", onclick: () => this.submit() }, icon(ico), typeof label === "string" ? el("span", { id: p + "GoLabel", "data-label": label }, label) : label, el("span", { class: "est", id: est })),
             el("div", { class: "foot-meta" }, ...foot))),
         el("section", { class: "stage-col" },
           el("div", { class: "stage-head", id: p + "Head" }),
@@ -660,9 +662,11 @@ function mediaWS(c) {
     },
     /** The tool's model and whether it's loaded; also writes the "name · not loaded" line in the footer. */
     footModel(tool, extra = "") {
-      const m = modelForTool(tool), ready = m?.status === "running";
-      $(`#${p}Meta`).textContent = m ? shortName(m.id) + (ready ? "" : " · not loaded") + extra : "";
-      return { m, ready };
+      const m = modelForTool(tool), loaded = m?.status === "running";
+      // not loaded, but the queue may load it when the job's turn comes (#78, Settings → Model swapping)
+      const loads = !loaded && m && !S.loading[m.id] && swapOn("queue") ? m : null;
+      $(`#${p}Meta`).textContent = m ? shortName(m.id) + (loaded ? "" : loads ? " · loads when its turn comes" : " · not loaded") + extra : "";
+      return { m, ready: loaded || !!loads, loads };
     },
     entries() { return S.history.filter(c.own); },
     /** The queued or running job on show, if any; a finished one drops back to the newest result. */
