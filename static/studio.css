@@ -348,8 +348,9 @@ textarea.lyrics:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(-
 @media (max-width: 900px) { #wsChat.main { grid-template-columns: 1fr; } .chat-side { display: none; } }
 
 /* shown only where the server can open the results folder (this computer, not Docker) */
-.gal-open-folder { display: none; }
+.gal-open-folder, .show-in-folder { display: none; }
 body[data-open-folder] .gal-open-folder { display: inline-flex; align-items: center; }
+body[data-open-folder] .tb.show-in-folder { display: inline-flex; }
 .gal-open-folder svg { width: 15px; height: 15px; }
 
 /* ---------- page layout and the Image workspace (moved from index.html) ---------- */
@@ -596,7 +597,7 @@ details.adv summary .sum { margin-left: auto; color: var(--faint); font-weight: 
 .go:active { transform: translateY(1px); }
 .go:disabled { opacity: .45; cursor: not-allowed; box-shadow: none; }
 .go svg { width: 18px; height: 18px; }
-.go .est { font-weight: 500; opacity: .9; font-size: 13px; }
+.go .est { font-weight: 500; font-size: 13px; }  /* full colour: at .9 the light theme fell under 4.5:1 */
 .foot-meta { display: flex; justify-content: space-between; margin-top: 9px; color: var(--faint); font-size: 12px; }
 
 /* ---------- stage ---------- */

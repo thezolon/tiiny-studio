@@ -43,9 +43,11 @@ ${e.params?.recovered ? "" : `Took ${fmtSec(e.seconds)} to render · `}${e.param
     return (314 + 60.4 * V.seconds * ((w * h) / (832 * 480)) ** 1.75) * (steps / 4) ** 1.4;
   },
   renderFoot() {
-    const { ready } = this.footModel("video");
+    const { ready, loads } = this.footModel("video");
     $("#vGo").disabled = !ready || !(V.prompt.trim() || V.first);
-    $("#vEst").textContent = ready ? "~" + fmtSec(this.estimate()) : "";
+    $("#vGoLabel").textContent = loads ? `Queue (loads ${shortName(loads.id)})` : $("#vGoLabel").dataset.label;
+    $("#vGo").title = loads ? `${shortName(loads.id)} is loaded when this job's turn comes` : "";
+    $("#vEst").textContent = ready ? "~" + fmtSec(this.estimate() + (loads ? LOAD_EST : 0)) : "";
   },
   panel() {
     const rerender = () => this.render(), t = this.info();
@@ -118,6 +120,7 @@ ${e.params?.recovered ? "" : `Took ${fmtSec(e.seconds)} to render · `}${e.param
     head.append(el("div", { class: "crumb" }, el("b", {}, "Video"), " · " + timeAgo(e.created)), el("div", { class: "spacer" }),
       el("div", { class: "toolbar" },
         el("a", { class: "tb primary", href: url, download: `tiiny-video-${e.id}.mp4` }, icon("i-down"), el("span", { class: "lbl" }, "Download MP4")),
+        showInFolderBtn(e.id),
         el("button", { class: "tb", onclick: () => this.reuse(e) }, icon("i-copy"), el("span", { class: "lbl" }, "Reuse")),
         el("button", { class: "tb danger", title: "Delete", "aria-label": "Delete", onclick: () => this.del(e) }, icon("i-trash"))));
     stage.append(el("div", { class: "video-result" },

@@ -5,7 +5,7 @@ import base64
 import json
 import unittest
 
-from harness import ContractCase, request  # first: puts testdata/ on the path
+from harness import ContractCase, name_suffix, request  # first: puts testdata/ on the path
 import fake_tiiny  # noqa: E402
 
 TTS, ASR, LOOP, SONG, MESH = "Qwen/Qwen3-TTS-Base", "Fake/Whisper-ASR", "Fake/Foundation-1", "Fake/SongGeneration-v2", "Tencent/Hunyuan3D-2.1"
@@ -115,13 +115,30 @@ class Audio(Jobs):
     def song(self, **kw):
         return {"kind": "song", "model": SONG, "caption": "RUST TEST pop", "lyrics": "[verse]\nla la", "seed": 5, "load": SONG, **kw}
 
+    def test_queue_loads_the_jobs_model(self):
+        """#78: a job queued for a model that isn't loaded loads it at its turn; with the switch off it doesn't."""
+        req = {k: v for k, v in self.song().items() if k != "load"}
+        for base in (self.h.py_url, self.h.rs_url):
+            request(self.h.fake_url, "POST", "/__reset")  # nothing loaded
+            done, calls = self.finish(base, request(base, "POST", "/api/jobs", {**req, "load": True}).json)
+            self.assertEqual(done["status"], "done", done.get("error"))
+            self.assertTrue(any(c[0] == "POST" and c[1].endswith("/launch") for c in calls), base)
+            request(base, "POST", "/api/settings/swap", {"swap": {"queue": False}})
+            try:
+                request(self.h.fake_url, "POST", "/__reset")
+                done, _ = self.finish(base, request(base, "POST", "/api/jobs", {**req, "load": True}).json)
+                self.assertEqual(done["status"], "error")
+                self.assertIn("isn't loaded", done["error"])
+            finally:
+                request(base, "POST", "/api/settings/swap", {"swap": {"queue": True}})
+
     def test_song_direct(self):
         py, rs = self.same_job(self.song(seconds_total=30, flags={"song_tracks": True}))
         self.assertEqual(py["entry"]["params"]["route"], "direct")
         self.assertEqual(len(py["entry"]["outputs"]), 3)  # song + Vocals + Bass Line
         self.files_equal(py, rs)
         self.assertEqual(sorted(py["entry"]["tracks"].values()), ["Bass Line", "Vocals"])
-        self.assertEqual([f.split("-", 1)[1] for f in py["entry"]["tracks"]], [f.split("-", 1)[1] for f in rs["entry"]["tracks"]])
+        self.assertEqual([name_suffix(f) for f in py["entry"]["tracks"]], [name_suffix(f) for f in rs["entry"]["tracks"]])
 
     def test_song_instrumental_with_style_reference(self):
         py, rs = self.same_job(self.song(generation_type="bgm", lyrics="", reference_audio=WAV))

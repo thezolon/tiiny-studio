@@ -115,7 +115,7 @@ CHATS.mkdir(parents=True, exist_ok=True)
 LOCK = threading.Lock()
 DEVICE_LOCK = threading.Lock()  # the device runs one request at a time; every job (image, audio, 3D) takes this
 
-SWAP_KEYS = ("on", "chat", "image", "audio", "mesh")
+SWAP_KEYS = ("on", "chat", "image", "audio", "mesh", "queue")
 
 
 class Settings:
@@ -575,12 +575,28 @@ def can_open_folder(client_ip):
     return sys.platform in ("win32", "darwin") or bool(os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
 
 
-def open_folder(path):
-    """Show a folder in the system file manager (Explorer, Finder, or the Linux desktop's)."""
-    if sys.platform == "win32":
+def open_folder(path, select=None):
+    """Show a folder in the system file manager (Explorer, Finder, or the Linux desktop's); with `select`, a file of
+    ours in it is shown selected (#58)."""
+    quiet = {"stdout": subprocess.DEVNULL, "stderr": subprocess.DEVNULL}
+    if select and sys.platform == "win32":
+        subprocess.Popen(f'explorer /select,"{select}"', **quiet)  # noqa: S602 (our own file, never a user-given path)
+    elif select and sys.platform == "darwin":
+        subprocess.Popen(["open", "-R", str(select)], **quiet)
+    elif select:  # Linux desktops select a file through the freedesktop FileManager1 D-Bus call
+        uri = "file://" + quote(str(select))
+        try:
+            ok = subprocess.run(["dbus-send", "--session", "--dest=org.freedesktop.FileManager1", "--type=method_call",
+                                 "/org/freedesktop/FileManager1", "org.freedesktop.FileManager1.ShowItems",
+                                 f"array:string:{uri}", "string:"], timeout=5, **quiet).returncode == 0
+        except (OSError, subprocess.SubprocessError):
+            ok = False
+        if not ok:
+            subprocess.Popen(["xdg-open", str(path)], **quiet)
+    elif sys.platform == "win32":
         os.startfile(path)  # noqa: S606 (a fixed folder of ours, never a user-given path)
     else:
-        subprocess.Popen(["open" if sys.platform == "darwin" else "xdg-open", str(path)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        subprocess.Popen(["open" if sys.platform == "darwin" else "xdg-open", str(path)], **quiet)
 
 
 def list_chats():
@@ -845,7 +861,17 @@ class Handler(BaseHTTPRequestHandler):
         if self.path == "/api/open-folder":
             if not can_open_folder(self.client_address[0]):
                 return self.send_json(403, {"error": {"message": "The folder can only be opened on the computer running the studio."}})
-            open_folder(IMAGES)
+            eid = self.read_json().get("id") if int(self.headers.get("Content-Length") or 0) else None
+            select = None
+            if eid:  # that result's own file, found by name in its entry, never a path from the request
+                e = next((x for x in load_history() if x.get("id") == eid), None)
+                names = [*(e or {}).get("outputs", []), *(e or {}).get("sources", []), *(e or {}).get("downloads", [])]
+                if not names or not re.fullmatch(r"[\w.-]+", names[0]):
+                    return self.send_json(404, {"error": {"message": "That result isn't in the library."}})
+                select = IMAGES / names[0]
+                if not select.is_file():
+                    return self.send_json(404, {"error": {"message": "That result's file is gone from the folder."}})
+            open_folder(IMAGES, select)
             return self.send_json(200, {"ok": True})
         if self.path == "/api/settings/test":
             return self.test_settings()

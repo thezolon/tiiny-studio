@@ -88,9 +88,11 @@ const MeshWS = {
   },
   renderFoot() {
     const cm = cutoutModel(), cutBlocked = this.cuts() && cm.status !== "running" && !swapOn("mesh");  // the server would refuse
-    const { ready } = this.footModel("mesh", cutBlocked ? ` · ${shortName(cm.id)} not loaded` : "");
+    const { ready, loads } = this.footModel("mesh", cutBlocked ? ` · ${shortName(cm.id)} not loaded` : "");
     $("#mGo").disabled = !ready || !M.clip || cutBlocked;
-    $("#mEst").textContent = M.clip ? "~" + fmtSec(this.estimate()) : "";
+    $("#mGoLabel").textContent = loads ? `Queue (loads ${shortName(loads.id)})` : $("#mGoLabel").dataset.label;
+    $("#mGo").title = loads ? `${shortName(loads.id)} is loaded when this job's turn comes` : "";
+    $("#mEst").textContent = M.clip ? "~" + fmtSec(this.estimate() + (loads ? LOAD_EST : 0)) : "";
     $("#mSteps").textContent = this.plan().join(" → ");
   },
   panel() {
@@ -170,6 +172,7 @@ const MeshWS = {
     head.append(el("div", { class: "crumb" }, el("b", {}, "3D model"), " · " + timeAgo(e.created)), el("div", { class: "spacer" }),
       el("div", { class: "toolbar" },
         el("a", { class: "tb primary", href: url, download: `tiiny-3d-${e.id}.glb` }, icon("i-down"), el("span", { class: "lbl" }, "Download GLB")),
+        showInFolderBtn(e.id),
         e.sources[0] ? el("button", { class: "tb", onclick: () => { setWs("image"); useAsSource("/images/" + e.sources[0]); } }, icon("i-brush"), el("span", { class: "lbl" }, "Edit source")) : null,
         el("button", { class: "tb", onclick: () => this.reuse(e) }, icon("i-copy"), el("span", { class: "lbl" }, "Reuse")),
         el("button", { class: "tb danger", title: "Delete", "aria-label": "Delete", onclick: () => this.del(e) }, icon("i-trash"))));

@@ -43,6 +43,9 @@ pub struct Swap {
     pub audio: bool,
     #[serde(default = "yes")]
     pub mesh: bool,
+    /// Queued jobs load their own model when their turn comes (#78).
+    #[serde(default = "yes")]
+    pub queue: bool,
 }
 
 fn new_token() -> String {
@@ -61,6 +64,7 @@ impl Default for Swap {
             image: true,
             audio: true,
             mesh: true,
+            queue: true,
         }
     }
 }
@@ -415,6 +419,7 @@ impl Settings {
                     "image" => st.swap.image = on,
                     "audio" => st.swap.audio = on,
                     "mesh" => st.swap.mesh = on,
+                    "queue" => st.swap.queue = on,
                     _ => {}
                 }
             }
@@ -453,6 +458,7 @@ impl Settings {
                 "image" => sw.image,
                 "audio" => sw.audio,
                 "mesh" => sw.mesh,
+                "queue" => sw.queue,
                 _ => false,
             }
     }

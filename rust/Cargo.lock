@@ -2421,6 +2421,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "mp4ameta"
+version = "0.13.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "453e991b2efe96c288cbc2d03a19e353504294559ecb6c03067fff5bd824616d"
+
+[[package]]
 name = "muda"
 version = "0.20.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3988,6 +3994,7 @@ dependencies = [
  "encoding_rs",
  "fancy-regex",
  "http-body-util",
+ "mp4ameta",
  "png 0.17.16",
  "regex",
  "reqwest 0.12.28",

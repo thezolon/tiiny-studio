@@ -10,6 +10,7 @@ mod music;
 mod ocr;
 pub mod recover;
 mod speech;
+pub mod tags;
 mod transcribe;
 mod video;
 
@@ -458,7 +459,14 @@ pub fn decode_uri(uri: &str) -> Result<(String, Vec<u8>), JobError> {
     crate::library::decode_uri(uri).map_err(|_| JobError("Expected a base64 data URI".into()))
 }
 
+/// A result's file name with the local date and time in front, so a file manager sorts results by when they were made
+/// (#58): `<id>-video.mp4` becomes `2026-11-18_2215_<id>-video.mp4`. Fixed length, always safe, still unique.
+pub fn dated(name: &str) -> String {
+    format!("{}_{name}", chrono::Local::now().format("%Y-%m-%d_%H%M"))
+}
+
 pub fn save(ctx: &Ctx, name: &str, data: &[u8]) -> Result<String, JobError> {
+    let name = &dated(name);
     std::fs::write(ctx.state.store.images.join(name), data).map_err(|e| {
         JobError(format!(
             "Couldn't save the result: {}",
@@ -520,7 +528,13 @@ mod tests {
                 .join(format!("studio-save-{}", uuid::Uuid::new_v4().simple())),
         });
         let ctx = state.jobs.test_ctx(&state);
-        assert_eq!(save(&ctx, "a.png", b"x").unwrap(), "a.png");
+        let name = save(&ctx, "a.png", b"x").unwrap(); // dated: 2026-11-18_2215_a.png (#58)
+        assert!(
+            name.len() == "YYYY-MM-DD_HHMM_a.png".len()
+                && name.ends_with("_a.png")
+                && name.as_bytes()[10] == b'_'
+        );
+        assert!(state.store.images.join(&name).is_file());
         std::fs::remove_dir_all(&state.store.images).unwrap();
         std::fs::write(&state.store.images, b"").unwrap(); // a file where the folder was
         let JobError(msg) = save(&ctx, "b.png", b"x").unwrap_err();
