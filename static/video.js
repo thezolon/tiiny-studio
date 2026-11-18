@@ -43,9 +43,11 @@ ${e.params?.recovered ? "" : `Took ${fmtSec(e.seconds)} to render · `}${e.param
     return (314 + 60.4 * V.seconds * ((w * h) / (832 * 480)) ** 1.75) * (steps / 4) ** 1.4;
   },
   renderFoot() {
-    const { ready } = this.footModel("video");
+    const { ready, loads } = this.footModel("video");
     $("#vGo").disabled = !ready || !(V.prompt.trim() || V.first);
-    $("#vEst").textContent = ready ? "~" + fmtSec(this.estimate()) : "";
+    $("#vGoLabel").textContent = loads ? `Queue (loads ${shortName(loads.id)})` : $("#vGoLabel").dataset.label;
+    $("#vGo").title = loads ? `${shortName(loads.id)} is loaded when this job's turn comes` : "";
+    $("#vEst").textContent = ready ? "~" + fmtSec(this.estimate() + (loads ? LOAD_EST : 0)) : "";
   },
   panel() {
     const rerender = () => this.render(), t = this.info();
