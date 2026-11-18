@@ -6,7 +6,7 @@ use axum::{
     http::{header, StatusCode},
     middleware::{self, Next},
     response::{IntoResponse, Response},
-    routing::{get, post},
+    routing::{any, get, post},
     Json, Router,
 };
 use rust_embed::RustEmbed;
@@ -51,6 +51,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/device/shutdown", post(shutdown))
         .route("/api/icon/{org}/{name}", get(icon))
         .route("/api/extract", post(extract_document))
+        .route("/mcp", any(crate::mcp::endpoint))
         .merge(crate::library::routes())
         .fallback(not_found)
         // same cap as server.py (for a body without a Content-Length too); /api/extract checks its own 100 MB
@@ -109,6 +110,10 @@ fn foreign(
 
 /// Optional password (STUDIO_PASSWORD): HTTP basic auth, any username, on every request.
 async fn authorized(State(state): State<AppState>, req: Request, next: Next) -> Response {
+    // the MCP endpoint checks its own bearer token (agents don't have the studio password); same_site still applies
+    if req.uri().path() == "/mcp" {
+        return next.run(req).await;
+    }
     let password = &state.config.password;
     if password.is_empty() {
         return next.run(req).await;
@@ -138,7 +143,7 @@ async fn authorized(State(state): State<AppState>, req: Request, next: Next) -> 
         .into_response()
 }
 
-fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+pub(crate) fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
     a.len() == b.len() && a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
 }
 
@@ -414,6 +419,7 @@ async fn device_action(
             .settings
             .set_auto(req.get("auto").map(device::truthy).unwrap_or(true)),
         "swap" => state.settings.set_swap(&req),
+        "mcp" => state.settings.set_mcp(&req),
         "updates" => {
             state
                 .settings
