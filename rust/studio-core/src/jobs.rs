@@ -540,6 +540,7 @@ async fn work(ctx: Ctx, kind: String, run: KindFn) {
                     }
                     // helper text and chat replies live with the job, not in the gallery; throwaway jobs never touch disk
                     if !matches!(k.as_str(), "assist" | "chat") && !ephemeral {
+                        crate::media::tags::embed(&state.store.images, &entry); // the prompt inside the files (#58)
                         if let Err(e) = state.store.add_history(entry.clone()) {
                             let msg = format!("Couldn't save the result: {e}");
                             discard(&state, &saved);
@@ -689,7 +690,14 @@ mod tests {
             failed["id"].as_str().unwrap(),
             cancelled["id"].as_str().unwrap(),
         );
-        let has = |id: &str| s.store.images.join(format!("{id}-x.png")).exists();
+        let has = |id: &str| {
+            // results are named <date>_<time>_<id>-… (media::dated)
+            let tail = format!("_{id}-x.png");
+            std::fs::read_dir(&s.store.images)
+                .unwrap()
+                .flatten()
+                .any(|f| f.file_name().to_string_lossy().ends_with(&tail))
+        };
         wait_done(&s, ok).await;
         assert_eq!(wait_done(&s, failed).await["status"], json!("error"));
         assert!(has(ok) && !has(failed)); // what a finished job saved stays; a failed one's goes

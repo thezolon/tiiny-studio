@@ -509,6 +509,7 @@ const AudioWS = {
     } else {
       const main = e.outputs[0];
       tb.append(...[el("a", { class: "tb primary", href: "/images/" + main, download: `tiiny-${e.kind}-${e.id}.wav` }, icon("i-down"), el("span", { class: "lbl" }, "Save")),
+        showInFolderBtn(e.id),
         btn("Transcribe", "i-text", () => this.sendToTranscribe("/images/" + main, kindName)),
         e.kind !== "speech" ? btn("Vary", "i-redo", () => this.reuse(e, true)) : null,
         btn("Reuse", "i-copy", () => this.reuse(e, false)),

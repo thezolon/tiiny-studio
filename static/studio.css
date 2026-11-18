@@ -345,8 +345,9 @@ textarea.lyrics:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(-
 @media (max-width: 900px) { #wsChat.main { grid-template-columns: 1fr; } .chat-side { display: none; } }
 
 /* shown only where the server can open the results folder (this computer, not Docker) */
-.gal-open-folder { display: none; }
+.gal-open-folder, .show-in-folder { display: none; }
 body[data-open-folder] .gal-open-folder { display: inline-flex; align-items: center; }
+body[data-open-folder] .tb.show-in-folder { display: inline-flex; }
 .gal-open-folder svg { width: 15px; height: 15px; }
 
 /* ---------- page layout and the Image workspace (moved from index.html) ---------- */

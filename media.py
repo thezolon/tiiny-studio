@@ -207,6 +207,8 @@ class Media:
         return m.group(1) or "application/octet-stream", base64.b64decode(m.group(2))
 
     def save(self, name, data):
+        # the local date and time in front, so a file manager sorts results by when they were made (#58)
+        name = f"{time.strftime('%Y-%m-%d_%H%M')}_{name}"
         try:
             (self.dir / name).write_bytes(data)
         except OSError as e:

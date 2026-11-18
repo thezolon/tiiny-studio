@@ -182,7 +182,7 @@ async fn recover_video(state: &AppState, to: &Target, v: &Value) -> Option<Value
     .await
     .filter(|d| !d.is_empty())?;
     let id = new_id();
-    let out = format!("{id}-video.mp4");
+    let out = super::dated(&format!("{id}-video.mp4"));
     std::fs::write(state.store.images.join(&out), data).ok()?; // can't write here: it stays on the device for the next look
     let secs = num(v.get("seconds"))
         .filter(|x| x.is_finite())
@@ -238,7 +238,7 @@ async fn recover_session(state: &AppState, to: &Target, s: &Value) -> Option<Val
     .filter(|m| m.len() > 1000)?;
     let id = new_id();
     let kind = session_kind(model);
-    let out = format!("{id}-{kind}.mp3");
+    let out = super::dated(&format!("{id}-{kind}.mp3"));
     std::fs::write(state.store.images.join(&out), mp3).ok()?;
     let entry = json!({"id": id, "created": now() as i64, "kind": kind, "seconds": 0, "params": {"model": model, "recovered": true},
         "sources": [], "outputs": [out], "downloads": [], "duration": null, "device": {"music_session": sid}});
