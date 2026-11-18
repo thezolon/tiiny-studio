@@ -400,12 +400,12 @@ class Media:
         items = res.get(key) if code == 200 and isinstance(res, dict) else None
         return [x for x in items if isinstance(x, dict)] if isinstance(items, list) else None
 
-    def recover(self):
+    def recover(self, check=False):
         """Save what the Tiiny holds that the gallery doesn't. Skipped while a job has the device (its own clip or session
-        would look unclaimed); the page asks again on its next load."""
-        return self.snapshot()._recover()
+        would look unclaimed); the page asks again on its next load. With check, only list what's waiting (#80)."""
+        return self.snapshot()._recover(check)
 
-    def _recover(self):
+    def _recover(self, check=False):
         nothing = {"recovered": [], "baseline": False}
         if not self.settings.url or not self.lock.acquire(blocking=False):
             return nothing
@@ -419,12 +419,16 @@ class Media:
                 return {"recovered": [], "baseline": True}
             when = lambda x: x["created_at"] if isinstance(x.get("created_at"), (int, float)) and not isinstance(x.get("created_at"), bool) else 0
             out = []
-            for v in sorted([v for v in vids or [] if v.get("status") == "completed" and isinstance(v.get("id"), str) and v["id"] not in seen], key=when):
+            vids = sorted([v for v in vids or [] if v.get("status") == "completed" and isinstance(v.get("id"), str) and v["id"] not in seen], key=when)
+            new = [s for s in sessions or [] if s.get("status") == "completed" and isinstance(s.get("session_id"), str) and s["session_id"] not in seen
+                   and when(s) >= time.time() - RECOVER_MUSIC_SECONDS]
+            if check:
+                kinds = ["video"] * len(vids) + ["loop" if "Foundation-1" in (s.get("model_id") or "") else "song" for s in new]
+                return {"pending": [{"kind": k} for k in kinds], "baseline": False}
+            for v in vids:
                 e = self._recover_video(v)
                 if e:
                     out.append({"id": e["id"], "kind": e["kind"]})
-            new = [s for s in sessions or [] if s.get("status") == "completed" and isinstance(s.get("session_id"), str) and s["session_id"] not in seen
-                   and when(s) >= time.time() - RECOVER_MUSIC_SECONDS]
             for s in sorted(new, key=when):
                 e = self._recover_session(s)
                 if e:
@@ -1450,6 +1454,8 @@ def video_error(e):
     if "Weight installation failed" in e:
         return ("The Tiiny couldn't fit the video model next to the other loaded models. "
                 f"Unload the others in the Models panel, then try again. (Tiiny: {e})")
+    if "exceeded the gateway time limit" in e or "GENERATION_TIMEOUT" in e:  # the render goes on after the gateway gives up (#80)
+        return f"The Tiiny stopped this video at its 1-hour limit, but the render may still be using the NPU. Unloading the video model frees it (the Tiiny then unloads every loaded model). For next time: 480p, fewer steps or fewer seconds. (Tiiny: {e})"
     return e
 
 

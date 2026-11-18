@@ -85,7 +85,8 @@ fn text<'a>(x: &'a Value, k: &str) -> &'a str {
 
 /// Save what the Tiiny holds that the gallery doesn't. Skipped while a job has the device (its own clip or session
 /// would look unclaimed); the page asks again on its next load.
-pub async fn recover(state: &AppState) -> Value {
+/// With `check`, only list what's waiting (`{"pending": [{"kind"}…]}`) so the page can say so before a long download (#80).
+pub async fn recover(state: &AppState, check: bool) -> Value {
     let nothing = json!({"recovered": [], "baseline": false});
     let to = state.settings.current(); // one snapshot: the address and key this pass uses throughout
     if to.url.is_empty() {
@@ -130,11 +131,6 @@ pub async fn recover(state: &AppState) -> Value {
             .partial_cmp(&when(b))
             .unwrap_or(std::cmp::Ordering::Equal)
     });
-    for v in &vids {
-        if let Some(e) = recover_video(state, &to, v).await {
-            out.push(e);
-        }
-    }
     let recent = now() - MUSIC_SECONDS;
     let mut new: Vec<Value> = sessions
         .unwrap_or_default()
@@ -151,6 +147,22 @@ pub async fn recover(state: &AppState) -> Value {
             .partial_cmp(&when(b))
             .unwrap_or(std::cmp::Ordering::Equal)
     });
+    if check {
+        let pending: Vec<Value> = vids
+            .iter()
+            .map(|_| json!({"kind": "video"}))
+            .chain(
+                new.iter()
+                    .map(|s| json!({"kind": session_kind(text(s, "model_id"))})),
+            )
+            .collect();
+        return json!({"pending": pending, "baseline": false});
+    }
+    for v in &vids {
+        if let Some(e) = recover_video(state, &to, v).await {
+            out.push(e);
+        }
+    }
     for s in &new {
         if let Some(e) = recover_session(state, &to, s).await {
             out.push(e);
@@ -205,6 +217,14 @@ async fn recover_video(state: &AppState, to: &Target, v: &Value) -> Option<Value
     Some(json!({"id": id, "kind": "video"}))
 }
 
+fn session_kind(model: &str) -> &'static str {
+    if model.contains("Foundation-1") {
+        "loop"
+    } else {
+        "song"
+    }
+}
+
 async fn recover_session(state: &AppState, to: &Target, s: &Value) -> Option<Value> {
     let sid = text(s, "session_id");
     let model = text(s, "model_id");
@@ -217,11 +237,7 @@ async fn recover_session(state: &AppState, to: &Target, s: &Value) -> Option<Val
     .await
     .filter(|m| m.len() > 1000)?;
     let id = new_id();
-    let kind = if model.contains("Foundation-1") {
-        "loop"
-    } else {
-        "song"
-    };
+    let kind = session_kind(model);
     let out = format!("{id}-{kind}.mp3");
     std::fs::write(state.store.images.join(&out), mp3).ok()?;
     let entry = json!({"id": id, "created": now() as i64, "kind": kind, "seconds": 0, "params": {"model": model, "recovered": true},

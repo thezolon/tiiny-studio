@@ -50,14 +50,14 @@ async function pollJobs() {
   for (const j of S.jobs) {
     if (seenDone.has(j.id)) continue;
     // a job that had already finished before this page loaded is old news
-    if (j.status !== "queued" && j.status !== "running" && (j.finished || j.created) * 1000 < PAGE_T0 - 3000) { seenDone.add(j.id); continue; }
+    if (j.status !== "queued" && j.status !== "running" && (j.finished || j.created) * 1000 < PAGE_T0 - 3000) { seenDone.add(j.id); if (j.status === "error") noteFailed(j); continue; }
     if (j.status === "done" && j.entry) {
       seenDone.add(j.id);
       if (j.kind !== "assist" && j.kind !== "chat" && !j.params?.ephemeral && !S.history.some((e) => e.id === j.entry.id)) S.history.unshift(j.entry);
       onJobDone(j);
     } else if (j.status === "error" || j.status === "cancelled") {
       seenDone.add(j.id);
-      if (j.status === "error") toast(j.error || "Job failed", "err");
+      if (j.status === "error") { toast(j.error || "Job failed", "err"); noteFailed(j); }
       onJobDone(j);
     }
   }
@@ -96,15 +96,56 @@ function onJobDone(j) {
   if (j.status === "done" && document.hidden && "Notification" in window && Notification.permission === "granted")
     new Notification("Tiiny Studio", { body: `${j.label || j.kind} is ready` });
 }
+/* ---------- failed jobs stay visible until dismissed (#80) ----------
+   A failure used to be a toast that vanished; now it waits in the jobs menu (and on its tab's stage) with its reason.
+   Kept in this browser; ids dismissed here are remembered so a reload doesn't bring them back. */
+const FAILED_KINDS = ["image", "speech", "transcribe", "loop", "song", "mesh", "video"];
+S.failed = store.get("jobs.failed", []);
+function noteFailed(j) {
+  if (!FAILED_KINDS.includes(j.kind) || S.failed.some((f) => f.id === j.id) || store.get("jobs.dismissed", []).includes(j.id)) return;
+  S.failed.unshift({ id: j.id, kind: j.kind, model: j.model, label: j.label || j.kind, error: j.error || "Job failed", at: j.finished || Date.now() / 1000 });
+  S.failed = S.failed.slice(0, 20); store.set("jobs.failed", S.failed);
+}
+function dismissFailed(id) {
+  const gone = id ? [id] : S.failed.map((f) => f.id);
+  S.failed = S.failed.filter((f) => !gone.includes(f.id)); store.set("jobs.failed", S.failed);
+  store.set("jobs.dismissed", [...gone, ...store.get("jobs.dismissed", [])].slice(0, 100));
+  for (const k of ["audio", "mesh", "video"]) { const m = WS[k].mod(), st = m?.state?.(); if (st?.view?.failed && gone.includes(st.view.failed)) { st.view = null; if (m.mounted && S.ws === k) m.renderStage(); } }
+  renderJobsPill(); renderJobsMenu();
+}
+/** Open a failure's tab with the failure on its stage. */
+function openFailed(f) {
+  const k = wsOfJob(f); setWs(k);
+  const m = WS[k]?.mod?.(), st = m?.state?.();
+  if (st) { st.view = { failed: f.id }; m.renderStage(); m.renderStrip?.(); }
+}
+/** The stage card for a failed job: what went wrong, and Dismiss. */
+function failedCard(f, onDismiss) {
+  return el("div", { class: "pending media-pending failed" },
+    el("div", { class: "pending-inner" },
+      el("div", { class: "big" }, "Didn't finish"),
+      el("div", { class: "sub err-text" }, f.error),
+      el("div", { class: "prompt-echo" }, f.label),
+      el("div", { class: "row", style: "justify-content:center;gap:8px;flex-wrap:wrap" },
+        // a video stopped at the 1-hour limit may still hold the NPU: only unloading its model frees it (#80)
+        f.kind === "video" && f.model && /1-hour limit/.test(f.error) && modelById(f.model)?.status === "running"
+          ? el("button", { class: "tb", ...onPress(async (b) => { b.disabled = true; b.textContent = "Unloading…"; await stopModel(f.model, shortName(f.model)); onDismiss(); }) }, "Unload the video model") : null,
+        el("button", { class: "tb", onclick: onDismiss }, "Dismiss"))));
+}
 function renderJobsPill() {
   const act = S.jobs.filter((j) => j.status === "queued" || j.status === "running");
-  const pill = $("#jobsPill");
-  pill.hidden = !act.length;
-  if (!act.length) return;
+  const pill = $("#jobsPill"), fails = S.failed.length;
+  pill.hidden = !act.length && !fails;
+  if (!act.length && !fails) return;
+  pill.onclick = (e) => { e.stopPropagation(); toggleJobsMenu(e.detail === 0); };
+  if (!act.length) {
+    pill.replaceChildren(el("span", { class: "dot err" }), `${fails} failed`);
+    if (!$("#jobsMenu")?.hidden) renderJobsMenu();
+    return;
+  }
   const j = act[0];
   const npu = typeof S.stats?.npu_util === "number" ? ` · NPU ${Math.round(S.stats.npu_util)}%` : "";
-  pill.replaceChildren(el("span", { class: "dot busy" }), `${act.length} job${act.length > 1 ? "s" : ""} · ${j.label || j.kind}${j.progress ? ` ${j.progress}%` : ""}${npu}`);
-  pill.onclick = (e) => { e.stopPropagation(); toggleJobsMenu(e.detail === 0); };
+  pill.replaceChildren(el("span", { class: "dot busy" }), `${act.length} job${act.length > 1 ? "s" : ""} · ${j.label || j.kind}${j.progress ? ` ${j.progress}%` : ""}${npu}${fails ? ` · ${fails} failed` : ""}`);
   if (!$("#jobsMenu")?.hidden) renderJobsMenu();
 }
 const wsOfJob = (j) => ({ mesh: "mesh", video: "video", image: "image", chat: "chat", assist: S.ws }[j.kind] || "audio");
@@ -117,18 +158,25 @@ function renderJobsMenu() {
     document.addEventListener("click", () => { menu.hidden = true; });
   }
   const act = S.jobs.filter((j) => j.status === "queued" || j.status === "running");
-  if (!act.length) { menu.hidden = true; return; }
+  if (!act.length && !S.failed.length) { menu.hidden = true; return; }
   const r = $("#jobsPill").getBoundingClientRect();
   menu.style.top = `${r.bottom + 6}px`;
   requestAnimationFrame(() => { menu.style.left = `${Math.max(8, Math.min(r.left, innerWidth - menu.offsetWidth - 8))}px`; });  // stay inside the window
   const times = queueTimes(act), waiting = act.filter((j) => j.status === "queued");
-  const last = times.get(act[act.length - 1].id);
+  const last = act.length ? times.get(act[act.length - 1].id) : null;
+  const failedRows = S.failed.map((f) => el("div", { class: "jobs-menu-row failed" },
+    el("span", { class: "dot err" }),
+    el("button", { class: "jobs-menu-label", title: "Open it on its tab", onclick: () => { menu.hidden = true; openFailed(f); } },
+      el("b", {}, f.label), el("small", { class: "err-text" }, `Failed ${clock(f.at)} · ${f.error}`)),
+    el("button", { class: "btn-sm ghost", onclick: () => dismissFailed(f.id) }, "Dismiss")));
   keepFocus(menu, () => menu.replaceChildren(...[...act.map((j) => el("div", { class: "jobs-menu-row" },
     el("span", { class: "dot " + (j.status === "running" ? "busy" : "") }),
     el("button", { class: "jobs-menu-label", title: "Open its workspace", onclick: () => { menu.hidden = true; setWs(wsOfJob(j)); } },
       el("b", {}, j.label || j.kind), el("small", {}, j.stopping ? STOPPING : (j.status === "running" ? (j.tool_message || j.message || "Working…") + (j.progress ? ` · ${j.progress}%` : "") : `Waiting · #${j.queue_pos || 1} in line`)
         + (j.stopping ? "" : timeNote(j, times.get(j.id))))),
     el("button", { class: "btn-sm ghost", disabled: !!j.stopping, ...onPress((b) => stopButton(b, j.id)) }, j.stopping ? "Stopping…" : j.status === "running" ? "Cancel" : "Remove"))),
+    ...failedRows,
+    S.failed.length > 1 ? el("div", { class: "jobs-menu-foot" }, el("span", {}, `${S.failed.length} failed`), el("button", { class: "btn-sm ghost", onclick: () => dismissFailed() }, "Dismiss all")) : null,
     act.length > 1 || waiting.length ? el("div", { class: "jobs-menu-foot" },
       el("span", {}, last?.end ? `Queue done around ${clock(last.end)}` : "The queue's end time isn't known yet"),
       waiting.length > 1 ? el("button", { class: "btn-sm ghost", ...onPress((b) => { b.disabled = true; b.textContent = "Removing…"; Promise.all(waiting.map((w) => api(`/api/jobs/${w.id}/cancel`, { method: "POST", body: "{}" }).catch(() => {}))).then(pollJobs); }) },
@@ -157,7 +205,7 @@ function timeNote(j, t) {
 function toggleJobsMenu(byKey) {
   renderJobsMenu();
   const menu = $("#jobsMenu");
-  if (menu && S.jobs.some((j) => j.status === "queued" || j.status === "running")) menu.hidden = !menu.hidden;
+  if (menu && (S.failed.length || S.jobs.some((j) => j.status === "queued" || j.status === "running"))) menu.hidden = !menu.hidden;
   if (byKey && menu && !menu.hidden) menu.querySelector("button")?.focus();  // it sits at the end of the page: bring the keyboard to it
 }
 document.addEventListener("keydown", (e) => {
@@ -182,13 +230,16 @@ async function recoverFromDevice() {
   if (recoverAsked) return;
   recoverAsked = true;
   try {
-    const r = await api("/api/device/recover", { method: "POST", body: "{}" });
-    const got = r.recovered || [];
+    const what = (list) => { const n = (k) => list.filter((x) => x.kind === k).length;
+      return [["video", "video"], ["song", "song"], ["loop", "loop"]].filter(([k]) => n(k)).map(([k, w]) => `${n(k)} ${w}${n(k) > 1 ? "s" : ""}`).join(" and "); };
+    // say what's coming first: a video can take a while to copy over (#80)
+    const waiting = (await api("/api/device/recover", { method: "POST", body: JSON.stringify({ check: true }) })).pending || [];
+    if (!waiting.length) return;
+    toast(`Found ${what(waiting)} on the Tiiny that ${waiting.length > 1 ? "aren't" : "isn't"} in your library: saving…`);
+    const got = (await api("/api/device/recover", { method: "POST", body: "{}" })).recovered || [];
     if (!got.length) return;
-    const n = (k) => got.filter((x) => x.kind === k).length;
-    const parts = [["video", "video"], ["song", "song"], ["loop", "loop"]].filter(([k]) => n(k)).map(([k, w]) => `${n(k)} ${w}${n(k) > 1 ? "s" : ""}`);
     await loadHistory();
-    toast(`Saved ${parts.join(" and ")} from the Tiiny that wasn't in your gallery`);
+    toast(`Saved ${what(got)} from the Tiiny that wasn't in your gallery`);
   } catch (e) { recoverAsked = false; }  // quiet: the device may just be asleep; the next page load asks again
 }
 
@@ -579,6 +630,14 @@ function imageSlot({ img, clear, cls, key, zone, title, hint, take }) {
 function mediaWS(c) {
   const { kind, p, st } = c;
   return {
+    state() { return st; },
+    /** A failed job shown on the stage (#80): its stage card replaces the result until dismissed or another is picked. */
+    failedStage(head) {
+      const f = st.view?.failed && S.failed.find((x) => x.id === st.view.failed);
+      if (!f) { if (st.view?.failed) st.view = null; return null; }
+      head.replaceChildren(el("div", { class: "crumb" }, el("b", {}, "Failed"), " · " + f.label));
+      return failedCard(f, () => dismissFailed(f.id));
+    },
     shell(root, { top = [], ico, label, est, foot, bar = [] }) {
       root.replaceChildren(
         el("aside", { class: "composer" },
@@ -618,7 +677,7 @@ function mediaWS(c) {
     current(list) { return (st.view && list.find((x) => x.id === st.view.id)) || (!st.view && list[0]); },
     jobDone(j) {
       if (c.early?.(j)) return;
-      if (st.view?.job === j.id) st.view = j.status === "done" ? { id: j.entry.id, ...(c.fresh && { fresh: true }) } : null;
+      if (st.view?.job === j.id) st.view = j.status === "done" ? { id: j.entry.id, ...(c.fresh && { fresh: true }) } : j.status === "error" ? { failed: j.id } : null;
       if (this.mounted && S.ws === kind) { this.renderStage(); this.renderStrip(); }
     },
     renderJobs() { if (st.view?.job) this.renderStage(); this.renderStrip(); },

@@ -10,7 +10,8 @@ POST /__flags {..} switches on test behaviour until the next reset: "fail" {path
 "task_flaky" N / "artifact_flaky" N (the next N 3D task polls / artifact fetches answer 502), "ignore_cancel" (a 3D task that
 never stops), "image_warmup" N (the next N image requests fail like Qwen-Image just after loading), "cutout_png" (images
 come back as RGBA cut-outs), "video_flaky" N / "content_flaky" N (the next N video polls answer 502 / downloads 503),
-"video_hold" (a clip renders until it's cancelled), "video_no_room" (clips fail with the NPU's "Weight installation failed").
+"video_hold" (a clip renders until it's cancelled), "video_no_room" (clips fail with the NPU's "Weight installation failed"),
+"song_answer_lost" N (a plain-gateway song finishes on the device but its answer never arrives; the request hangs N seconds).
 GET /__release (no auth) stands in for GitHub's releases/latest: it answers the "release" flag (a release JSON; 404 when unset), or
 "release_fail" N (that status instead), and logs each call: GET /__release_hits (User-Agent and Accept of every call).
 POST /__seed {"videos": [{"id", "status", "age", "seconds"}], "sessions": [{"session_id", "model_id", "route", "status", "age"}]} plants results the studio never
@@ -622,6 +623,13 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(400, {"success": False, "audio_data": None, "error": "YuE2 produces one stereo mix; generation_type must be mixed", "error_code": "INVALID_REQUEST"})
             if not isinstance((config.get("ace_step") or {}).get("bpm", 0), (int, float)):
                 return self.send_json(400, {"success": False, "audio_data": None, "error": "type must be number, but is string", "error_code": "INVALID_REQUEST"})
+        if method == "POST" and p == "/v1/music/generate" and self.body.get("model") in PLAIN_SONG and st.flags.get("song_answer_lost"):
+            # the song finishes on the device, but its answer never reaches the studio (a dropped connection, #91)
+            sid = self.new_session("completed")
+            st.session_meta[sid] = {"model_id": self.body.get("model"), "route": "generate", "created_at": time.time()}
+            time.sleep(float(st.flags["song_answer_lost"]))
+            self.close_connection = True
+            return
         if method == "POST" and p in ("/v1/music/generate", "/v1/music/generate/preview", "/v1/music/generate/resume", "/v1/generate"):
             sid = self.body.get("session_id") or self.new_session("completed")
             st.sessions[sid] = "completed"

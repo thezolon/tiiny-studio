@@ -251,7 +251,10 @@ From Tiiny's docs (**docs**), not tested here.
   per-task `defaults`, and `model_info.model` (`codec_llm_duration` = longest song in seconds: AceStep 480,
   SongGeneration 270, YuE2 0; `max_decoder_steps`: AceStep 20). The `config_schema` groups (`common`, `ace_step`, `yue2`)
   aren't model-specific: SongGeneration lists the `ace_step` group too. AceStep and YuE2 take only the plain
-  `/v1/music/generate` ("… preview generation is not implemented"; YuE2: a 15 s request gave 23 s in 93 s). AceStep's own
+  `/v1/music/generate` ("… preview generation is not implemented"; YuE2: a 15 s request gave 23 s in 93 s; a 30 s
+  request with a verse and a chorus took 316 s over USB (2026-11-18, YuE2-3B, load 10 s), so plan on ~10 s per requested
+  second: a 270 s song is ~45 minutes). The answer to that one long request arrived normally over USB; a plain-gateway
+  song's session shows in `/v1/music/sessions` only once it's `completed`, and is gone once the answer was sent. AceStep's own
   settings go **nested** in `config.ace_step` (`bpm` number, `key_scale` "G major", `time_signature` "4",
   `vocal_language`, `negative_prompt`); at the top of `config` they're refused ("Extra inputs are not permitted").
 - **Voice models** (tested 2026-10-30, 0.1.38, `POST /v1/audio/speech`): a built-in speaker goes in `voice` (Qwen3-TTS

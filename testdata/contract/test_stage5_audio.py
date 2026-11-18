@@ -146,6 +146,20 @@ class Audio(Jobs):
         self.assertEqual(py["entry"]["params"]["route"], "gateway-full")
         self.same_job(self.song(flags=gw))  # no length: 60 s
 
+    def test_song_saved_from_its_session_when_the_answer_is_lost(self):
+        """#91 (Rust): the device finishes a plain-gateway song but the long answer never arrives; the job sees the
+        finished session on the Tiiny and saves the song from it (MP3) instead of composing forever. Takes ~2 minutes."""
+        ace = "ACE-Step/AceStep-Fake"
+        job, _ = self.run_job(self.h.rs_url, self.song(model=ace, load=ace, seconds_total=30, flags={"song_answer_lost": 600}), timeout=240)
+        try:
+            self.assertEqual(job["status"], "done", job.get("error"))
+            e = job["entry"]
+            self.assertEqual(len(e["outputs"]), 1)
+            self.assertTrue(e["outputs"][0].endswith("-song.mp3"))
+            self.assertTrue(e["device"]["music_session"])
+        finally:
+            request(self.h.fake_url, "POST", "/__flags", {"song_answer_lost": 0})
+
     def test_song_ace_step(self):
         # AceStep: the gateway's plain /generate on every link (it has no preview/resume and no port API)
         ace = "ACE-Step/AceStep-Fake"

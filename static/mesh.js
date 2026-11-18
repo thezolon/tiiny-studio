@@ -155,6 +155,8 @@ const MeshWS = {
 
   renderStage() {
     const head = $("#mHead"), stage = $("#mStage");
+    const failed = this.failedStage(head);
+    if (failed) return stage.replaceChildren(failed);
     const j = this.liveJob();
     if (j) return this.renderPending(head, stage, j);
     head.replaceChildren(); stage.replaceChildren();

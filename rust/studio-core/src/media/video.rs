@@ -21,6 +21,9 @@ const LOST_POLLS: u32 = 100;
 fn explain(e: String) -> String {
     if e.contains("Weight installation failed") {
         format!("The Tiiny couldn't fit the video model next to the other loaded models. Unload the others in the Models panel, then try again. (Tiiny: {e})")
+    } else if e.contains("exceeded the gateway time limit") || e.contains("GENERATION_TIMEOUT") {
+        // the render goes on after the gateway gives up (#80, TiinyOS 0.1.38)
+        format!("The Tiiny stopped this video at its 1-hour limit, but the render may still be using the NPU. Unloading the video model frees it (the Tiiny then unloads every loaded model). For next time: 480p, fewer steps or fewer seconds. (Tiiny: {e})")
     } else {
         e
     }
@@ -190,6 +193,8 @@ mod tests {
         let e = explain(raw.into());
         assert!(e.starts_with("The Tiiny couldn't fit the video model"));
         assert!(e.ends_with(&format!("(Tiiny: {raw})")));
+        let t = explain("video generation exceeded the gateway time limit".into());
+        assert!(t.starts_with("The Tiiny stopped this video at its 1-hour limit"));
         assert_eq!(
             explain("prompt must be a non-empty string".into()),
             "prompt must be a non-empty string"

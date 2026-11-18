@@ -209,11 +209,45 @@ pub async fn run_song(ctx: Ctx) -> JobResult {
     let (code, res, route, url) = composed?;
     if code != 200
         || !res.get("success").is_some_and(truthy)
-        || !res.get("audio_data").is_some_and(truthy)
+        || !(res.get("audio_data").is_some_and(truthy)
+            || res.get("from_session").is_some_and(truthy))
     {
         return Err(JobError(err(&res)));
     }
     song_entry(&ctx, &res, &config, sources, route, url).await
+}
+
+/// How often a waiting song job asks the Tiiny whether its song is done, and how long it then waits for the answer.
+const SONG_WATCH: u64 = 30;
+const SONG_ANSWER_GRACE: u64 = 90;
+
+/// The id of a song session for `model` that the Tiiny started after `since` (this job: the device runs one at a time)
+/// and finished, and that nothing has claimed (#91). Never returns otherwise: it's raced against the job's own answer.
+async fn finished_session(ctx: &Ctx, model: &str, since: f64) -> String {
+    loop {
+        tokio::time::sleep(Duration::from_secs(SONG_WATCH)).await;
+        let (code, v) = ctx.call("GET", "/v1/music/sessions", None, 20).await;
+        if code != 200 {
+            continue;
+        }
+        let seen = ctx.state.store.seen_ids().unwrap_or_default();
+        let done = v
+            .get("sessions")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .find(|s| {
+                let id = text(s, "session_id");
+                !id.is_empty()
+                    && text(s, "status") == "completed"
+                    && text(s, "model_id") == model
+                    && s.get("created_at").and_then(Value::as_f64).unwrap_or(0.0) >= since - 5.0
+                    && !seen.contains(id)
+            });
+        if let Some(s) = done {
+            return text(s, "session_id").to_string();
+        }
+    }
 }
 
 async fn compose(
@@ -244,8 +278,32 @@ async fn compose(
         }
         ctx.update(json!({"message": "Composing"}));
         let (url, body) = post("", json!(config), None);
-        let (code, res) = http(ctx, "POST", &url, Some(body), 3600, true).await?;
-        return Ok((code, res, "gateway", None));
+        // A song takes many minutes, and a connection that quiet can be dropped on the way (Wi-Fi, a router), so the
+        // answer never comes (#91). Watch the Tiiny's sessions too: when this model's song is done there, use it.
+        let answer = http(ctx, "POST", &url, Some(body), 3600, true);
+        tokio::pin!(answer);
+        let sid = tokio::select! {
+            r = &mut answer => {
+                let (code, res) = r?;
+                return Ok((code, res, "gateway", None));
+            }
+            sid = finished_session(ctx, model, crate::jobs::now()) => sid,
+        };
+        // the answer may just be on its way (a whole song in base64): give it a moment before using the session
+        ctx.update(json!({"message": "The Tiiny finished the song: saving it"}));
+        if let Ok(Ok((code, res))) =
+            tokio::time::timeout(Duration::from_secs(SONG_ANSWER_GRACE), &mut answer).await
+        {
+            if code == 200 && res.get("audio_data").is_some_and(truthy) {
+                return Ok((code, res, "gateway", None));
+            }
+        }
+        return Ok((
+            200,
+            json!({"success": true, "session_id": sid, "from_session": true}),
+            "gateway",
+            None,
+        ));
     }
     if req.get("resume_session").is_some_and(truthy) {
         // Continue a saved preview to the full-length song (the gateway renders the whole arrangement).
@@ -368,11 +426,16 @@ async fn song_entry(
     url: Option<String>,
 ) -> JobResult {
     let req = &ctx.req;
-    let mut outputs = vec![save(
-        ctx,
-        &format!("{}-song.wav", ctx.id),
-        &b64(text(res, "audio_data"))?,
-    )?];
+    let from_session = res.get("from_session").is_some_and(truthy); // #91: the answer never came, the session did
+    let mut outputs = if from_session {
+        vec![]
+    } else {
+        vec![save(
+            ctx,
+            &format!("{}-song.wav", ctx.id),
+            &b64(text(res, "audio_data"))?,
+        )?]
+    };
     let mut tracks = Map::new();
     for (name, data) in res
         .get("audio_outputs")
@@ -425,8 +488,15 @@ async fn song_entry(
         if route == "preview" {
             resume = Some(json!({"session_id": sid})); // a preview can be continued once
         }
+        if from_session && downloads.is_empty() {
+            // leave it unclaimed: recovery picks it up on the next open
+            return Err(JobError("The Tiiny finished this song, but it couldn't be downloaded. It'll be saved from the Tiiny the next time the studio opens.".into()));
+        }
         device = Some(json!({"music_session": sid})); // the session stays on the Tiiny until this entry is deleted
         ctx.state.store.mark_seen(std::slice::from_ref(sid), false);
+    }
+    if from_session {
+        outputs.append(&mut downloads); // the MP3 is the song
     }
     if req.get("resume_session").is_some_and(truthy) {
         if let Some(from) = req
