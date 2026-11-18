@@ -153,7 +153,7 @@ async function chatSend() {
   C.attach = []; box.value = ""; autoGrowChat();
   const reply = { role: "assistant", text: "", reasoning: "", artifacts: [], model: model.id, pending: true };
   conv.messages.push(reply);
-  C.busy = true; ChatWS.render();
+  C.busy = true; ChatWS.render(true);
   const voices = await api("/api/voices").catch(() => []);
   const voice = voices.find((v) => v.id === store.get("chat.voice", null)) || voices[0];
   try {
@@ -241,8 +241,11 @@ const ChatWS = {
     if (C.cur?.id === id && !C.busy) C.cur = newChat();
     this.loadList(); this.render();
   },
-  render() {
+  render(toBottom) {
     if (!this.mounted) return;
+    // keep the reader's place when they scrolled up in the same chat (model refreshes re-render while a reply streams)
+    const sc = $("#chatScroll"), top = sc.scrollTop, stay = !toBottom && this.shown === C.cur && sc.scrollHeight - top - sc.clientHeight >= 80;
+    this.shown = C.cur;
     const m = runningChat();
     $("#chatHead").replaceChildren(...[
       el("span", { class: "chat-title" }, C.cur.title || "New chat"), el("span", { class: "spacer" }),
@@ -253,7 +256,7 @@ const ChatWS = {
     msgs.replaceChildren(...(C.cur.messages.length ? C.cur.messages.map((x) => this.bubble(x)) : [this.empty()]));
     this.renderComposer();
     this.renderList();
-    $("#chatScroll").scrollTop = $("#chatScroll").scrollHeight;
+    sc.scrollTop = stay ? top : sc.scrollHeight;
   },
   renderLast() {
     const msgs = $("#chatMsgs"), last = C.cur.messages[C.cur.messages.length - 1];
