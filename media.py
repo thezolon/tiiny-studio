@@ -1393,7 +1393,7 @@ def run_video(m, job, req):
             body[VIDEO_FRAME_FIELDS[i]] = f"data:{ctype};base64,{base64.b64encode(data).decode()}"
     code, res = m.http("POST", url, body, headers=auth, timeout=120)
     if code >= 300:
-        raise JobError(m.err(res))
+        raise JobError(video_error(m.err(res)))
     vid = res["id"]
     job["remote_task"] = f"DELETE {url}/{vid}"  # deleting a clip stops its render (there's no /cancel)
     lost = 0  # polls in a row with no answer: a render takes many minutes, so ride out a dropped link
@@ -1418,7 +1418,7 @@ def run_video(m, job, req):
         job["message"] = "Rendering" if st == "in_progress" else "Waiting in the device queue"
     job["remote_task"] = None
     if st != "completed":
-        raise JobError(m.err(v.get("error") or st))
+        raise JobError(video_error(m.err(v.get("error") or st)))
     job["message"] = "Downloading"
     for _ in range(5):  # the same: a dropped link shouldn't lose a finished clip
         try:
@@ -1439,6 +1439,15 @@ def run_video(m, job, req):
     return {"kind": "video", "params": {"model": job["model"], "prompt": prompt, "size": body["size"], "seconds": secs,
                                         **{k: body[k] for k in ("steps", "seed") if k in body}},
             "sources": sources, "outputs": [out], "duration": round(seconds, 1)}
+
+
+def video_error(e):
+    """The NPU's error when the video model doesn't fit next to the other loaded models, in plain words; the device's
+    own text stays at the end for bug reports (#90)."""
+    if "Weight installation failed" in e:
+        return ("The Tiiny couldn't fit the video model next to the other loaded models. "
+                f"Unload the others in the Models panel, then try again. (Tiiny: {e})")
+    return e
 
 
 VIDEO_LOST_POLLS = 100  # ~5 minutes of polls without an answer before a video job gives up

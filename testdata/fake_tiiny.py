@@ -10,7 +10,7 @@ POST /__flags {..} switches on test behaviour until the next reset: "fail" {path
 "task_flaky" N / "artifact_flaky" N (the next N 3D task polls / artifact fetches answer 502), "ignore_cancel" (a 3D task that
 never stops), "image_warmup" N (the next N image requests fail like Qwen-Image just after loading), "cutout_png" (images
 come back as RGBA cut-outs), "video_flaky" N / "content_flaky" N (the next N video polls answer 502 / downloads 503),
-"video_hold" (a clip renders until it's cancelled).
+"video_hold" (a clip renders until it's cancelled), "video_no_room" (clips fail with the NPU's "Weight installation failed").
 GET /__release (no auth) stands in for GitHub's releases/latest: it answers the "release" flag (a release JSON; 404 when unset), or
 "release_fail" N (that status instead), and logs each call: GET /__release_hits (User-Agent and Accept of every call).
 POST /__seed {"videos": [{"id", "status", "age", "seconds"}], "sessions": [{"session_id", "model_id", "route", "status", "age"}]} plants results the studio never
@@ -549,6 +549,8 @@ class Handler(BaseHTTPRequestHandler):
             secs = int(b.get("seconds") or 4)
             if not err and secs > VIDEO_MAX_SECONDS:  # accepted, then failed within seconds
                 err = {"code": "invalid_request", "message": f"no exported bucket fits a request needing [audio={secs * 81}, cond_video=0, target_video={secs * 2808}]"}
+            if not err and st.flags.get("video_no_room"):  # the NPU had no room for the weights (#90)
+                err = {"code": "internal_error", "message": "Weight installation failed at 0x7f3a2c000000: status=UNINITIALIZED(1)"}
             st.videos[vid] = {"id": vid, "object": "video", "model": b["model"], "status": "queued", "progress": 0, "size": b.get("size"),
                               "seconds": str(secs), "frames": secs * 24 + 1, "fps": 24, "error": err, "looks": 0, "created_at": int(time.time())}
             return self.send_json(200, {k: v for k, v in st.videos[vid].items() if k != "looks"})
