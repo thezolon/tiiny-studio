@@ -154,13 +154,23 @@ document.addEventListener("keydown", (e) => {
   else if (e.shiftKey && a === list[0]) { e.preventDefault(); list[list.length - 1].focus(); }
   else if (!e.shiftKey && a === list[list.length - 1]) { e.preventDefault(); list[0].focus(); }
 }, true);
-/** Redraw `box` with fn(); a control that had the focus gets it back (found again by its place), so a redraw
-    that runs on a timer doesn't drop a keyboard user out of the dialog. */
+/** Redraw `box` with fn(); a control that had the focus gets it back (the same field by its label, else by its place)
+    with the caret where it was, so a redraw that runs on a timer doesn't drop a keyboard user out or stop their typing. */
+const focusKey = (n) => `${n.tagName}|${n.id || n.getAttribute("aria-label") || n.placeholder || n.name || n.title || n.textContent.trim().slice(0, 40)}`;
 function keepFocus(box, fn) {
-  const i = box.contains(document.activeElement) ? focusables(box).indexOf(document.activeElement) : -1;
+  const a = document.activeElement, before = box.contains(a) ? focusables(box) : [], i = before.indexOf(a);
+  const key = i >= 0 ? focusKey(a) : "", nth = before.slice(0, i).filter((n) => focusKey(n) === key).length;
+  const sel = i >= 0 && typeof a.selectionStart === "number" ? [a.selectionStart, a.selectionEnd, a.selectionDirection] : null;
+  const adv = box.querySelectorAll("details.adv").length;  // a panel's Advanced section stays open (it doesn't track that itself)
+  const advOpen = [...box.querySelectorAll("details.adv")].map((d) => d.open);
   fn();
+  const now = box.querySelectorAll("details.adv");
+  if (now.length === adv) now.forEach((d, k) => { if (advOpen[k]) d.open = true; });
+  if (i < 0 || box.contains(document.activeElement)) return;
   // back on the same spot without scrolling to it: the box redraws while the user scrolls (the Models list every poll)
-  if (i >= 0 && !box.contains(document.activeElement)) { const l = focusables(box); (l[i] || l[l.length - 1])?.focus({ preventScroll: true }); }
+  const l = focusables(box), n = l.filter((x) => focusKey(x) === key)[nth] || l[i] || l[l.length - 1];
+  n?.focus({ preventScroll: true });
+  if (sel && n && typeof n.selectionStart === "number") try { n.setSelectionRange(...sel); } catch { /* not a text field */ }
 }
 syncModals();
 

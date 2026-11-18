@@ -54,7 +54,7 @@ const MeshWS = {
   render() {
     if (!this.mounted) return;
     this.renderGate();
-    $("#mPanel").replaceChildren(...this.panel().filter(Boolean));  // hidden parts are null, which append would print
+    keepFocus($("#mPanel"), () => $("#mPanel").replaceChildren(...this.panel().filter(Boolean)));  // hidden parts are null, which append would print
     this.renderFoot(); this.renderStage(); this.renderStrip();
   },
   cuts() { return M.cutout && !!cutoutModel() && !M.clip?.transparent; },

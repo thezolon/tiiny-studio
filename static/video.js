@@ -24,7 +24,7 @@ ${e.params?.recovered ? "" : `Took ${fmtSec(e.seconds)} to render · `}${e.param
   render() {
     if (!this.mounted) return;
     this.renderGate();
-    $("#vPanel").replaceChildren(...this.panel().filter(Boolean));
+    keepFocus($("#vPanel"), () => $("#vPanel").replaceChildren(...this.panel().filter(Boolean)));
     this.renderFoot(); this.renderStage(); this.renderStrip();
   },
   /** The loaded video model's own options (/v1/video/info), MiniMax-H3's until it has answered. */
