@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.5.2 (2026-11-18)
+
+Fixes for problems you reported: the Linux AppImage plays audio and video, the upload buttons work again, chat stops
+jumping while you read, and two confusing errors now say what to do.
+
+- **Linux AppImage:** the Audio tab no longer hangs, and audio and video play. The AppImage was missing the media
+  plugins WebKit needs ("autoaudiosink not found"); they're inside now, and the .deb lists them as dependencies (#89,
+  reported on the Tiiny Discord). Tested in CI only so far: if you're on Linux, please tell us whether it works for you.
+- **Upload buttons:** picking a file with Speech's "Upload…", Transcribe's "click to browse" or an image slot loads
+  it again; before, the choice could be silently lost (drag and drop always worked) (#95, reported on GitHub).
+- **Chat:** scrolling up to read while a reply streams no longer jumps you back to the bottom (#94, reported on GitHub).
+- **Image tab:** the preview and its Save button stay in view in a short or narrow window (#92, reported on the Tiiny
+  Discord).
+- **Video:** "Weight installation failed … UNINITIALIZED" now says what it means: the video model didn't fit next to
+  the other loaded models, so unload them and try again (#90, reported on the Tiiny Discord).
+- **Songs with YuE2:** only "With vocals" is offered, the one mix YuE2 can make; asking it for an instrumental says so
+  instead of a raw device error (found with a user on the Tiiny Discord).
+- **Version:** hover the gear icon (top right) to see which version you're running.
+- **macOS:** the app is still unsigned, so macOS may say it "is damaged". It isn't: run
+  `xattr -cr "/Applications/Tiiny Studio.app"` once in Terminal, then open it.
+
 ## 0.5.1 (2026-11-01)
 
 Pick the model each tab uses, plus fixes from a day of real use: clearer messages during long jobs, drag and drop in

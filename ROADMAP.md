@@ -1,6 +1,6 @@
 # Roadmap
 
-Where Tiiny Studio stands, what's next, and what doesn't work yet. Version **0.5.1**, checked against TiinyOS
+Where Tiiny Studio stands, what's next, and what doesn't work yet. Version **0.5.2**, checked against TiinyOS
 0.1.35 to 0.1.38 on a Tiiny Pocket.
 
 ## Works now
@@ -106,7 +106,7 @@ Ideas and requests are welcome as [feature requests](https://github.com/thezolon
   so the studio unloads the model and loads it again; that's the only way to stop the work. Chat is interrupted
   immediately. An interrupt for image and audio has been requested from Tiiny.
 - **The installers are unsigned.** Windows shows "Windows protected your PC" (More info → Run anyway) and macOS
-  asks before the first open (right-click → Open). There's no automatic updater until the apps are signed.
+  may say the app "is damaged" (clear the download flag once: `xattr -cr "/Applications/Tiiny Studio.app"`). There's no automatic updater until the apps are signed.
 - **Only the Windows x64 app and the Docker image (amd64) have been tested hands-on.** The macOS (Apple Silicon and
   Intel), Linux (x64 and ARM) and Windows ARM apps and the arm64 Docker image are built by CI, which checks that
   the server inside starts and serves the page, but none has been installed and used with a Tiiny yet (one user
