@@ -135,6 +135,28 @@ function swapSettings() {
     el("label", { class: "field" }, el("div", { class: "label" }, "Helpers use", el("span", { class: "hint" }, "a text model")), pick));
 }
 
+/** Agents (MCP): the studio's own MCP server, off by default, with a token of its own (not the studio password).
+    The Python server has no MCP, so its settings carry no "mcp" and the section is left out. */
+function mcpSettings() {
+  const m = SET.info?.mcp || {}, url = `${location.origin}/mcp`;
+  const set = async (body) => { try { SET.info = await api("/api/settings/mcp", { method: "POST", body: JSON.stringify(body) }); refreshSettings(); } catch (e) { toast(e.message, "err"); } };
+  const copy = async (what, value, input) => {
+    try { await navigator.clipboard.writeText(value); toast(`${what} copied`); }
+    catch { input.select(); toast(`Press Ctrl+C to copy the ${what.toLowerCase()}`); }
+  };
+  const row = (id, label, value) => {
+    const input = el("input", { id, class: "input", readonly: true, value, spellcheck: "false", autocomplete: "off", onfocus: (e) => e.target.select() });
+    return el("div", { class: "field" }, el("label", { class: "label", for: id }, label),
+      el("div", { class: "seed-row" }, input, el("button", { class: "btn-sm", type: "button", "aria-label": `Copy ${label.toLowerCase()}`, onclick: () => copy(label, value, input) }, "Copy")));
+  };
+  return el("div", { class: "set-network set-mcp" },
+    el("b", {}, "Agents (MCP)"),
+    el("p", {}, "Off by default. When on, agents such as Claude, Cline or Hermes can make images, voice, music, 3D and video through the studio, using its queue and models. An agent sees only what it makes itself, not your gallery or chats."),
+    el("label", { class: "auto" }, el("input", { type: "checkbox", checked: !!m.on, onchange: (e) => set({ on: e.target.checked }) }), "Let agents use the studio (MCP)"),
+    m.on ? [row("mcpUrl", "Endpoint", url), row("mcpToken", "Token", m.token || ""),
+      el("button", { class: "btn-sm", type: "button", onclick: () => { if (confirm("Make a new token? Agents using the old one are locked out until you give them the new one.")) set({ new_token: true }); } }, "New token")] : null);
+}
+
 function settingsBody(firstRun) {
   const i = SET.info || {};
   if (firstRun) return [deviceForm(null, true)];
@@ -142,6 +164,7 @@ function settingsBody(firstRun) {
   return [
     deviceList(),
     i.configured ? swapSettings() : null,
+    i.mcp ? mcpSettings() : null,
     updateSettings(),
     el("div", { class: "set-privacy" },
       el("div", {}, el("b", {}, "Privacy"),

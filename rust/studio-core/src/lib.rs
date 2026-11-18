@@ -7,6 +7,7 @@ pub mod device;
 pub mod extract;
 pub mod jobs;
 mod library;
+mod mcp;
 pub mod media;
 mod routes;
 pub mod safety;
@@ -46,6 +47,8 @@ pub struct AppState {
     /// (when read, device url, (free GB, total GB)) of the Tiiny's storage; see device::disk_space
     pub(crate) disk_cache: Arc<Mutex<Option<DiskCache>>>,
     pub jobs: Arc<jobs::Jobs>,
+    /// The MCP server's own bookkeeping: which jobs agents started, and how often they call
+    pub(crate) mcp: Arc<mcp::Agents>,
     pub store: Arc<store::Store>,
     /// entry id -> (text, vector) for smart search; memory only, dropped on delete/wipe
     pub(crate) search_cache: Arc<Mutex<SearchCache>>,
@@ -72,6 +75,7 @@ impl AppState {
             stats_cache: Arc::default(),
             disk_cache: Arc::default(),
             jobs: Arc::default(),
+            mcp: Arc::default(),
             store: Arc::new(store::Store::new(&config_dir)),
             search_cache: Arc::default(),
             update_cache: Arc::default(),

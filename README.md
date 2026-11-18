@@ -146,6 +146,35 @@ port 7860 through the firewall.
 off it only answers at `localhost`/`127.0.0.1`, so a page you visit can't reach it through a trick domain. If you put
 the studio behind a reverse proxy or open it by a hostname, turn network access on (and set a password).
 
+## Agents (MCP)
+
+The Rust studio (desktop app and Docker) can act as an [MCP](https://modelcontextprotocol.io) server, so agents
+(Claude, Cline, Hermes, your own scripts) can make images, speech, loops, songs, 3D models and video through it,
+using the studio's one job queue, model loading and gallery. **It is off by default.**
+
+1. **Settings → Agents (MCP)**, switch on *Let agents use the studio (MCP)*. The studio shows the endpoint
+   (`http://localhost:7860/mcp`) and a token of its own, separate from `STUDIO_PASSWORD`. *New token* replaces it and
+   locks out agents that have the old one.
+2. Give your agent the endpoint and the token (as `Authorization: Bearer <token>`). For Claude Code:
+
+   ```
+   claude mcp add --transport http tiiny-studio http://localhost:7860/mcp --header "Authorization: Bearer <token>"
+   ```
+
+Tools: `create_image`, `edit_image`, `read_document`, `speak`, `clone_voice`, `transcribe`, `make_loop`, `make_song`,
+`make_3d`, `make_video`, `chat` (the studio's chat with its tools), `list_models`, `load_model`, `unload_model`,
+`get_job` and `cancel_job`. A make tool queues a job and returns its `job_id` at once; the agent polls `get_job` until it
+is done, and gets links to the files (a small PNG also comes back inline). A model has to be loaded first: the agent
+is told to call `load_model`. Agents are marked as "Agent: ..." in the studio's jobs menu, may have 5 jobs going at
+once and 30 tool calls a minute.
+
+What an agent can and can't see: only the jobs it started itself. There is no tool that lists or reads your gallery,
+chats or vault, and `get_job` refuses job ids it didn't start. It can see which models are installed and the names of
+your saved voices (to speak with them). Text that comes back (transcripts, OCR, chat replies) is wrapped in
+`<untrusted>` tags and screened for prompt injection; a suspicious one is flagged in the result, never dropped. Links to
+result files use the address the agent called, and need the studio password if you set one. Like the rest of the
+studio, MCP only answers on this computer unless you open the studio to your network.
+
 ## Privacy
 
 Everything the studio saves stays on your machine: results, prompts, sources and voices live only in

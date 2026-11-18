@@ -191,6 +191,9 @@ textarea.lyrics:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(-
 .set-swap .swap-secs { margin: 2px 0 8px 20px; }
 .set-swap .swap-secs .auto { color: var(--muted); }
 .set-swap .field { margin: 0; }
+.set-mcp .auto { display: flex; margin-top: 6px; color: var(--text); }
+.set-mcp .field { margin: 8px 0 0; }
+.set-mcp > .btn-sm { margin-top: 8px; }
 .set-network.warn { border-color: var(--warn-line); background: var(--warn-soft); }
 
 /* delete button on gallery thumbnails */

@@ -46,7 +46,7 @@ class Scaffold(ContractCase):
         # Stage 1 brings saved devices. So compare only what Stage 0 supports: the key set and "version".
         py, rs = self.get("/api/settings")
         self.assertEqual((py.status, rs.status), (200, 200))
-        self.assertEqual(set(py.json), set(rs.json))
+        self.assertEqual(set(py.json), set(rs.json) - {"mcp"})  # the MCP server is Rust only
         self.assertEqual(py.json["version"], rs.json["version"])
 
 

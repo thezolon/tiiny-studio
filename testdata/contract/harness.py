@@ -187,7 +187,8 @@ class ContractCase(unittest.TestCase):
         py, rs = pair
         self.assertEqual(py.status, rs.status, f"status: python {py.status}, rust {rs.status}")
         # in Docker the studio correctly can't open a folder on this computer
-        ignore = tuple(ignore) + (("can_open_folder",) if IMAGE else ())
+        # (the MCP server, and so the "mcp" setting, is Rust only)
+        ignore = tuple(ignore) + ("mcp",) + (("can_open_folder",) if IMAGE else ())
         self.assertEqual(strip(py.json, ignore), strip(rs.json, ignore))
 
     # ---------- jobs against the fake ----------

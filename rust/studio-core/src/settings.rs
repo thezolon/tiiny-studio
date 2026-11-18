@@ -48,6 +48,10 @@ pub struct Swap {
     pub queue: bool,
 }
 
+fn new_token() -> String {
+    uuid::Uuid::new_v4().simple().to_string()
+}
+
 fn yes() -> bool {
     true
 }
@@ -65,9 +69,19 @@ impl Default for Swap {
     }
 }
 
+/// The built-in MCP server (mcp.rs): off by default; its own bearer token, made the first time it is turned on.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct McpSettings {
+    #[serde(default)]
+    pub on: bool,
+    #[serde(default)]
+    pub token: String,
+}
+
 #[derive(Default)]
 struct State {
     swap: Swap,
+    mcp: McpSettings,
     helper_model: String,       // the text model helpers use ("" = automatic)
     update_check: Option<bool>, // "Check for updates": None until the user decides, then the default (on, off in Docker)
     devices: Vec<Device>,
@@ -234,6 +248,10 @@ impl Settings {
             .get("swap")
             .and_then(|v| serde_json::from_value(v.clone()).ok())
             .unwrap_or_default();
+        st.mcp = saved
+            .get("mcp")
+            .and_then(|v| serde_json::from_value(v.clone()).ok())
+            .unwrap_or_default();
         st.helper_model = saved
             .get("helper_model")
             .and_then(Value::as_str)
@@ -306,14 +324,14 @@ impl Settings {
             "key_set": !key.is_empty(), "key_hint": hint(&key), "configured": !url.is_empty() && !key.is_empty(),
             "source": st.source, "lan_access": self.lan_access, "password": self.password,
             "last_switch": st.last_switch, "version": crate::version(),
-            "swap": st.swap, "helper_model": st.helper_model, "docker": in_docker(),
+            "swap": st.swap, "mcp": st.mcp, "helper_model": st.helper_model, "docker": in_docker(),
             "update_check": update_check,
             "app": self.app, // the desktop app: no .env to edit, so the UI words the network notes differently
         })
     }
 
     fn save(&self, st: &mut State) {
-        let mut body = json!({"devices": st.devices, "active": st.active, "auto": st.auto, "swap": st.swap, "helper_model": st.helper_model});
+        let mut body = json!({"devices": st.devices, "active": st.active, "auto": st.auto, "swap": st.swap, "mcp": st.mcp, "helper_model": st.helper_model});
         if let Some(on) = st.update_check {
             body["update_check"] = json!(on);
         }
@@ -408,6 +426,26 @@ impl Settings {
         }
         if let Some(m) = req.get("helper_model").and_then(Value::as_str) {
             st.helper_model = m.trim().chars().take(200).collect();
+        }
+        self.save(&mut st);
+    }
+
+    pub fn mcp(&self) -> McpSettings {
+        self.lock().mcp.clone()
+    }
+
+    /// `{on}` switches the MCP server (its token is made the first time it goes on); `{new_token: true}` replaces
+    /// the token, which locks out every agent that has the old one.
+    pub fn set_mcp(&self, req: &Value) {
+        let mut st = self.lock();
+        if let Some(on) = req.get("on").map(crate::device::truthy) {
+            st.mcp.on = on;
+            if on && st.mcp.token.is_empty() {
+                st.mcp.token = new_token();
+            }
+        }
+        if req.get("new_token").is_some_and(crate::device::truthy) {
+            st.mcp.token = new_token();
         }
         self.save(&mut st);
     }
