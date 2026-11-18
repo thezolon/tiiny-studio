@@ -91,13 +91,13 @@ const AudioWS = {
     this.renderFoot(); this.renderStage(); this.renderStrip();
   },
   renderFoot() {
-    const { ready } = this.footModel(A.tool);
+    const { ready, loads } = this.footModel(A.tool);
     const p = this.payload(true);
     const labels = { speech: "Speak", loop: "Make loop", song: "Compose", transcribe: "Transcribe" };
-    $("#aGoLabel").textContent = labels[A.tool];
-    $("#aGoEst").textContent = p.ok ? "~" + fmtSec(p.est) : "";
+    $("#aGoLabel").textContent = loads ? `Queue (loads ${shortName(loads.id)})` : labels[A.tool];
+    $("#aGoEst").textContent = p.ok ? "~" + fmtSec(p.est + (loads ? LOAD_EST : 0)) : "";
     $("#aGo").disabled = !ready || !p.ok;
-    $("#aGo").title = !ready ? "Load the model first" : p.why || "";
+    $("#aGo").title = !ready ? "Load the model first" : p.why || (loads ? `${shortName(loads.id)} is loaded when this job's turn comes` : "");
   },
 
   /* ---------- Voice ---------- */

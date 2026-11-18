@@ -501,7 +501,20 @@ async fn work(ctx: Ctx, kind: String, run: KindFn) {
                 Some((free, _)) => Ok(Err(JobError(format!(
                     "The Tiiny is almost out of space ({free:.1} GB free). Free some up (delete models or files in the TiinyOS app) and try again."
                 )))),
-                None => tokio::spawn(run(ctx)).await,
+                None => {
+                    // queued for a model that wasn't loaded (#78): load it now, unloading others only if it doesn't fit
+                    let load = ctx.req.get("load").is_some_and(crate::device::truthy)
+                        && state.settings.swap_allowed("queue");
+                    tokio::spawn(async move {
+                        if load {
+                            let model = ctx.model.clone();
+                            crate::media::make_room(&ctx, &model).await?;
+                            ctx.update(json!({"message": "Working…"}));
+                        }
+                        run(ctx).await
+                    })
+                    .await
+                }
             };
             match result {
                 Ok(Ok(mut entry)) => {

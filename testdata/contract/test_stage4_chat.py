@@ -109,7 +109,7 @@ class Chat(ContractCase):
     def test_swap_settings(self):
         py, rs = (request(b, "POST", "/api/settings/swap", {"swap": {"on": False, "audio": 0, "bogus": True}, "helper_model": " Qwen/X "}).json
                   for b in (self.h.py_url, self.h.rs_url))
-        self.assertEqual(py["swap"], {"on": False, "chat": True, "image": True, "audio": False, "mesh": True})
+        self.assertEqual(py["swap"], {"on": False, "chat": True, "image": True, "audio": False, "mesh": True, "queue": True})
         self.assertEqual((py["swap"], py["helper_model"]), (rs["swap"], rs["helper_model"]))
         self.assertEqual(py["helper_model"], "Qwen/X")
         self.same(self.get("/api/settings"), ("devices", "status", "last_switch", "active"))

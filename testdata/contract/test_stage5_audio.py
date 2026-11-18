@@ -115,6 +115,23 @@ class Audio(Jobs):
     def song(self, **kw):
         return {"kind": "song", "model": SONG, "caption": "RUST TEST pop", "lyrics": "[verse]\nla la", "seed": 5, "load": SONG, **kw}
 
+    def test_queue_loads_the_jobs_model(self):
+        """#78: a job queued for a model that isn't loaded loads it at its turn; with the switch off it doesn't."""
+        req = {k: v for k, v in self.song().items() if k != "load"}
+        for base in (self.h.py_url, self.h.rs_url):
+            request(self.h.fake_url, "POST", "/__reset")  # nothing loaded
+            done, calls = self.finish(base, request(base, "POST", "/api/jobs", {**req, "load": True}).json)
+            self.assertEqual(done["status"], "done", done.get("error"))
+            self.assertTrue(any(c[0] == "POST" and c[1].endswith("/launch") for c in calls), base)
+            request(base, "POST", "/api/settings/swap", {"swap": {"queue": False}})
+            try:
+                request(self.h.fake_url, "POST", "/__reset")
+                done, _ = self.finish(base, request(base, "POST", "/api/jobs", {**req, "load": True}).json)
+                self.assertEqual(done["status"], "error")
+                self.assertIn("isn't loaded", done["error"])
+            finally:
+                request(base, "POST", "/api/settings/swap", {"swap": {"queue": True}})
+
     def test_song_direct(self):
         py, rs = self.same_job(self.song(seconds_total=30, flags={"song_tracks": True}))
         self.assertEqual(py["entry"]["params"]["route"], "direct")

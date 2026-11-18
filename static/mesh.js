@@ -88,9 +88,11 @@ const MeshWS = {
   },
   renderFoot() {
     const cm = cutoutModel(), cutBlocked = this.cuts() && cm.status !== "running" && !swapOn("mesh");  // the server would refuse
-    const { ready } = this.footModel("mesh", cutBlocked ? ` · ${shortName(cm.id)} not loaded` : "");
+    const { ready, loads } = this.footModel("mesh", cutBlocked ? ` · ${shortName(cm.id)} not loaded` : "");
     $("#mGo").disabled = !ready || !M.clip || cutBlocked;
-    $("#mEst").textContent = M.clip ? "~" + fmtSec(this.estimate()) : "";
+    $("#mGoLabel").textContent = loads ? `Queue (loads ${shortName(loads.id)})` : $("#mGoLabel").dataset.label;
+    $("#mGo").title = loads ? `${shortName(loads.id)} is loaded when this job's turn comes` : "";
+    $("#mEst").textContent = M.clip ? "~" + fmtSec(this.estimate() + (loads ? LOAD_EST : 0)) : "";
     $("#mSteps").textContent = this.plan().join(" → ");
   },
   panel() {
