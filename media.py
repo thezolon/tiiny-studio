@@ -874,6 +874,9 @@ def plain_song_model(m, model):
 
 def run_song(m, job, req):
     config = {k: req[k] for k in SONG_CONFIG if req.get(k) not in (None, "")}
+    if "yue" in job["model"].lower() and config.get("generation_type", "mixed") != "mixed":
+        # the device: "YuE2 produces one stereo mix; generation_type must be mixed" (0.1.38)
+        raise JobError("YuE2 only makes the full mix (vocals and backing). Give it lyrics, or pick another song model for an instrumental or vocals-only track.")
     if config.get("generation_type", "mixed") != "bgm" and not (config.get("lyrics") or "").strip():
         raise JobError("A song with vocals needs lyrics (or switch to Instrumental)")
     sources = []

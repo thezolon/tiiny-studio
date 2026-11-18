@@ -112,7 +112,8 @@ const AudioWS = {
     const i = this.infoOf("song"), svc = i?.service_name || "";
     const mi = i?.model_info?.model || {}, d = i?.default_config || {};
     const plain = svc ? !svc.startsWith("SongGeneration") : /^ACE-Step\//.test(modelForTool("song")?.id || "");
-    return { known: !!svc, plain, ace: svc.startsWith("AceStep") || (!svc && plain), service: svc,
+    const yue = svc ? svc.startsWith("YuE") : /YuE/i.test(modelForTool("song")?.id || "");  // YuE2 only makes one stereo mix
+    return { known: !!svc, plain, yue, ace: svc.startsWith("AceStep") || (!svc && plain), service: svc,
       steps: d.steps, temperature: d.temperature, top_k: d.top_k, top_p: d.top_p,
       maxSteps: mi.max_decoder_steps || null, maxSeconds: mi.codec_llm_duration > 0 ? mi.codec_llm_duration : 270,
       secsPerSec: svc.startsWith("YuE") ? 4 : svc.startsWith("AceStep") ? 1.5 : null };
@@ -281,7 +282,7 @@ const AudioWS = {
   /* ---------- Song ---------- */
   songPanel() {
     const G = A.song, rerender = () => this.render(), sm = this.songModel();
-    if (sm.plain && G.type === "separate") G.type = "mixed";  // separate tracks come from SongGeneration's own port
+    if ((sm.plain && G.type === "separate") || sm.yue) G.type = "mixed";  // separate tracks come from SongGeneration's own port; YuE2 always sings
     if (G.seconds > sm.maxSeconds) G.seconds = sm.maxSeconds;
     const vocals = G.type !== "bgm";  // every mode except instrumental sings the lyrics
     const viaGateway = S.directAccess === false && !sm.plain;  // e.g. the USB cable: SongGeneration goes through the gateway's preview route
@@ -292,8 +293,8 @@ const AudioWS = {
     const lenOut = el("output", {}, fmtSec(G.seconds));
     return [
       el("div", { class: "seg song-modes", style: "margin-top:4px" },
-        [["mixed", "With vocals", "Vocals and accompaniment"], ["bgm", "Instrumental", "Accompaniment only"],
-          ["vocal", "Vocals only", "A cappella vocal track"], ...(sm.plain ? [] : [["separate", "Separate tracks", "The mix plus the vocal and backing tracks as separate files"]])]
+        [["mixed", "With vocals", "Vocals and accompaniment"], ...(sm.yue ? [] : [["bgm", "Instrumental", "Accompaniment only"],
+          ["vocal", "Vocals only", "A cappella vocal track"]]), ...(sm.plain ? [] : [["separate", "Separate tracks", "The mix plus the vocal and backing tracks as separate files"]])]
           .map(([t, label, title]) => el("button", { "aria-pressed": G.type === t, title, onclick: () => { G.type = t; rerender(); } }, label))),
       el("div", { class: "field" }, el("div", { class: "label" }, "Style"), el("div", { class: "prompt-wrap" }, cap),
         el("div", { class: "chips" }, SONG_CHIPS.map((c) => el("button", { class: "chip", onclick: () => { cap.value = cap.value.trim() ? cap.value.trim().replace(/,?$/, ", ") + c : c; G.caption = cap.value; this.renderFoot(); } }, "+ " + c)))),

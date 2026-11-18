@@ -618,6 +618,8 @@ class Handler(BaseHTTPRequestHandler):
             extra = [k for k in config if k not in COMMON_SONG_KEYS and not (k == "ace_step" and self.body["model"].startswith("ACE-Step/"))]
             if extra:
                 return self.send_json(400, {"success": False, "audio_data": None, "error": f"Extra inputs are not permitted in config: {extra[0]}", "error_code": "INVALID_REQUEST"})
+            if self.body["model"] == "Fake/YuE2" and config.get("generation_type", "mixed") != "mixed":  # 0.1.38
+                return self.send_json(400, {"success": False, "audio_data": None, "error": "YuE2 produces one stereo mix; generation_type must be mixed", "error_code": "INVALID_REQUEST"})
             if not isinstance((config.get("ace_step") or {}).get("bpm", 0), (int, float)):
                 return self.send_json(400, {"success": False, "audio_data": None, "error": "type must be number, but is string", "error_code": "INVALID_REQUEST"})
         if method == "POST" and p in ("/v1/music/generate", "/v1/music/generate/preview", "/v1/music/generate/resume", "/v1/generate"):

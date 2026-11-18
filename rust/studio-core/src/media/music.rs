@@ -161,6 +161,16 @@ pub async fn run_song(ctx: Ctx) -> JobResult {
     let req = &ctx.req;
     let model = ctx.model.clone();
     let mut config = pick(req, &SONG_CONFIG);
+    let gen = config
+        .get("generation_type")
+        .and_then(Value::as_str)
+        .unwrap_or("mixed");
+    if model.to_lowercase().contains("yue") && gen != "mixed" {
+        // the device: "YuE2 produces one stereo mix; generation_type must be mixed" (0.1.38)
+        return Err(JobError(
+            "YuE2 only makes the full mix (vocals and backing). Give it lyrics, or pick another song model for an instrumental or vocals-only track.".into(),
+        ));
+    }
     if config.get("generation_type") != Some(&json!("bgm"))
         && strip(config.get("lyrics").and_then(Value::as_str).unwrap_or("")).is_empty()
     {
