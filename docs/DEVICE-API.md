@@ -289,6 +289,10 @@ From Tiiny's docs (**docs**), not tested here.
   cut-out whose background has faint alpha (1-2, typical of an image model's output) comes out as a flat card, and
   an opaque picture as a slab. The studio sets alpha < 32 to 0 before sending (tested 2026-10-29).
 - Plain `/v1/music/generate` fails for SongGeneration ("Session not found"); `/resume` ignores `seconds_total`.
+- **The video model can load next to others, then fail its first render** (reported 2026-11-04, MiniMax-H3-Turbo):
+  the clip fails with `Weight installation failed at 0x…: status=UNINITIALIZED(1)` because the NPU has no room left for
+  its weights. Unloading the other models and rendering again works. The studio explains this error and keeps the raw
+  text after it.
 - **Video renders stop after 1 hour** (tested 2026-11-01, 0.1.38, MiniMax-H3-Turbo, 1344x768, 7 s, 8 steps, which
   would have needed about 2 hours): after exactly 60 minutes `GET /v1/videos/{id}` reports `status: failed` with
   `error: {code: GENERATION_TIMEOUT, message: "video generation exceeded the gateway time limit"}` (here at 30%), **but

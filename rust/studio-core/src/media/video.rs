@@ -16,6 +16,16 @@ const FRAME_FIELDS: [&str; 2] = ["image", "last_image"]; // first frame tested o
 /// Polls in a row without an answer (~5 minutes) before a video job gives up (media.py VIDEO_LOST_POLLS).
 const LOST_POLLS: u32 = 100;
 
+/// The NPU's error when the video model doesn't fit next to the other loaded models, in plain words; the device's own
+/// text stays at the end for bug reports (#90, media.py video_error).
+fn explain(e: String) -> String {
+    if e.contains("Weight installation failed") {
+        format!("The Tiiny couldn't fit the video model next to the other loaded models. Unload the others in the Models panel, then try again. (Tiiny: {e})")
+    } else {
+        e
+    }
+}
+
 /// A whole number from the request (Python's isinstance(x, int): not a float, not a bool).
 fn int_of(req: &Value, k: &str) -> Option<i64> {
     req.get(k)
@@ -79,7 +89,7 @@ pub async fn run(ctx: Ctx) -> JobResult {
     let body = Value::Object(body);
     let (code, res) = http(ctx, "POST", &url, Some(body.clone()), 120, true).await?;
     if code >= 300 {
-        return Err(JobError(err(&res)));
+        return Err(JobError(explain(err(&res))));
     }
     let vid = res
         .get("id")
@@ -125,7 +135,7 @@ pub async fn run(ctx: Ctx) -> JobResult {
             .filter(|e| !e.is_null())
             .cloned()
             .unwrap_or(json!(st));
-        return Err(JobError(err(&e)));
+        return Err(JobError(explain(err(&e))));
     }
     ctx.update(json!({"message": "Downloading"}));
     let mut got = (0, Err(json!("Device unreachable")));
@@ -168,4 +178,21 @@ pub async fn run(ctx: Ctx) -> JobResult {
     Ok(
         json!({"kind": "video", "params": params, "sources": sources, "outputs": [out], "duration": duration}),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::explain;
+
+    #[test]
+    fn explains_the_npu_room_error() {
+        let raw = "Weight installation failed at 0x7f00: status=UNINITIALIZED(1)";
+        let e = explain(raw.into());
+        assert!(e.starts_with("The Tiiny couldn't fit the video model"));
+        assert!(e.ends_with(&format!("(Tiiny: {raw})")));
+        assert_eq!(
+            explain("prompt must be a non-empty string".into()),
+            "prompt must be a non-empty string"
+        );
+    }
 }
