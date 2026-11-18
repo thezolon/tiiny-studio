@@ -307,7 +307,9 @@ const ChatWS = {
   renderComposer() {
     const box = $("#chatComposer");
     if (!box) return;
-    const prev = $("#chatInput")?.value || "";
+    const old = $("#chatInput"), prev = old?.value || "";
+    // model refreshes redraw the composer: keep the typing focus and the caret where they were
+    const typing = old && document.activeElement === old ? [old.selectionStart, old.selectionEnd, old.selectionDirection] : null;
     const input = el("textarea", { id: "chatInput", rows: "1", placeholder: C.busy ? "Wait for the reply…" : "Message your Tiiny — Enter to send, Shift+Enter for a new line",
       oninput: autoGrowChat, onkeydown: (e) => { if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); chatSend(); } } }, prev);
     const file = el("input", { type: "file", hidden: true, multiple: true, accept: DOC_ACCEPT, onchange: (e) => { chatAttach(e.target.files); e.target.value = ""; } });
@@ -329,6 +331,7 @@ const ChatWS = {
         el("span", { class: "spacer" }),
         el("small", { style: "color:var(--faint)" }, C.save ? "Saved in the data folder · delete removes it completely" : "Not saved"))].filter(Boolean));
     autoGrowChat();
+    if (typing) { input.focus({ preventScroll: true }); input.setSelectionRange(...typing); }
   },
   files(files) { chatAttach(files); return "attachment"; },
   onModels() { if (this.mounted && S.ws === "chat") this.render(); },
