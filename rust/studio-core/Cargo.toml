@@ -24,6 +24,7 @@ encoding_rs = "0.8"
 arboard = { version = "3", default-features = false, features = ["image-data"], optional = true }
 png = "0.17"
 crc32fast = "1"
+mp4ameta = "0.13"
 
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }

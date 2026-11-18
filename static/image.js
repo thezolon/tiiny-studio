@@ -418,6 +418,7 @@ function renderStage() {
     ocrModel() ? el("button", { class: "tb", title: "Read the text in this image (not saved)", "aria-label": "Text", onclick: () => ocrImage(url) }, el("span", { class: "lbl-x" }, "Aa"), el("span", { class: "lbl" }, "Text")) : null,
     el("button", { class: "tb", title: "Load these settings into the composer (R)", onclick: () => reuse(entry) }, icon("i-copy"), el("span", { class: "lbl" }, "Reuse")),
     el("a", { class: "tb", href: url, download: `tiiny-${entry.id}-${idx}.png`, title: "Download (D)" }, icon("i-down"), el("span", { class: "lbl" }, "Save")),
+    showInFolderBtn(entry.id),
     el("button", { class: "tb danger", title: "Delete", "aria-label": "Delete", onclick: () => deleteImage(entry) }, icon("i-trash")));
   head.append(tb);
 

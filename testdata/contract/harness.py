@@ -3,8 +3,10 @@ Subclass ContractCase; self.get/self.post send the same request to both servers,
 The Rust binary is built with `cargo build` in rust/ when missing (tests skip if cargo isn't there)."""
 import json
 import os
+import re
 import shutil
 import socket
+import struct
 import subprocess
 import sys
 import tempfile
@@ -273,9 +275,38 @@ class ContractCase(unittest.TestCase):
         return py, rs
 
     def files_equal(self, py, rs, key="outputs"):
-        """Both servers saved the same files (same suffix, same bytes)."""
+        """Both servers saved the same files (same suffix, same media; the Rust server also tags them, #58)."""
         p, r = py["entry"][key], rs["entry"][key]
         self.assertEqual(len(p), len(r))
         for a, b in zip(p, r, strict=True):
-            self.assertEqual(a.split("-", 1)[-1], b.split("-", 1)[-1])  # "-0.png", "-speech.wav"
-            self.assertEqual(request(self.h.py_url, "GET", "/images/" + a).body, request(self.h.rs_url, "GET", "/images/" + b).body)
+            self.assertEqual(name_suffix(a), name_suffix(b))  # "0.png", "speech.wav"
+            self.assertEqual(media(a, request(self.h.py_url, "GET", "/images/" + a).body),
+                             media(b, request(self.h.rs_url, "GET", "/images/" + b).body))
+
+
+def name_suffix(name):
+    """What a result's file name says beyond its date, time and job id: `2026-11-18_2215_<id>-0.png` -> `0.png` (#58)."""
+    return re.sub(r"^(?:\d{4}-\d{2}-\d{2}_\d{4}_)?[0-9a-f]+-", "", name)
+
+
+def media(name, b):
+    """A file's media without the tags the Rust server writes into it (#58): PNG text chunks, an MP3's ID3 tag, and for
+    an MP4 its media data box."""
+    if name.endswith(".png") and b[:8] == b"\x89PNG\r\n\x1a\n":
+        out, i = [b[:8]], 8
+        while i + 8 <= len(b):
+            n = struct.unpack(">I", b[i:i + 4])[0]
+            if b[i + 4:i + 8] not in (b"tEXt", b"iTXt", b"zTXt"):
+                out.append(b[i:i + 12 + n])
+            i += 12 + n
+        return b"".join(out)
+    if name.endswith(".mp3") and b[:3] == b"ID3":
+        return b[10 + sum(x << (7 * (3 - k)) for k, x in enumerate(b[6:10])):]
+    if name.endswith(".mp4"):
+        i = 0
+        while i + 8 <= len(b):
+            n = struct.unpack(">I", b[i:i + 4])[0]
+            if b[i + 4:i + 8] == b"mdat" or n < 8:
+                return b[i:]
+            i += n
+    return b

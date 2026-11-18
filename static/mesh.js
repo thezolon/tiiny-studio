@@ -172,6 +172,7 @@ const MeshWS = {
     head.append(el("div", { class: "crumb" }, el("b", {}, "3D model"), " · " + timeAgo(e.created)), el("div", { class: "spacer" }),
       el("div", { class: "toolbar" },
         el("a", { class: "tb primary", href: url, download: `tiiny-3d-${e.id}.glb` }, icon("i-down"), el("span", { class: "lbl" }, "Download GLB")),
+        showInFolderBtn(e.id),
         e.sources[0] ? el("button", { class: "tb", onclick: () => { setWs("image"); useAsSource("/images/" + e.sources[0]); } }, icon("i-brush"), el("span", { class: "lbl" }, "Edit source")) : null,
         el("button", { class: "tb", onclick: () => this.reuse(e) }, icon("i-copy"), el("span", { class: "lbl" }, "Reuse")),
         el("button", { class: "tb danger", title: "Delete", "aria-label": "Delete", onclick: () => this.del(e) }, icon("i-trash"))));

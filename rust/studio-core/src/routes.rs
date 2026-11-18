@@ -335,7 +335,8 @@ async fn clipboard_image(State(state): State<AppState>, req: Request) -> Respons
     not_found().await
 }
 
-/// Show the results folder in the system file manager (Explorer, Finder, or the Linux desktop's).
+/// Show the results folder in the system file manager (Explorer, Finder, or the Linux desktop's). With `{"id": …}`,
+/// that result's own file is shown selected (#58): only a file the entry owns, found by name, never a path from the request.
 async fn open_folder(State(state): State<AppState>, req: Request) -> Response {
     if !can_open_folder(&req) {
         return error(
@@ -343,21 +344,110 @@ async fn open_folder(State(state): State<AppState>, req: Request) -> Response {
             "The folder can only be opened on the computer running the studio.",
         );
     }
+    let body = axum::body::to_bytes(req.into_body(), 4096)
+        .await
+        .unwrap_or_default();
+    let id = serde_json::from_slice::<Value>(&body)
+        .ok()
+        .and_then(|v| v.get("id").and_then(Value::as_str).map(String::from));
     let dir = state.store.images.clone();
-    let program = if cfg!(windows) {
-        "explorer"
-    } else if cfg!(target_os = "macos") {
-        "open"
-    } else {
-        "xdg-open"
+    let file = match id {
+        None => None,
+        Some(id) => {
+            let entry = state
+                .store
+                .load_history()
+                .into_iter()
+                .find(|e| e.get("id").and_then(Value::as_str) == Some(id.as_str()));
+            let Some(name) = entry
+                .as_ref()
+                .and_then(|e| crate::store::entry_files(e).into_iter().next())
+                .filter(|n| crate::store::safe_file(n))
+            else {
+                return error(StatusCode::NOT_FOUND, "That result isn't in the library.");
+            };
+            let path = dir.join(name);
+            if !path.is_file() {
+                return error(
+                    StatusCode::NOT_FOUND,
+                    "That result's file is gone from the folder.",
+                );
+            }
+            Some(path)
+        }
     };
-    // a fixed folder of ours, never a path from the request
-    let _ = std::process::Command::new(program)
-        .arg(&dir)
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .spawn();
+    let quiet = |mut c: std::process::Command| {
+        c.stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+    };
+    match &file {
+        // Explorer wants `/select,"path"` as one raw argument (Rust's own quoting would wrap the comma too)
+        #[cfg(windows)]
+        Some(f) => {
+            use std::os::windows::process::CommandExt;
+            let mut c = std::process::Command::new("explorer");
+            c.raw_arg(format!("/select,\"{}\"", f.display()));
+            let _ = quiet(c);
+        }
+        #[cfg(target_os = "macos")]
+        Some(f) => {
+            let mut c = std::process::Command::new("open");
+            c.arg("-R").arg(f);
+            let _ = quiet(c);
+        }
+        // Linux desktops (Files, Dolphin, …) select a file through the freedesktop FileManager1 D-Bus call
+        #[cfg(not(any(windows, target_os = "macos")))]
+        Some(f) => {
+            let mut c = std::process::Command::new("dbus-send");
+            c.args([
+                "--session",
+                "--dest=org.freedesktop.FileManager1",
+                "--type=method_call",
+                "/org/freedesktop/FileManager1",
+                "org.freedesktop.FileManager1.ShowItems",
+            ])
+            .arg(format!("array:string:{}", file_uri(f)))
+            .arg("string:");
+            let shown = c
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status()
+                .is_ok_and(|s| s.success());
+            if !shown {
+                let mut c = std::process::Command::new("xdg-open");
+                c.arg(&dir);
+                let _ = quiet(c);
+            }
+        }
+        None => {
+            let program = if cfg!(windows) {
+                "explorer"
+            } else if cfg!(target_os = "macos") {
+                "open"
+            } else {
+                "xdg-open"
+            };
+            let mut c = std::process::Command::new(program);
+            c.arg(&dir); // a fixed folder of ours, never a path from the request
+            let _ = quiet(c);
+        }
+    }
     Json(json!({"ok": true})).into_response()
+}
+
+/// `file://` URI for a local path, percent-encoding everything but unreserved characters and slashes.
+#[cfg_attr(any(windows, target_os = "macos"), allow(dead_code))]
+fn file_uri(p: &std::path::Path) -> String {
+    let mut out = String::from("file://");
+    for b in p.to_string_lossy().bytes() {
+        if b.is_ascii_alphanumeric() || b"/-_.~".contains(&b) {
+            out.push(b as char);
+        } else {
+            out.push_str(&format!("%{b:02X}"));
+        }
+    }
+    out
 }
 
 /// Add or update a saved device ({id?, name, url, key}); without an id on first run, the active one.
