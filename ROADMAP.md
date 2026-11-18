@@ -1,6 +1,6 @@
 # Roadmap
 
-Where Tiiny Studio stands, what's next, and what doesn't work yet. Version **0.5.2**, checked against TiinyOS
+Where Tiiny Studio stands, what's next, and what doesn't work yet. Version **0.6.0**, checked against TiinyOS
 0.1.35 to 0.1.38 on a Tiiny Pocket.
 
 ## Works now
@@ -31,7 +31,14 @@ Where Tiiny Studio stands, what's next, and what doesn't work yet. Version **0.5
   running if you close the page, ride out a dropped connection, and the desktop app keeps the computer awake for
   them; **cancel** any running or queued job (or remove all waiting ones), and the Tiiny's work stops too. Quitting
   the app or stopping the server stops running work on the device first. Results left on the Tiiny are saved, and
-  deleting a song or loop deletes the Tiiny's copy too. The Tiiny's free space is watched.
+  deleting a song or loop deletes the Tiiny's copy too. The Tiiny's free space is watched. Jobs can be queued for a
+  model that isn't loaded (Audio, 3D, Video): the queue loads it when the job's turn comes. A job that fails stays
+  in the jobs menu and on its tab with the reason until dismissed; a video estimated past the Tiiny's 1-hour limit
+  gets a warning first, and a song whose answer is lost on the way is saved from the Tiiny instead.
+- **Agents (MCP):** a built-in MCP server (off by default) lets Claude, Cline or other agents make images, speech,
+  music, 3D and video on the Tiiny through the studio, with its queue; an agent sees only what it made.
+- **Results on disk:** named by date and time, with the prompt and settings inside PNG, MP3 and MP4 files, and
+  "Show in Explorer / Finder / folder" for each one.
 - **Connections:** Wi-Fi/LAN and USB, several saved devices with auto-switch. After a Tiiny restart the studio says it
   needs unlocking (TiinyOS app or `tiiny login`) and notices when it is.
 - **Accessible:** WCAG 2.2 level AA: everything works from the keyboard, with screen readers, in both themes, and
@@ -63,8 +70,6 @@ Ideas and requests are welcome as [feature requests](https://github.com/thezolon
 
 ### Next release
 
-- **Long jobs:** a warning before a video that can't finish within the Tiiny's 1-hour limit, cleanup after one that
-  times out, and failed jobs that stay visible with their reason ([#80](https://github.com/thezolon/tiiny-studio/issues/80)).
 - The rest of the panels that should follow the loaded model: image steps and guidance, transcription languages, loops
   ([#41](https://github.com/thezolon/tiiny-studio/issues/41)).
 
@@ -91,12 +96,9 @@ Ideas and requests are welcome as [feature requests](https://github.com/thezolon
 
 **Library**
 - **Projects and tags** instead of one long gallery per tab.
-- **The prompt and settings stored in the files themselves** (PNG text, MP3/MP4 tags), so they travel with them.
 - **Saved presets** per tab.
 
 **Let other tools use it**
-- **An MCP server,** so Claude, Cline or other agents can make images, speech, music and video on your Tiiny through
-  the studio, with its queue and model swapping.
 - **Chat with your documents,** using the Tiiny's embedding model.
 - Later: **a coding-agent tab** for the Tiiny's larger chat models.
 

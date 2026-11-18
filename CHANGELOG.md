@@ -1,5 +1,35 @@
 # Changelog
 
+## 0.6.0 (2026-11-18)
+
+Agents can now use your Tiiny through the studio, the queue works across tabs, long jobs explain themselves, and every
+result is easy to find on disk.
+
+- **Agents (MCP):** a built-in MCP server lets Claude, Cline, Hermes or your own scripts make images, speech, music, 3D
+  and video on your Tiiny through the studio, with its queue and gallery. Off by default: turn it on in Settings →
+  Agents (MCP) and paste the address and token into your agent. An agent sees only what it made, never your gallery,
+  chats or vault, and text it gets back (transcripts, documents) is marked as data and checked for prompt injection
+  (#87, requested on the Tiiny Discord).
+- **Queue jobs for any model:** in Audio, 3D and Video you can queue a job while its model isn't loaded ("Queue (loads
+  Hunyuan3D)"). When its turn comes the studio loads the model, unloading others only if they don't fit, so you can
+  line up a song, a 3D model and a video and walk away. Settings → Model swapping → "Queued jobs" turns it off (#78).
+- **Find your results:** "Show in Explorer / Finder / folder" next to Download opens the folder with that file
+  selected. New files are named by date and time (`2026-11-18_2215_…`) so they sort by when you made them, and images,
+  MP3s and videos carry their prompt and settings inside the file (#58).
+- **Long jobs:**
+  - A job that fails stays in the jobs menu ("1 failed") and on its tab with the reason, until you dismiss it, instead of
+    a toast that disappears (#80).
+  - Video: a clip estimated past the Tiiny's 1-hour limit gets a warning and a suggestion that fits; a clip the Tiiny
+    stopped at the limit offers to unload the video model, which may still be busy (#80).
+  - Songs: if the long answer for a YuE2 or AceStep song never arrives (a dropped Wi-Fi connection), the studio notices
+    the finished song on the Tiiny and saves it, instead of "composing" forever (#91, reported on the Tiiny Discord).
+  - YuE2 time estimates are now measured: about 10 seconds per second of music, so a full song is ~45 minutes.
+  - Results found on the Tiiny are announced before they're saved ("Found 1 song on the Tiiny…") (#80, requested on the
+    Tiiny Discord).
+- **Fixes:** typing in the chat keeps its focus when the model list refreshes (reported on the Tiiny Discord), and the
+  Audio, 3D and Video panels keep your place, cursor and open Advanced section when they redraw.
+- **Also:** a contributing guide (CONTRIBUTING.md), and a Sponsor button on the repository.
+
 ## 0.5.2 (2026-11-18)
 
 Fixes for problems you reported: the Linux AppImage plays audio and video, the upload buttons work again, chat stops
