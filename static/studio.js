@@ -330,6 +330,16 @@ function wireDrop(node, take = addFiles) {
   node.addEventListener("dragleave", () => node.classList.remove("over"));
   node.addEventListener("drop", (e) => { e.preventDefault(); e.stopPropagation(); node.classList.remove("over"); $("#dropveil").classList.remove("show"); take(e.dataTransfer.files); });
 }
+/** Open the file picker; take gets the chosen files. The input sits in the page until it's used: a detached one can be
+    garbage-collected while the dialog is open, and then the choice is silently lost (#95). */
+function browseFiles(accept, take, multiple = false) {
+  document.querySelectorAll("input.browse-files").forEach((x) => x.remove());
+  const i = el("input", { type: "file", class: "browse-files", accept, multiple, hidden: true });
+  i.addEventListener("change", () => { const f = [...i.files]; i.remove(); if (f.length) take(f); });
+  i.addEventListener("cancel", () => i.remove());
+  document.body.append(i);
+  i.click();
+}
 
 /* ---------- paste targets ----------
    Each place that takes a file registers itself here. Ctrl+V goes to the zone under the pointer, else

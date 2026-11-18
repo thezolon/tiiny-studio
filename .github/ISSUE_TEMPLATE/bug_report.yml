@@ -37,7 +37,7 @@ body:
     id: version
     attributes:
       label: Tiiny Studio version
-      description: Shown in Settings (gear icon), e.g. 0.2.1
+      description: Hover the gear icon (top right), or open it and see the last line, e.g. 0.5.1. From source, the commit or date also helps.
     validations:
       required: true
   - type: dropdown

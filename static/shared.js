@@ -568,7 +568,7 @@ function seedField(obj) {
 /** One picture to drop, paste or browse for, shown with a remove button once set. take gets the files. */
 function imageSlot({ img, clear, cls, key, zone, title, hint, take }) {
   if (img) return el("div", { class: cls }, el("img", { src: img.uri, alt: "" }), el("button", { class: "x", title: "Remove", "aria-label": "Remove picture", onclick: clear }, "✕"));
-  const d = el("button", { class: "drop", onclick: () => { const i = el("input", { type: "file", accept: "image/*" }); i.onchange = () => i.files[0] && take([i.files[0]]); i.click(); } },
+  const d = el("button", { class: "drop", onclick: () => browseFiles("image/*", (f) => take([f[0]])) },
     icon("i-upload"), el("span", {}, el("b", {}, title), hint));
   return fileZone(d, { key, accept: /^image\//, what: "image", label: zone, take });
 }
