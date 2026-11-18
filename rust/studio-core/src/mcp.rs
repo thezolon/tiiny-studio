@@ -191,7 +191,9 @@ async fn dispatch(
             if !tools().iter().any(|t| t["name"] == name) {
                 return Err((-32602, format!("Unknown tool: {name}")));
             }
-            if !state.mcp.rate_ok(Instant::now()) {
+            // polling a job and listing models are cheap reads an agent repeats while it waits: only calls that start
+            // work or change models count against the limit
+            if !matches!(name, "get_job" | "list_models") && !state.mcp.rate_ok(Instant::now()) {
                 return Err((
                     -32000,
                     format!(
@@ -1406,16 +1408,31 @@ mod tests {
         let st = state();
         let token = turn_on(&st).await;
         for i in 0..RATE_LIMIT {
-            let (_, res) = rpc(&st, Some(&token), call("get_job", json!({"job_id": "x"}))).await;
+            let (_, res) = rpc(
+                &st,
+                Some(&token),
+                call("cancel_job", json!({"job_id": "x"})),
+            )
+            .await;
             assert!(res.get("error").is_none(), "call {i}: {res}");
         }
-        let (code, res) = rpc(&st, Some(&token), call("get_job", json!({"job_id": "x"}))).await;
+        let (code, res) = rpc(
+            &st,
+            Some(&token),
+            call("cancel_job", json!({"job_id": "x"})),
+        )
+        .await;
         assert_eq!(code, StatusCode::OK);
         assert_eq!(res["error"]["code"], -32000);
         assert!(res["error"]["message"]
             .as_str()
             .unwrap()
             .contains("Rate limit"));
+        // polling a job doesn't count: an agent waiting on a long job may poll as often as it likes
+        for i in 0..2 * RATE_LIMIT {
+            let (_, res) = rpc(&st, Some(&token), call("get_job", json!({"job_id": "x"}))).await;
+            assert!(res.get("error").is_none(), "poll {i}: {res}");
+        }
         // the window moves on
         let agents = Agents::default();
         let t0 = Instant::now();
