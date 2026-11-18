@@ -45,7 +45,7 @@ jobs:
         include:
           - { name: Windows x64, os: windows-latest, bundles: "nsis,msi" }
           - { name: Windows ARM, os: windows-11-arm, bundles: "nsis,msi" }
-          - { name: macOS Apple Silicon, os: macos-latest, bundles: "dmg" }
+          - { name: macOS Apple Silicon, os: macos-15, bundles: "dmg" }
           - { name: macOS Intel, os: macos-15-intel, bundles: "dmg" }
           - { name: Linux x64, os: ubuntu-22.04, bundles: "deb,appimage" }       # older glibc = runs on more distros
           - { name: Linux ARM, os: ubuntu-22.04-arm, bundles: "deb,appimage" }
