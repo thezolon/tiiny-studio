@@ -5,7 +5,7 @@ import base64
 import json
 import unittest
 
-from harness import ContractCase, request  # first: puts testdata/ on the path
+from harness import ContractCase, name_suffix, request  # first: puts testdata/ on the path
 import fake_tiiny  # noqa: E402
 
 TTS, ASR, LOOP, SONG, MESH = "Qwen/Qwen3-TTS-Base", "Fake/Whisper-ASR", "Fake/Foundation-1", "Fake/SongGeneration-v2", "Tencent/Hunyuan3D-2.1"
@@ -121,7 +121,7 @@ class Audio(Jobs):
         self.assertEqual(len(py["entry"]["outputs"]), 3)  # song + Vocals + Bass Line
         self.files_equal(py, rs)
         self.assertEqual(sorted(py["entry"]["tracks"].values()), ["Bass Line", "Vocals"])
-        self.assertEqual([f.split("-", 1)[1] for f in py["entry"]["tracks"]], [f.split("-", 1)[1] for f in rs["entry"]["tracks"]])
+        self.assertEqual([name_suffix(f) for f in py["entry"]["tracks"]], [name_suffix(f) for f in rs["entry"]["tracks"]])
 
     def test_song_instrumental_with_style_reference(self):
         py, rs = self.same_job(self.song(generation_type="bgm", lyrics="", reference_audio=WAV))

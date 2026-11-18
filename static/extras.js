@@ -24,10 +24,13 @@ function galleryFilter(ws, list) {
 /* "Open folder" only works on the computer running the studio (not in Docker, not from another device):
    the server says so, and the button stays hidden otherwise. */
 fetch("/api/settings").then((r) => r.json()).then((s) => { if (s.can_open_folder) document.body.dataset.openFolder = "1"; }).catch(() => {});
-async function openResultsFolder() {
-  try { const r = await fetch("/api/open-folder", { method: "POST" }); if (!r.ok) throw new Error((await r.json()).error?.message || r.statusText); }
+async function openResultsFolder(id) {
+  try { const r = await fetch("/api/open-folder", { method: "POST", ...(id ? { headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id }) } : {}) }); if (!r.ok) throw new Error((await r.json()).error?.message || r.statusText); }
   catch (e) { toast("Couldn't open the folder: " + e.message, "err"); }
 }
+/** "Show in Explorer / Finder / folder" for one result: the file manager opens with its file selected (#58). */
+const FOLDER_LABEL = /Mac/i.test(navigator.platform) ? "Show in Finder" : /Win/i.test(navigator.platform) ? "Show in Explorer" : "Show in folder";
+const showInFolderBtn = (id) => el("button", { class: "tb show-in-folder", title: FOLDER_LABEL, onclick: () => openResultsFolder(id) }, icon("i-folder"), el("span", { class: "lbl" }, FOLDER_LABEL));
 
 /** Search / ★ / Select controls for a strip header. rerender() redraws that workspace's strip. */
 function galleryBar(ws, visible, rerender) {

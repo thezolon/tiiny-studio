@@ -118,6 +118,7 @@ ${e.params?.recovered ? "" : `Took ${fmtSec(e.seconds)} to render · `}${e.param
     head.append(el("div", { class: "crumb" }, el("b", {}, "Video"), " · " + timeAgo(e.created)), el("div", { class: "spacer" }),
       el("div", { class: "toolbar" },
         el("a", { class: "tb primary", href: url, download: `tiiny-video-${e.id}.mp4` }, icon("i-down"), el("span", { class: "lbl" }, "Download MP4")),
+        showInFolderBtn(e.id),
         el("button", { class: "tb", onclick: () => this.reuse(e) }, icon("i-copy"), el("span", { class: "lbl" }, "Reuse")),
         el("button", { class: "tb danger", title: "Delete", "aria-label": "Delete", onclick: () => this.del(e) }, icon("i-trash"))));
     stage.append(el("div", { class: "video-result" },
