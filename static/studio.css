@@ -593,7 +593,7 @@ details.adv summary .sum { margin-left: auto; color: var(--faint); font-weight: 
 .go:active { transform: translateY(1px); }
 .go:disabled { opacity: .45; cursor: not-allowed; box-shadow: none; }
 .go svg { width: 18px; height: 18px; }
-.go .est { font-weight: 500; opacity: .9; font-size: 13px; }
+.go .est { font-weight: 500; font-size: 13px; }  /* full colour: at .9 the light theme fell under 4.5:1 */
 .foot-meta { display: flex; justify-content: space-between; margin-top: 9px; color: var(--faint); font-size: 12px; }
 
 /* ---------- stage ---------- */
