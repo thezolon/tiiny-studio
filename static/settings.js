@@ -6,6 +6,7 @@ const SET = { info: null, editing: null, checking: false };
 
 async function loadSettings() {
   try { SET.info = await api("/api/settings"); } catch { SET.info = null; }
+  if (SET.info?.version) $("#settingsBtn").title = `Settings · Tiiny Studio ${SET.info.version}`;  // the version, one hover away (#95)
   renderDeviceLabel();
   if (SET.info && !SET.info.configured) openSettings(true);
   return SET.info;

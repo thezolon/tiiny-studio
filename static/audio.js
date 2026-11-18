@@ -186,7 +186,7 @@ const AudioWS = {
     const recording = A.recorder?.active && A.recFor === target;
     const meter = el("i", { class: "level" });
     const rec = el("button", { class: "btn-sm rec" + (recording ? " on" : ""), onclick: () => this.toggleRecord(target, meter) }, icon("i-mic"), recording ? " Stop" : " Record");
-    const up = el("button", { class: "btn-sm", onclick: () => { const i = el("input", { type: "file", accept: "audio/*" }); i.onchange = () => i.files[0] && this.takeClip(target, i.files[0]); i.click(); } }, "Upload…");
+    const up = el("button", { class: "btn-sm", onclick: () => browseFiles("audio/*", (f) => this.takeClip(target, f[0])) }, "Upload…");
     const row = el("div", { class: "capture" }, rec, up, recording ? el("span", { class: "meter" }, meter) : null);
     if (clip?.uri) row.append(el("div", { class: "clip-preview" }, makePlayer(clip.uri), el("small", {}, `${clip.duration.toFixed(1)} s${clip.trimmed ? " (trimmed)" : ""}`)));
     return row;
@@ -397,7 +397,7 @@ const AudioWS = {
   /* ---------- Transcribe ---------- */
   transcribePanel() {
     const T = A.transcribe;
-    const drop = el("button", { class: "drop", onclick: () => { const i = el("input", { type: "file", accept: "audio/*,video/*" }); i.onchange = () => i.files[0] && this.takeClip("transcribe", i.files[0]); i.click(); } },
+    const drop = el("button", { class: "drop", onclick: () => browseFiles("audio/*,video/*", (f) => this.takeClip("transcribe", f[0])) },
       icon("i-upload"), el("span", {}, el("b", {}, "Drop, paste or click to browse"), "WAV · MP3 · M4A · WebM · video files too"));
     fileZone(drop, { key: "transcribe", accept: /^(audio|video)\//, what: "audio", label: "audio to transcribe", take: (f) => this.takeClip("transcribe", f[0]) });
     return [
