@@ -116,7 +116,7 @@ const AudioWS = {
     return { known: !!svc, plain, yue, ace: svc.startsWith("AceStep") || (!svc && plain), service: svc,
       steps: d.steps, temperature: d.temperature, top_k: d.top_k, top_p: d.top_p,
       maxSteps: mi.max_decoder_steps || null, maxSeconds: mi.codec_llm_duration > 0 ? mi.codec_llm_duration : 270,
-      secsPerSec: svc.startsWith("YuE") ? 4 : svc.startsWith("AceStep") ? 1.5 : null };
+      secsPerSec: svc.startsWith("YuE") ? 10.5 : svc.startsWith("AceStep") ? 1.5 : null };
   },
   /** The voice modes the model has: { clone, speakers[], design, instruct, languages[] }. */
   voiceModes() {
@@ -487,6 +487,8 @@ const AudioWS = {
   renderStage() {
     const head = $("#aHead"), stage = $("#aStage");
     head.replaceChildren(); stage.replaceChildren();
+    const failed = this.failedStage(head);
+    if (failed) return stage.append(failed);
     const j = this.liveJob();
     if (j) {
       head.append(el("div", { class: "crumb" }, el("b", {}, j.status === "queued" ? "Queued" : "Working"), " · " + (j.label || j.kind)));

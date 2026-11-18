@@ -7,6 +7,7 @@ const VIDEO_INFO = { canvases: [{ width: 832, height: 480 }, { width: 480, heigh
   step_options: [4, 5, 6, 7, 8], default_steps: 7, fps: 24, max_keyframes: 2 };
 // MiniMax-H3-Turbo is compiled for clips up to 7 s; 8 s and longer fail at once ("no exported bucket fits", 0.1.38)
 const LENGTHS = [[2, "2 s"], [3, "3 s"], [5, "5 s"], [7, "7 s"]];
+const VIDEO_LIMIT = 3600;  // the Tiiny stops a video render after 1 hour (TiinyOS 0.1.38, docs/DEVICE-API.md)
 const V = { prompt: store.get("video.prompt", ""), size: store.get("video.size", "832x480"), steps: store.get("video.steps", 4),
   seconds: store.get("video.seconds", 2), first: null, seed: "", view: null };
 
@@ -38,16 +39,31 @@ ${e.params?.recovered ? "" : `Took ${fmtSec(e.seconds)} to render · `}${e.param
   /** Measured on 0.1.38 (4 steps): 2 s at 832x480 435 s, 7 s at 832x480 737 s, 5 s at 1344x768 1916 s; 2 s at 832x480 with
    *  7 steps just over 15 min. A clip costs ~5 min whatever its length, then ~1 min per second at 480p; pixels cost more
    *  than linearly (768p is ~5x 480p per second). */
-  estimate() {
-    const t = this.info(), [w, h] = V.size.split("x").map(Number), steps = V.steps || t.defSteps;
-    return (314 + 60.4 * V.seconds * ((w * h) / (832 * 480)) ** 1.75) * (steps / 4) ** 1.4;
+  estimate(size = V.size, seconds = V.seconds, steps = V.steps || this.info().defSteps) {
+    const [w, h] = size.split("x").map(Number);
+    return (314 + 60.4 * seconds * ((w * h) / (832 * 480)) ** 1.75) * (steps / 4) ** 1.4;
+  },
+  /** What would finish inside the Tiiny's 1-hour video limit (#80): the smallest size in this shape, the fewest
+   *  steps, and as many seconds as fit with some margin. */
+  fitAdvice() {
+    const t = this.info(), [w, h] = V.size.split("x").map(Number), tall = h > w;
+    const area = (c) => c.split("x").map(Number).reduce((x, y) => x * y, 1);
+    const size = t.canvases.filter((c) => { const [a, b] = c.split("x").map(Number); return (b > a) === tall; })
+      .sort((a, b) => area(a) - area(b))[0] || V.size;
+    const steps = Math.min(...t.steps);
+    let secs = V.seconds;
+    while (secs > 1 && this.estimate(size, secs, steps) > VIDEO_LIMIT * 0.9) secs--;
+    return `At ${size.split("x").map(Number).sort((a, b) => a - b)[0]}p and ${steps} steps, ${secs} s should fit.`;
   },
   renderFoot() {
     const { ready, loads } = this.footModel("video");
+    const est = this.estimate(), over = est > VIDEO_LIMIT;  // the render alone counts against the Tiiny's 1-hour limit
+    if (!over) V.longOk = false;
     $("#vGo").disabled = !ready || !(V.prompt.trim() || V.first);
     $("#vGoLabel").textContent = loads ? `Queue (loads ${shortName(loads.id)})` : $("#vGoLabel").dataset.label;
     $("#vGo").title = loads ? `${shortName(loads.id)} is loaded when this job's turn comes` : "";
-    $("#vEst").textContent = ready ? "~" + fmtSec(this.estimate() + (loads ? LOAD_EST : 0)) : "";
+    $("#vEst").textContent = ready ? "~" + fmtSec(est + (loads ? LOAD_EST : 0)) + (over ? " ⚠" : "") : "";
+    $("#vEst").title = over ? `Past the Tiiny's 1-hour limit for a video: it would stop unfinished. ${this.fitAdvice()}` : "";
   },
   panel() {
     const rerender = () => this.render(), t = this.info();
@@ -88,6 +104,12 @@ ${e.params?.recovered ? "" : `Took ${fmtSec(e.seconds)} to render · `}${e.param
   },
   async submit() {
     if ($("#vGo").disabled) return;
+    const est = this.estimate();
+    if (est > VIDEO_LIMIT && !V.longOk) {  // a second click starts it anyway
+      V.longOk = true;
+      toast(`This clip is estimated at ${fmtSec(est)}, but the Tiiny stops a video after 1 hour, so it would end unfinished. ${this.fitAdvice()} Click again to start it anyway.`, "err");
+      return;
+    }
     const body = { prompt: V.prompt.trim(), size: V.size, seconds: V.seconds, est: this.estimate() };
     if (V.steps) body.steps = V.steps;
     if (V.first) body.image = V.first.uri;
@@ -101,6 +123,8 @@ ${e.params?.recovered ? "" : `Took ${fmtSec(e.seconds)} to render · `}${e.param
 
   renderStage() {
     const head = $("#vHead"), stage = $("#vStage");
+    const failed = this.failedStage(head);
+    if (failed) return stage.replaceChildren(failed);
     const j = this.liveJob();
     if (j) {
       head.replaceChildren(el("div", { class: "crumb" }, el("b", {}, j.status === "queued" ? "Queued" : "Making video"), " · " + (j.label || "")));

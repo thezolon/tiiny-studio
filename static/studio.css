@@ -412,6 +412,9 @@ button { cursor: pointer; }
 .dot.ok { background: var(--ok); box-shadow: 0 0 0 3px var(--ok-soft); }
 .dot.busy { background: var(--warn); box-shadow: 0 0 0 3px var(--warn-soft); animation: pulse 1.4s infinite; }
 .dot.err { background: var(--err); }
+.err-text { color: var(--err); }
+.jobs-menu-row.failed small { white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.media-pending.failed .big { color: var(--err); }
 @keyframes pulse { 50% { opacity: .45; } }
 .model-pick select {
   background: transparent; border: 0; padding: 2px 4px; max-width: 260px; cursor: pointer;
