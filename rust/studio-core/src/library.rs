@@ -99,8 +99,12 @@ async fn history(State(state): State<AppState>) -> Json<Value> {
 }
 
 /// Save what the Tiiny holds that the gallery doesn't (clips and songs left by a restart or another studio).
-async fn recover(State(state): State<AppState>) -> Json<Value> {
-    Json(crate::media::recover::recover(&state).await)
+async fn recover(State(state): State<AppState>, body: Bytes) -> Json<Value> {
+    let check = read_json(&body)
+        .ok()
+        .and_then(|v| v.get("check").map(crate::device::truthy))
+        .unwrap_or(false);
+    Json(crate::media::recover::recover(&state, check).await)
 }
 
 /// The history entries with these ids, read before they are deleted (their Tiiny sessions go with them).

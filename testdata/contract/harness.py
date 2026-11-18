@@ -221,7 +221,7 @@ class ContractCase(unittest.TestCase):
         """Wait until the studio has sent this request to the fake (for work it does in the background)."""
         self.wait_until(lambda: any(c[:2] == (method, path) for c in self.calls()), f"the studio to send {method} {path}", timeout)
 
-    def run_job(self, base, req, reset=True):
+    def run_job(self, base, req, reset=True, timeout=60):
         """Run one job to the end; returns (job, requests made to the fake). `load` loads models first (a name or a list),
         `flags` sets fake behaviour (see fake_tiiny.py); reset=False keeps the fake's state (with a fresh log)."""
         req = dict(req)
@@ -236,7 +236,7 @@ class ContractCase(unittest.TestCase):
         job = request(base, "POST", "/api/jobs", req).json
         if "id" not in job:  # refused at submit (e.g. an unknown kind)
             return job, []
-        return self.finish(base, job)
+        return self.finish(base, job, timeout)
 
     def finish(self, base, job, timeout=60):
         """Poll a job until it ends; returns (job, the requests the fake logged)."""

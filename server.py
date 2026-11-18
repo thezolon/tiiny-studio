@@ -926,7 +926,7 @@ class Handler(BaseHTTPRequestHandler):
         if self.path == "/api/privacy/wipe":
             return self.wipe_everything()
         if self.path == "/api/device/recover":
-            return self.send_json(200, MEDIA.recover())
+            return self.send_json(200, MEDIA.recover(check=bool(self.read_json().get("check"))))
         if self.path == "/api/history/delete":
             return self.send_json(200, {"ok": True, "deleted": self.remove_entries(self.read_json().get("ids") or [])})
         m = re.fullmatch(r"/api/history/(\w+)/fav", self.path)
