@@ -268,10 +268,14 @@ function thinkingMode(m) {
   if (!t || typeof t !== "object") return /gpt-oss/i.test(m?.id || "") ? "always" : "switch";
   return !t.supported ? "none" : t.toggleable ? "switch" : "always";
 }
-/** Helpers run on whichever chat model is loaded; otherwise suggest the leanest stock one (one that always reasons is slow). */
+/** Qwen-Image's prompt enhancers (Qwen-Image-2.1-PE-T2I / -PE-I2I): text models built for one job, turning an idea into
+ *  an image prompt. Great for Improve prompt, wrong for lyrics or tags. */
+const isEnhancer = (m) => /-PE-(T2I|I2I)$/i.test(m?.id || "");
+/** Helpers run on whichever chat model is loaded; otherwise suggest the leanest stock one (one that always reasons is slow).
+ *  A prompt enhancer comes last: it rewrites everything as an image description. */
 function chatModel(vision) {
   const list = (S.allModels || []).filter((m) => CHAT_TYPES.includes(m.type) && (!vision || seesImages(m)));
-  const rank = (m) => [m.status === "running" ? 0 : 1, /abliterated|heretic|uncensored/i.test(m.id) ? 1 : 0, thinkingMode(m) === "always" ? 1 : 0, m.npu_usage ?? 100];
+  const rank = (m) => [isEnhancer(m) ? 1 : 0, m.status === "running" ? 0 : 1, /abliterated|heretic|uncensored/i.test(m.id) ? 1 : 0, thinkingMode(m) === "always" ? 1 : 0, m.npu_usage ?? 100];
   const cmp = (a, b) => { const x = rank(a), y = rank(b); for (let i = 0; i < x.length; i++) if (x[i] !== y[i]) return x[i] - y[i]; return 0; };
   return list.sort(cmp)[0] || null;
 }
@@ -410,9 +414,20 @@ S.assistBusy = {};
 /** Run a helper on the chat model as a queued device job. Resolves to the reply text, or null if it failed or a
     model has to be loaded first (the gate card then shows in `slot` and updates itself as the model loads). */
 /** The "load this model" card for a helper, or null when it can run: its model is loaded, or the server may swap it in. */
+/** The model a helper runs on. Improve prompt uses a loaded text-to-image prompt enhancer (made for exactly that) unless
+ *  Settings names a helper model; everything else uses the chat model. */
+function helperFor(task) {
+  if (task === "describe") return modelForTool("vision");
+  if (task === "prompt" && !SET.info?.helper_model) {
+    const pe = (S.allModels || []).find((m) => m.status === "running" && /-PE-T2I$/i.test(m.id) && CHAT_TYPES.includes(m.type));
+    if (pe) return pe;
+  }
+  return modelForTool("chat");
+}
 function helperGate(task) {
-  const tool = task === "describe" ? "vision" : "chat", m = modelForTool(tool);
-  if (m && m.status !== "running" && swapOn(helperSection(task))) return null;
+  const tool = task === "describe" ? "vision" : "chat", m = helperFor(task);
+  if (m?.status === "running") return null;  // the model it will use is loaded (it may not be the chat tool's pick)
+  if (m && swapOn(helperSection(task))) return null;
   return modelGate(tool, tool === "vision" ? "image-reading chat" : "chat");
 }
 async function assist(task, payload, slot, label) {
@@ -423,7 +438,7 @@ async function assist(task, payload, slot, label) {
   if (S.assistBusy[task]) return null;
   S.assistBusy[task] = true;
   try {
-    const m = modelForTool(tool);
+    const m = helperFor(task);
     let est = { describe: 25, lyrics: 40 }[task] || 15;
     if (m.status !== "running") {  // the server loads it (making room) and puts the user's models back afterwards
       const load = m.load_time || 30;
