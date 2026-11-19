@@ -205,9 +205,9 @@ class State:
 
 
 def parse_multipart(ctype, body):
-    """{'fields': {name: text}, 'files': {name: filename}, 'sums': {name: sha1 of the file}} of a multipart body."""
+    """{'fields': {name: text}, 'files': {name: filename}, 'sums': {name: sha1 of the file}, 'sizes': {name: bytes}}."""
     m = re.search(r"boundary=([^;]+)", ctype or "")
-    out = {"fields": {}, "files": {}, "sums": {}}
+    out = {"fields": {}, "files": {}, "sums": {}, "sizes": {}}
     if not m:
         return out
     for part in body.split(b"--" + m.group(1).strip('"').encode())[1:-1]:
@@ -218,6 +218,7 @@ def parse_multipart(ctype, body):
         if name and fn:
             out["files"][name.group(1)] = fn.group(1)
             out["sums"][name.group(1)] = hashlib.sha1(data[:-2]).hexdigest()
+            out["sizes"][name.group(1)] = len(data) - 2
         elif name:
             out["fields"][name.group(1)] = data.rstrip(b"\r\n").decode("utf-8", "replace")
     return out
@@ -459,7 +460,11 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 self.send_bytes(200, WAV, "audio/wav")
         elif method == "POST" and p == "/v1/audio/transcriptions":
-            self.send_json(200, {"text": "fake transcript"})
+            # like the real one (TiinyOS 1.0.3, Parakeet): a WAV much over 90 s fails
+            if (self.multi or {}).get("sizes", {}).get("file", 0) > 44 + 100 * 32000 and (self.multi or {}).get("files", {}).get("file", "").endswith(".wav"):
+                self.send_json(500, {"error": {"message": "Transcription failed: received 1000 (OK); then sent 1000 (OK)", "type": "model_error"}})
+            else:
+                self.send_json(200, {"text": "fake transcript"})
         elif method == "POST" and p == "/v1/ocr":
             self.send_json(200, {"data": [{"text": "FAKE OCR", "lines": [{"text": "FAKE OCR", "score": 0.99}]}]})
         elif method == "POST" and p == "/v1/embeddings":

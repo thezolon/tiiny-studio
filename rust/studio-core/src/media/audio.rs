@@ -275,6 +275,55 @@ pub fn wav_seconds(data: &[u8]) -> Result<Option<f64>, WavError> {
 }
 
 /// Downmix/resample WAV input to 16-bit 16 kHz mono; None when the input isn't a WAV (callers pass it through).
+/// The Tiiny's speech-to-text fails on long audio ("Transcription failed: received 1000 (OK)", Parakeet: 90 s works,
+/// 120 s doesn't; TiinyOS 1.0.3). Split a 16 kHz mono 16-bit WAV longer than 80 s into ~60 s parts, each cut at the
+/// quietest 0.1 s between its 50th and 60th second so a word isn't cut in half. Anything else comes back as one part.
+/// Integer maths, so media.py asr_parts cuts in the same places.
+pub fn asr_parts(wav: &[u8]) -> Vec<Vec<u8>> {
+    const RATE: usize = 16000;
+    const ONE: usize = 80 * RATE; // longer than this goes in parts
+    const PIECE: usize = 60 * RATE;
+    const LOOK: usize = 10 * RATE; // where to look for a quiet cut: the last 10 s of a piece
+    const WIN: usize = RATE / 10;
+    let Ok(w) = parse(wav) else {
+        return vec![wav.to_vec()];
+    };
+    if w.channels != 1 || w.sampwidth != 2 || w.rate != RATE as u32 || w.data.len() / 2 <= ONE {
+        return vec![wav.to_vec()];
+    }
+    let s: Vec<i64> = w
+        .data
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|b| i16::from_le_bytes(*b) as i64)
+        .collect();
+    let (n, mut start, mut parts) = (s.len(), 0usize, vec![]);
+    while n - start > ONE {
+        let lo = start + PIECE - LOOK;
+        let mut best = (i64::MAX, lo);
+        let mut at = lo;
+        while at + WIN <= start + PIECE {
+            let e: i64 = s[at..at + WIN].iter().map(|v| v.abs()).sum();
+            if e < best.0 {
+                best = (e, at);
+            }
+            at += WIN;
+        }
+        let cut = best.1 + WIN / 2;
+        parts.push(&s[start..cut]);
+        start = cut;
+    }
+    parts.push(&s[start..]);
+    parts
+        .into_iter()
+        .map(|p| {
+            let frames: Vec<u8> = p.iter().flat_map(|v| (*v as i16).to_le_bytes()).collect();
+            write_wav(1, 2, RATE as u32, &frames)
+        })
+        .collect()
+}
+
 pub fn to_asr_wav(audio: &[u8]) -> Result<Option<Vec<u8>>, WavError> {
     let w = match parse(audio) {
         Ok(w) => w,
@@ -348,6 +397,40 @@ pub fn to_asr_wav(audio: &[u8]) -> Result<Option<Vec<u8>>, WavError> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn long_asr_audio_is_cut_at_quiet_points() {
+        let rate = 16000usize;
+        let n = 185 * rate;
+        let quiet = [(53 * rate, 54 * rate), (110 * rate, 111 * rate)];
+        let frames: Vec<u8> = (0..n)
+            .map(|i| {
+                if quiet.iter().any(|&(a, b)| a <= i && i < b) {
+                    0i16
+                } else {
+                    ((i * 37 % 2001) as i32 - 1000) as i16
+                }
+            })
+            .flat_map(|v| v.to_le_bytes())
+            .collect();
+        let lens: Vec<usize> = super::asr_parts(&super::write_wav(1, 2, 16000, &frames))
+            .iter()
+            .map(|p| (p.len() - 44) / 2)
+            .collect();
+        // cuts inside the quiet spots (53 s, 110 s); the last 75 s stay whole (under 80 s)
+        assert_eq!(lens.len(), 3, "{lens:?}");
+        assert!((53 * rate..54 * rate).contains(&lens[0]), "{lens:?}");
+        assert!(
+            (110 * rate..111 * rate).contains(&(lens[0] + lens[1])),
+            "{lens:?}"
+        );
+        assert_eq!(lens.iter().sum::<usize>(), n);
+        assert!(lens.iter().all(|&l| l <= 80 * rate));
+        // short audio and other formats stay whole
+        let short = super::write_wav(1, 2, 16000, &frames[..60 * rate * 2]);
+        assert_eq!(super::asr_parts(&short), vec![short.clone()]);
+        assert_eq!(super::asr_parts(b"not a wav"), vec![b"not a wav".to_vec()]);
+    }
+
     use super::*;
 
     /// A canonical WAV whose sample bytes are (i*7919*seed) % 251; the expected values below come from running

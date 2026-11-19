@@ -2,6 +2,9 @@
 against the fake Tiiny. Compares the finished job, the saved files and the requests each server made (multipart
 bodies compared as parsed fields, file names and file checksums, since the boundaries differ)."""
 import base64
+import wave
+import struct
+import io
 import json
 import unittest
 
@@ -87,6 +90,25 @@ class Audio(Jobs):
         self.assertTrue(py["entry"]["sources"][0].endswith("audio.mp3"))
         self.same_job({**base, "audio": "data:audio/webm;base64," + base64.b64encode(b"webm?").decode()})
         self.same_job({**base, "audio": "data:audio/wav;base64," + base64.b64encode(b"RIFFjunk").decode()})
+
+    def test_transcribe_long_audio_in_parts(self):
+        # the Tiiny's speech-to-text fails past ~90 s: a 185 s recording goes in ~60 s parts cut at quiet points, and the
+        # parts' texts are joined. The fake refuses a WAV over 100 s like the real one.
+        rate, n = 16000, 185 * 16000
+        quiet = [(53 * rate, 54 * rate), (110 * rate, 111 * rate)]
+        s = [0 if any(a <= i < b for a, b in quiet) else (i * 37 % 2001) - 1000 for i in range(n)]
+        buf = io.BytesIO()
+        with wave.open(buf, "wb") as o:
+            o.setnchannels(1)
+            o.setsampwidth(2)
+            o.setframerate(rate)
+            o.writeframes(struct.pack(f"<{n}h", *s))
+        long_wav = "data:audio/wav;base64," + base64.b64encode(buf.getvalue()).decode()
+        py, rs = self.same_job({"kind": "transcribe", "model": ASR, "audio": long_wav, "ephemeral": True})
+        self.assertEqual((py["status"], rs["status"]), ("done", "done"), (py.get("error"), rs.get("error")))
+        posts = [c for c in self.last_calls if c[1] == "/v1/audio/transcriptions"]
+        self.assertEqual(len(posts), 3)  # cut at 53 s and 110 s (the quiet spots); the last 75 s stay whole; same bytes on both servers
+        self.assertEqual(py["entry"]["text"], " ".join(["fake transcript"] * 3))
 
     def test_transcribe_errors(self):
         self.failed({"kind": "transcribe", "model": ASR, "audio": "nope"}, "base64 data URI")
