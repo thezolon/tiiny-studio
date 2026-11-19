@@ -202,7 +202,9 @@ async fn call(
         // reasons anyway: give it room to think
         body["reasoning_effort"] = json!("low");
         body["max_tokens"] = json!(tokens + 1500);
-    } else if mode == "switch" {
+    } else {
+        // "switch", and "none" too: Qwen-Image-2.1-PE-T2I reports it can't think, yet reasons until its tokens run out
+        // unless told not to (TiinyOS 1.0.3, reported on the Tiiny Discord). The flag is ignored where it means nothing.
         body["chat_template_kwargs"] = json!({"enable_thinking": false});
     }
     ctx.update(json!({"message": message}));
@@ -234,7 +236,15 @@ async fn call(
             .to_string();
     }
     if out.is_empty() {
-        return Err(JobError("The model returned nothing. Try again.".into()));
+        let thought = res
+            .pointer("/choices/0/message/reasoning_content")
+            .and_then(Value::as_str)
+            .is_some_and(|r| !r.trim().is_empty());
+        return Err(JobError(if thought {
+            "The model used its whole answer for thinking and said nothing. Try again, or pick another text model for helpers in Settings → Model swapping.".into()
+        } else {
+            "The model returned nothing. Try again.".into()
+        }));
     }
     Ok(
         json!({"kind": "assist", "params": {"model": model, "task": task}, "sources": [], "outputs": [], "text": out,

@@ -91,6 +91,13 @@ class Chat(ContractCase):
         body = next(b for m, p, b in self.last_calls if p == "/v1/chat/completions")
         self.assertEqual((body.get("reasoning_effort"), body["max_tokens"]), ("low", 1700))
 
+    def test_helper_on_a_model_that_reasons_although_it_says_it_cant(self):
+        # Qwen-Image-2.1-PE-T2I: thinking "supported: false", yet it reasons unless told not to (reported on the Tiiny Discord)
+        py, rs = self.same_job({"kind": "assist", "model": "Fake/Quiet-Thinker", "task": "prompt", "text": "RUST TEST fox", "load": "Fake/Quiet-Thinker"})
+        self.assertEqual((py["status"], rs["status"]), ("done", "done"), (py.get("error"), rs.get("error")))
+        body = next(b for m, p, b in self.last_calls if p == "/v1/chat/completions")
+        self.assertEqual(body.get("chat_template_kwargs"), {"enable_thinking": False})
+
     def test_reasoned_without_answer(self):
         # finish "length" with nothing said: an error that says why, not an empty reply
         py, rs = self.same_job({"kind": "chat", "messages": [{"role": "user", "content": "RUST TEST FAKE_NO_ANSWER"}]})
