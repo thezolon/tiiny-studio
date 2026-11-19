@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.6.1 (2026-11-19)
+
+Two fixes from your reports: the Mac app reaches the Tiiny again, and 3D models from transparent pictures lose their
+phantom floor.
+
+- **macOS: "Device unreachable" fixed.** macOS never gave the unsigned app its Local Network permission, so it couldn't
+  reach the Tiiny (launching it from Terminal worked). The app now asks for local network access properly and is
+  signed (ad-hoc), so the permission sticks; no Terminal commands needed after updating (#113, reported on GitHub and
+  the Tiiny Discord, workaround found by a user).
+- **3D: no more phantom floor.** A picture that was already transparent skipped the studio's clean-up, so faint leftover
+  pixels turned into a big floor or a flat card. Every picture is now cleaned before 3D, and its subject is cropped and
+  centred so it fills the frame (reported and requested on the Tiiny Discord).
+
 ## 0.6.0 (2026-11-18)
 
 Agents can now use your Tiiny through the studio, the queue works across tabs, long jobs explain themselves, and every
