@@ -113,7 +113,8 @@ jobs:
           app=$(ls -d "$mnt"/*.app | head -1)
           /usr/libexec/PlistBuddy -c "Print :NSLocalNetworkUsageDescription" "$app/Contents/Info.plist"
           codesign --verify --deep --strict "$app"
-          codesign -dv "$app" 2>&1 | tee /dev/stderr | grep -q "Signature=adhoc"
+          sig=$(codesign -dv "$app" 2>&1); echo "$sig"   # captured first: grep -q stopping early broke a pipe
+          grep -q "Signature=adhoc" <<<"$sig"
       - name: Collect the installers
         shell: bash
         run: |
