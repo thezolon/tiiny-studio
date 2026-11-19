@@ -1025,11 +1025,13 @@ CUTOUT_PROMPT = ("Extract the main subject from this photo onto a transparent ba
 PNG_SIG = b"\x89PNG\r\n\x1a\n"
 
 
-def clean_alpha(data):
-    """Hunyuan3D takes every pixel that isn't fully transparent as part of the subject, and an image model's cut-out
-    leaves faint noise (alpha 1-2) over the whole background, so the model came out as a flat card. Make every nearly
-    see-through pixel (alpha < 32) fully transparent white. Only 8-bit RGBA PNGs (what Qwen-Image returns) change;
-    the result is written uncompressed (stored deflate blocks), byte for byte the same as the Rust server's."""
+def prep_for_3d(data):
+    """The picture a 3D model gets. The models take every pixel that isn't fully transparent as part of the subject, and
+    a cut-out (the studio's own or one made elsewhere) leaves faint noise over the background, so the model came out as
+    a flat card or with a big floor (reported on the Tiiny Discord). So: every nearly see-through pixel (alpha < 32)
+    becomes fully transparent white, and when the picture has see-through parts the subject is cropped and centred on a
+    square so it fills about 95% of it. Only 8-bit RGBA PNGs change (an opaque one isn't touched); the result is written
+    uncompressed (stored deflate blocks), byte for byte the same as the Rust server's."""
     if data[:8] != PNG_SIG or data[12:16] != b"IHDR":
         return data
     w, h, depth, ctype, _, _, interlace = struct.unpack(">IIBBBBB", data[16:29])
@@ -1060,9 +1062,15 @@ def clean_alpha(data):
                 line[i] = (line[i] + (a if pa <= pb and pa <= pc else b if pb <= pc else c)) & 255
         px += line
         prev = line
+    clear = False
     for i in range(0, len(px), 4):
         if px[i + 3] < 32:
             px[i:i + 4] = b"\xff\xff\xff\x00"
+            clear = True
+    if not clear:
+        return data  # opaque: nothing to clean or crop
+    w, h, px = centre_subject(w, h, px)
+    stride = w * 4
     rows = b"".join(b"\x00" + bytes(px[y * stride:(y + 1) * stride]) for y in range(h))
     z = bytearray(b"\x78\x01")
     for i in range(0, len(rows), 65535):
@@ -1073,6 +1081,28 @@ def clean_alpha(data):
     def chunk(kind, body):
         return struct.pack(">I", len(body)) + kind + body + struct.pack(">I", zlib.crc32(kind + body))
     return PNG_SIG + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 6, 0, 0, 0)) + chunk(b"IDAT", bytes(z)) + chunk(b"IEND", b"")
+
+
+def centre_subject(w, h, px):
+    """Crop RGBA pixels to the subject (alpha >= 32) and centre it on a square transparent canvas it fills to ~95%."""
+    x0, y0, x1, y1 = w, h, -1, -1
+    for y in range(h):
+        row = px[y * w * 4:(y + 1) * w * 4]
+        solid = [x for x in range(w) if row[x * 4 + 3] >= 32]
+        if solid:
+            x0, x1 = min(x0, solid[0]), max(x1, solid[-1])
+            y0, y1 = min(y0, y), y
+    if x1 < 0:
+        return w, h, px  # nothing solid at all
+    bw, bh = x1 - x0 + 1, y1 - y0 + 1
+    side = -(-max(bw, bh) * 100 // 95)
+    ox, oy = (side - bw) // 2, (side - bh) // 2
+    out = bytearray(b"\xff\xff\xff\x00" * (side * side))
+    for y in range(bh):
+        src = ((y0 + y) * w + x0) * 4
+        dst = ((oy + y) * side + ox) * 4
+        out[dst:dst + bw * 4] = px[src:src + bw * 4]
+    return side, side, out
 
 
 def cut_out(m, job, req):
@@ -1097,7 +1127,7 @@ def cut_out(m, job, req):
     for name in entry["sources"]:
         shred(m.dir / name)  # its copy of the source: the 3D entry keeps its own
     name = entry["outputs"][0]
-    data = clean_alpha((m.dir / name).read_bytes())
+    data = prep_for_3d((m.dir / name).read_bytes())
     (m.dir / name).write_bytes(data)  # the gallery shows the picture the model was built from
     return data, name
 
@@ -1106,7 +1136,7 @@ def run_mesh(m, job, req):
     """Image to 3D (Hunyuan3D, TRELLIS.2): [cut-out] -> [background] -> shape -> [simplify] -> [texture -> export],
     chaining artifacts. The stages, their inputs and their params come from the model's own /v1/3d/capabilities."""
     _, original = m.decode_uri(req.get("image"))
-    image, cut = original, None
+    image, cut = prep_for_3d(original), None  # an already-transparent picture gets the same clean-up
     if req.get("cutout"):  # the page leaves it off for a picture that's already transparent
         image, cut = cut_out(m, job, req)
     m.ensure_running(job["model"])

@@ -88,11 +88,13 @@ fn str_of<'a>(v: &'a Value, k: &str) -> Option<&'a str> {
 const CUTOUT_PROMPT: &str = "Extract the main subject from this photo onto a transparent background. Keep the subject exactly the same: \
 shape, colours, details. Remove everything else. The image has an alpha channel and a transparent background.";
 
-/// Hunyuan3D takes every pixel that isn't fully transparent as part of the subject, and an image model's cut-out leaves
-/// faint noise (alpha 1-2) over the whole background, so the model came out as a flat card. Make every nearly see-through
-/// pixel (alpha < 32) fully transparent white. Only 8-bit RGBA PNGs (what Qwen-Image returns) change; the result is
-/// written uncompressed (stored deflate blocks), byte for byte the same as media.py clean_alpha.
-pub fn clean_alpha(data: &[u8]) -> Vec<u8> {
+/// The picture a 3D model gets. The models take every pixel that isn't fully transparent as part of the subject, and a
+/// cut-out (the studio's own or one made elsewhere) leaves faint noise over the background, so the model came out as a
+/// flat card or with a big floor (reported on the Tiiny Discord). So: every nearly see-through pixel
+/// (alpha < 32) becomes fully transparent white, and when the picture has see-through parts the subject is cropped and
+/// centred on a square so it fills about 95% of it. Only 8-bit RGBA PNGs change (an opaque one isn't touched); the
+/// result is written uncompressed (stored deflate blocks), byte for byte the same as media.py prep_for_3d.
+pub fn prep_for_3d(data: &[u8]) -> Vec<u8> {
     let Ok(mut reader) = png::Decoder::new(data).read_info() else {
         return data.to_vec();
     };
@@ -108,11 +110,17 @@ pub fn clean_alpha(data: &[u8]) -> Vec<u8> {
     if reader.next_frame(&mut px).is_err() {
         return data.to_vec();
     }
+    let mut clear = false;
     for p in px.as_chunks_mut::<4>().0 {
         if p[3] < 32 {
             *p = [255, 255, 255, 0];
+            clear = true;
         }
     }
+    if !clear {
+        return data.to_vec(); // opaque: nothing to clean or crop
+    }
+    let (w, h, px) = centre_subject(w, h, &px);
     let stride = w as usize * 4;
     let mut rows = Vec::with_capacity(px.len() + h as usize);
     for line in px.chunks_exact(stride) {
@@ -152,6 +160,32 @@ pub fn clean_alpha(data: &[u8]) -> Vec<u8> {
     out
 }
 
+/// Crop RGBA pixels to the subject (alpha >= 32) and centre it on a square transparent canvas it fills to ~95%.
+fn centre_subject(w: u32, h: u32, px: &[u8]) -> (u32, u32, Vec<u8>) {
+    let (w, h) = (w as usize, h as usize);
+    let (mut x0, mut y0, mut x1, mut y1) = (w, h, 0, 0);
+    for y in 0..h {
+        for x in 0..w {
+            if px[(y * w + x) * 4 + 3] >= 32 {
+                (x0, y0, x1, y1) = (x0.min(x), y0.min(y), x1.max(x), y1.max(y));
+            }
+        }
+    }
+    if x0 > x1 {
+        return (w as u32, h as u32, px.to_vec()); // nothing solid at all
+    }
+    let (bw, bh) = (x1 - x0 + 1, y1 - y0 + 1);
+    let side = (bw.max(bh) * 100).div_ceil(95);
+    let (ox, oy) = ((side - bw) / 2, (side - bh) / 2);
+    let mut out = [255u8, 255, 255, 0].repeat(side * side);
+    for y in 0..bh {
+        let from = ((y0 + y) * w + x0) * 4;
+        let to = ((oy + y) * side + ox) * 4;
+        out[to..to + bw * 4].copy_from_slice(&px[from..from + bw * 4]);
+    }
+    (side as u32, side as u32, out)
+}
+
 /// The subject of req["image"] on a transparent background, by req["cutout_model"]: (png bytes, saved file name).
 /// Swaps the image model in when the 3D switch allows (and puts things back), else it has to be loaded.
 async fn cut_out(ctx: &Ctx) -> Result<(Vec<u8>, String), JobError> {
@@ -189,7 +223,7 @@ async fn cut_out(ctx: &Ctx) -> Result<(Vec<u8>, String), JobError> {
         .and_then(Value::as_str)
         .unwrap_or("")
         .to_string();
-    let bytes = clean_alpha(&std::fs::read(dir.join(&name)).map_err(|e| JobError(e.to_string()))?);
+    let bytes = prep_for_3d(&std::fs::read(dir.join(&name)).map_err(|e| JobError(e.to_string()))?);
     let _ = std::fs::write(dir.join(&name), &bytes); // the gallery shows the picture the model was built from
     Ok((bytes, name))
 }
@@ -202,7 +236,7 @@ pub async fn run(ctx: Ctx) -> JobResult {
         let (bytes, name) = cut_out(&ctx).await?;
         (bytes, Some(name))
     } else {
-        (original.clone(), None)
+        (prep_for_3d(&original), None) // an already-transparent picture gets the same clean-up
     };
     let model = ctx.model.clone();
     ensure_running(&ctx, &model).await?;
@@ -564,4 +598,54 @@ pub async fn run(ctx: Ctx) -> JobResult {
     Ok(
         json!({"kind": "mesh", "params": params, "sources": sources, "outputs": [out], "stages": stage_log}),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::prep_for_3d;
+
+    fn png(w: u32, h: u32, px: &[u8]) -> Vec<u8> {
+        let mut out = vec![];
+        let mut enc = png::Encoder::new(&mut out, w, h);
+        enc.set_color(png::ColorType::Rgba);
+        enc.set_depth(png::BitDepth::Eight);
+        enc.write_header().unwrap().write_image_data(px).unwrap();
+        out
+    }
+
+    fn pixels(data: &[u8]) -> (u32, u32, Vec<u8>) {
+        let mut r = png::Decoder::new(data).read_info().unwrap();
+        let mut px = vec![0; r.output_buffer_size()];
+        r.next_frame(&mut px).unwrap();
+        (r.info().width, r.info().height, px)
+    }
+
+    #[test]
+    fn cleans_faint_pixels_and_centres_the_subject() {
+        // 40x20, transparent, a 10x5 solid block at (2,3), faint noise in a corner
+        let (w, h) = (40u32, 20u32);
+        let mut px = [0u8, 0, 0, 0].repeat((w * h) as usize);
+        for y in 3..8 {
+            for x in 2..12 {
+                px[((y * w + x) * 4) as usize..][..4].copy_from_slice(&[200, 100, 50, 255]);
+            }
+        }
+        px[((19 * w + 39) * 4 + 3) as usize] = 9; // the kind of noise that became a floor
+        let (sw, sh, out) = pixels(&prep_for_3d(&png(w, h, &px)));
+        assert_eq!((sw, sh), (11, 11)); // ceil(10 / 0.95): square, the subject ~95% of it
+        let solid: Vec<(u32, u32)> = (0..sh)
+            .flat_map(|y| (0..sw).map(move |x| (x, y)))
+            .filter(|(x, y)| out[((y * sw + x) * 4 + 3) as usize] >= 32)
+            .collect();
+        assert_eq!(solid.len(), 50); // the block, nothing else (the noise is gone)
+        assert_eq!(solid[0], (0, 3)); // centred: (11-10)/2 = 0, (11-5)/2 = 3
+        assert!(out.chunks(4).all(|p| p[3] >= 32 || p == [255, 255, 255, 0]));
+    }
+
+    #[test]
+    fn leaves_opaque_and_other_pictures_alone() {
+        let opaque = png(3, 2, &[9u8, 9, 9, 255].repeat(6));
+        assert_eq!(prep_for_3d(&opaque), opaque);
+        assert_eq!(prep_for_3d(b"not a png"), b"not a png");
+    }
 }

@@ -292,10 +292,13 @@ class Audio(Jobs):
         sent = next(c[3] for c in self.calls() if c[1] == "/v1/images/generations")
         self.assertIn("transparent background", sent["prompt"])
         self.assertEqual(sent["size"], "512x512")
-        # the background noise became fully transparent white; the subject and its soft edge stayed
+        # the background noise became fully transparent white; the subject and its soft edge stayed, cropped and
+        # centred on a square (1x2 subject -> 3x3, column 1)
         cut = request(self.h.py_url, "GET", "/images/" + py["entry"]["sources"][1]).body
-        self.assertEqual(png_pixels(cut), [255, 255, 255, 0, 200, 30, 30, 255, 255, 255, 255, 0,
-                                           255, 255, 255, 0, 200, 30, 30, 128, 255, 255, 255, 0])
+        clear = [255, 255, 255, 0]
+        self.assertEqual(png_pixels(cut), [*clear, 200, 30, 30, 255, *clear,
+                                           *clear, 200, 30, 30, 128, *clear,
+                                           *clear, *clear, *clear])
 
     def test_mesh_cut_out_refused(self):
         py, _ = self.same_job(self.mesh())  # not asked for: no cut-out
