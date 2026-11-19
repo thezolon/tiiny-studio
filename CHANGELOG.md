@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.6.2 (2026-11-19)
+
+Improve prompt works with Qwen-Image's prompt enhancer (and uses it), and long recordings transcribe again.
+
+- **Improve prompt with Qwen-Image-2.1-PE-T2I:** it failed after ~10 s with "The model returned nothing". The prompt
+  enhancer says it doesn't "think", yet it did, until its whole answer was used up. Helpers now tell every model not
+  to think. And when the prompt enhancer is loaded, Improve prompt uses it: it's made for exactly that job (reported
+  on the Tiiny Discord).
+- **Long transcriptions:** anything longer than about a minute and a half failed ("Transcription failed: received 1000
+  (OK)…"), because the Tiiny's speech-to-text can't take it in one go. Long recordings now go in parts of about a
+  minute, cut at quiet moments, and the text is joined.
+
 ## 0.6.1 (2026-11-19)
 
 Two fixes from your reports: the Mac app reaches the Tiiny again, and 3D models from transparent pictures lose their
