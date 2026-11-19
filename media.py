@@ -1395,7 +1395,7 @@ def assist_call(m, job, task, user):
     mode = thinking_mode(job["model"], thinking_of(m, job["model"]))
     if mode == "always":  # reasons anyway: give it room to think
         body.update(reasoning_effort="low", max_tokens=body["max_tokens"] + 1500)
-    elif mode == "switch":
+    else:  # "switch", and "none" too: Qwen-Image-2.1-PE-T2I says it can't think, yet reasons unless told not to
         body["chat_template_kwargs"] = {"enable_thinking": False}
     job["message"] = {"prompt": "Rewriting the prompt", "edit": "Rewriting the instruction", "describe": "Looking at the image",
                       "lyrics": "Writing lyrics", "tags": "Picking tags"}[task]
@@ -1407,7 +1407,8 @@ def assist_call(m, job, task, user):
     if task == "tags":
         out = re.sub(r"\s*\n\s*", ", ", out).strip(", ")
     if not out:
-        raise JobError("The model returned nothing. Try again.")
+        thought = ((res["choices"][0].get("message") or {}).get("reasoning_content") or "").strip()
+        raise JobError("The model used its whole answer for thinking and said nothing. Try again, or pick another text model for helpers in Settings → Model swapping." if thought else "The model returned nothing. Try again.")
     return {"kind": "assist", "params": {"model": job["model"], "task": task}, "sources": [], "outputs": [], "text": out,
             "usage": res.get("usage")}
 

@@ -145,6 +145,8 @@ CATALOG = [
     model(CHAT_MODEL, "Qwen3 4B", "Text Generation", 30, ["Tool Use"], thinking=SWITCH),
     model("Fake/Always-Thinks", "Always Thinks", "Text Generation", 25, ["Reasoning", "Tool Use"], thinking=ALWAYS),
     model("Fake/No-Thinking", "No Thinking", "Text Generation", 20, ["Tool Use"]),
+    # like Qwen-Image-2.1-PE-T2I (TiinyOS 1.0.3): reports it can't think, yet reasons until max_tokens unless enable_thinking=false
+    model("Fake/Quiet-Thinker", "Quiet Thinker", "Text Generation", 20, []),
     model("Qwen/Qwen-Image-2.1", "Qwen Image", "Text-to-Image", 60, ["Image Editing"], "text", "image"),
     model("Qwen/Qwen3-TTS-Base", "Qwen3 TTS", "Text-to-Speech", 15, [], "text", "audio"),
     model("Fake/CustomVoice", "CustomVoice", "Text-to-Speech", 7, [], "text", "audio"),
@@ -497,9 +499,11 @@ class Handler(BaseHTTPRequestHandler):
         text = last_user_text(b)
         tools = b.get("tools") or []
         if not b.get("stream"):
-            msg = {"role": "assistant", "content": "Fake reply."}
+            msg, finish = {"role": "assistant", "content": "Fake reply."}, "stop"
+            if b.get("model") == "Fake/Quiet-Thinker" and (b.get("chat_template_kwargs") or {}).get("enable_thinking", True) is not False:
+                msg, finish = {"role": "assistant", "content": "", "reasoning_content": "First I consider the subject..."}, "length"
             return self.send_json(200, {"id": "chatcmpl-fake", "object": "chat.completion", "created": int(time.time()), "model": b.get("model"),
-                                        "choices": [{"index": 0, "message": msg, "finish_reason": "stop"}],
+                                        "choices": [{"index": 0, "message": msg, "finish_reason": finish}],
                                         "usage": {"prompt_tokens": 5, "completion_tokens": 3, "total_tokens": 8}})
         chunks = []
         if (b.get("chat_template_kwargs") or {}).get("enable_thinking", True) is not False and b.get("reasoning_effort") != "none":
