@@ -676,6 +676,45 @@ def to_asr_wav(audio):
     return buf.getvalue()
 
 
+def asr_parts(wav):
+    """The Tiiny's speech-to-text fails on long audio (Parakeet: 90 s works, 120 s doesn't; TiinyOS 1.0.3). Split a
+    16 kHz mono 16-bit WAV longer than 80 s into ~60 s parts, each cut at the quietest 0.1 s between its 50th and 60th
+    second; anything else comes back as one part. Cuts in the same places as the Rust server's asr_parts."""
+    import io, wave
+    rate = 16000
+    one, piece, look, win = 80 * rate, 60 * rate, 10 * rate, rate // 10
+    try:
+        w = wave.open(io.BytesIO(wav))
+        ok = w.getnchannels() == 1 and w.getsampwidth() == 2 and w.getframerate() == rate
+        frames = w.readframes(w.getnframes()) if ok else b""
+    except (wave.Error, EOFError):
+        return [wav]
+    if not ok or len(frames) // 2 <= one:
+        return [wav]
+    s = struct.unpack(f"<{len(frames) // 2}h", frames[:len(frames) // 2 * 2])
+    n, start, parts = len(s), 0, []
+    while n - start > one:
+        lo, best = start + piece - look, None
+        for at in range(lo, start + piece - win + 1, win):
+            e = sum(abs(v) for v in s[at:at + win])
+            if best is None or e < best[0]:
+                best = (e, at)
+        cut = best[1] + win // 2
+        parts.append(s[start:cut])
+        start = cut
+    parts.append(s[start:])
+    out = []
+    for p in parts:
+        buf = io.BytesIO()
+        with wave.open(buf, "wb") as o:
+            o.setnchannels(1)
+            o.setsampwidth(2)
+            o.setframerate(rate)
+            o.writeframes(struct.pack(f"<{len(p)}h", *p))
+        out.append(buf.getvalue())
+    return out
+
+
 def run_transcribe(m, job, req):
     ctype, audio = m.decode_uri(req.get("audio"))
     asr_audio = to_asr_wav(audio) if "wav" in ctype else None
@@ -684,14 +723,22 @@ def run_transcribe(m, job, req):
     fields = {"model": job["model"], "response_format": "json"}
     if (req.get("language") or "").strip():
         fields["language"] = req["language"].strip()
-    body, mp = m.multipart(fields, {"file": ("audio.wav", asr_audio, "audio/wav") if asr_audio else (f"audio.{ext}", audio, ctype)})
-    job["message"] = "Transcribing"
-    code, res = m.http("POST", f"{m.settings.url}/v1/audio/transcriptions", body, mp, headers={"Authorization": f"Bearer {m.settings.key}"})
-    if code != 200 or "text" not in res:
-        raise JobError(m.err(res))
+    # long recordings go in parts: the Tiiny's speech-to-text fails past ~90 s
+    parts = [("audio.wav", p, "audio/wav") for p in asr_parts(asr_audio)] if asr_audio else [(f"audio.{ext}", audio, ctype)]
+    texts = []
+    for i, part in enumerate(parts):
+        job["message"] = f"Transcribing, part {i + 1} of {len(parts)}" if len(parts) > 1 else "Transcribing"
+        job["progress"] = i * 100 // len(parts)
+        body, mp = m.multipart(fields, {"file": part})
+        code, res = m.http("POST", f"{m.settings.url}/v1/audio/transcriptions", body, mp, headers={"Authorization": f"Bearer {m.settings.key}"})
+        if code != 200 or "text" not in res:
+            raise JobError(m.err(res))
+        texts.append((res["text"] or "").strip())
+        if job["cancel"]:
+            raise JobError("Cancelled")
     src = None if req.get("ephemeral") else m.save(f"{job['id']}-audio.{ext}", audio)
     return {"kind": "transcript", "params": {"model": job["model"], "language": fields.get("language"), "name": req.get("name")},
-            "sources": [src] if src else [], "outputs": [], "text": res["text"]}
+            "sources": [src] if src else [], "outputs": [], "text": " ".join(t for t in texts if t)}
 
 
 # ---------- thinking: what a chat model does, from its own /v1/models "thinking" object (TiinyOS 0.1.36+) ----------
