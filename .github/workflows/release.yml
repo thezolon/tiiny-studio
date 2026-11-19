@@ -102,6 +102,15 @@ jobs:
           done
           if find squashfs-root -name "libsoup-2*" | grep -q .; then echo "libsoup 2 is inside: WebKit would abort"; exit 1; fi
           rm -rf squashfs-root
+      - name: The macOS app asks for local network access and is signed (or it can't reach the Tiiny, #113)
+        if: runner.os == 'macOS'
+        shell: bash
+        working-directory: rust/target/release/bundle/macos
+        run: |
+          app=$(ls -d *.app | head -1)
+          /usr/libexec/PlistBuddy -c "Print :NSLocalNetworkUsageDescription" "$app/Contents/Info.plist"
+          codesign --verify --deep --strict "$app"
+          codesign -dv "$app" 2>&1 | tee /dev/stderr | grep -q "Signature=adhoc"
       - name: Collect the installers
         shell: bash
         run: |

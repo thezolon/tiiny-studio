@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Merged into the macOS app's Info.plist by the Tauri bundler. macOS asks before an app talks to devices on the local
+     network, and without this text (and a signature, see tauri.conf.json) the permission never sticks: the studio
+     can't reach the Tiiny (#113). -->
+<plist version="1.0">
+<dict>
+  <key>NSLocalNetworkUsageDescription</key>
+  <string>Tiiny Studio talks to your Tiiny Pocket on your local network.</string>
+</dict>
+</plist>
