@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.6.3 (2026-11-20)
+
+Speak works again with VoxCPM2, MOSS-TTS-Nano, OmniVoice and Qwen3-TTS CustomVoice.
+
+- **Speak:** these voice models failed on ordinary sentences ("The upstream TTS model failed"): they need text that
+  ends with a full stop (or ! ?) followed by a space, and "How are you." on its own didn't qualify. The studio now
+  ends every piece of text that way; models that never had the problem sound exactly the same.
+
 ## 0.6.2 (2026-11-19)
 
 Improve prompt works with Qwen-Image's prompt enhancer (and uses it), and long recordings transcribe again.
