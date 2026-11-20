@@ -547,9 +547,9 @@ def run_speech(m, job, req):
         job["message"] = "Synthesising speech" if len(chunks) == 1 else f"Speaking part {i + 1} of {len(chunks)}"
         job["progress"] = round(i / len(chunks) * 100) if len(chunks) > 1 else 0
         if direct:
-            code, res = m.http("POST", f"{direct[0]}/v1/audio/speech", {**body, "model": direct[1], "input": chunk}, raw=True)
+            code, res = m.http("POST", f"{direct[0]}/v1/audio/speech", {**body, "model": direct[1], "input": tts_text(chunk)}, raw=True)
         else:
-            code, res = m.http("POST", f"{m.settings.url}/v1/audio/speech", {**body, "input": chunk}, headers=m.gateway_headers(), raw=True)
+            code, res = m.http("POST", f"{m.settings.url}/v1/audio/speech", {**body, "input": tts_text(chunk)}, headers=m.gateway_headers(), raw=True)
         if code != 200 or not isinstance(res, bytes) or res[:4] != b"RIFF":
             why = m.err(res if not isinstance(res, bytes) else res.decode("utf-8", "replace"))
             if "upstream TTS model failed" not in why and not direct:
@@ -558,7 +558,7 @@ def run_speech(m, job, req):
             # model's own port under its own name, where the link allows it.
             direct = None if direct else speech_direct(m, job["model"])
             if direct:
-                code, res = m.http("POST", f"{direct[0]}/v1/audio/speech", {**body, "model": direct[1], "input": chunk}, raw=True)
+                code, res = m.http("POST", f"{direct[0]}/v1/audio/speech", {**body, "model": direct[1], "input": tts_text(chunk)}, raw=True)
             if not direct or code != 200 or not isinstance(res, bytes) or res[:4] != b"RIFF":
                 raise JobError(UPSTREAM_FAILED.format(model=job["model"].split("/")[-1]))
         parts.append(res)
@@ -581,6 +581,19 @@ def speech_direct(m, model):
         return None
     own = (info.get("model_config") or {}).get("id") if isinstance(info, dict) else None
     return url, own or model.split("/")[-1]
+
+
+def tts_text(piece):
+    """The text a speech model gets for one piece: ends with sentence punctuation, then a space. MOSS-TTS-Nano, OmniVoice,
+    VoxCPM2 and Qwen3-TTS CustomVoice answer 500 otherwise ("How are you." fails, "How are you. " works). The same as
+    the Rust server's tts_text."""
+    t = piece.rstrip()
+    core = t.rstrip('"\'\u201d\u2019)]\u00bb\u300d\u300f')
+    if core and core[-1] not in ".!?\u2026\u3002\uff01\uff1f":
+        c = core[-1]
+        cjk = "\u3040" <= c <= "\u30ff" or "\u3400" <= c <= "\u9fff" or "\uac00" <= c <= "\ud7af" or "\uf900" <= c <= "\ufaff"
+        t += "\u3002" if cjk else "."
+    return t + " "
 
 
 def split_for_speech(text, limit=320):

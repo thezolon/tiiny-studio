@@ -38,6 +38,35 @@ pub fn strip(s: &str) -> &str {
 }
 
 /// Split text into chunks of whole sentences, each at most ~limit characters.
+/// The text a speech model gets for one piece. MOSS-TTS-Nano, OmniVoice, VoxCPM2 and Qwen3-TTS CustomVoice answer 500
+/// ("The upstream TTS model failed") unless the text ends with sentence punctuation and then a space (TiinyOS 0.1.39 and
+/// 1.0.3; "How are you." fails, "How are you. " works). So: add a full stop if there's none (a Chinese/Japanese one after
+/// CJK text), then a space. Models without the problem sound the same (Kokoro: the same bytes).
+pub fn tts_text(piece: &str) -> String {
+    let t = piece.trim_end();
+    let core = t.trim_end_matches([
+        '"', '\'', '\u{201d}', '\u{2019}', ')', ']', '\u{bb}', '\u{300d}', '\u{300f}',
+    ]);
+    let mut out = t.to_string();
+    match core.chars().last() {
+        None => {}
+        Some('.' | '!' | '?' | '\u{2026}' | '\u{3002}' | '\u{ff01}' | '\u{ff1f}') => {}
+        Some(c) => out.push(
+            if ('\u{3040}'..='\u{30ff}').contains(&c)
+                || ('\u{3400}'..='\u{9fff}').contains(&c)
+                || ('\u{ac00}'..='\u{d7af}').contains(&c)
+                || ('\u{f900}'..='\u{faff}').contains(&c)
+            {
+                '\u{3002}'
+            } else {
+                '.'
+            },
+        ),
+    }
+    out.push(' ');
+    out
+}
+
 pub fn split_for_speech(text: &str, limit: usize) -> Vec<String> {
     let text_s = strip(text);
     let c: Vec<char> = text_s.chars().collect();
@@ -397,6 +426,23 @@ pub fn to_asr_wav(audio: &[u8]) -> Result<Option<Vec<u8>>, WavError> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn speech_pieces_end_with_punctuation_and_a_space() {
+        for (given, sent) in [
+            ("How are you.", "How are you. "),
+            ("No full stop here", "No full stop here. "),
+            ("Is this it?", "Is this it? "),
+            (
+                "\u{4f60}\u{597d}\u{4e16}\u{754c}",
+                "\u{4f60}\u{597d}\u{4e16}\u{754c}\u{3002} ",
+            ),
+            ("He said \"hi\"", "He said \"hi\". "),
+            ("Wow!  ", "Wow! "),
+        ] {
+            assert_eq!(super::tts_text(given), sent, "{given:?}");
+        }
+    }
+
     #[test]
     fn long_asr_audio_is_cut_at_quiet_points() {
         let rate = 16000usize;

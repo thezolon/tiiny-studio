@@ -5,7 +5,7 @@
 use base64::Engine;
 use serde_json::{json, Map, Value};
 
-use super::audio::{join_wavs, split_for_speech, strip, wav_seconds};
+use super::audio::{join_wavs, split_for_speech, strip, tts_text, wav_seconds};
 use super::{
     decode_uri, ensure_running, err, http, http_bytes, instance_url, json_body, py_round, save,
 };
@@ -92,7 +92,7 @@ pub async fn run(ctx: Ctx) -> JobResult {
             0
         };
         ctx.update(json!({"message": message, "progress": progress}));
-        body.insert("input".into(), json!(chunk));
+        body.insert("input".into(), json!(tts_text(chunk)));
         let (code, res) = match &direct {
             Some((ct, name)) => {
                 http_bytes(
