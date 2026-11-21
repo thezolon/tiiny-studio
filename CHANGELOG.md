@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.6.4 (2026-11-21)
+
+The picture stays in the middle of the window, however many results the gallery holds.
+
+- **Picture sliding off to the right:** once the gallery strip held lots of results, the stage stretched to the
+  strip's full width, so the picture (and its Save and Edit buttons) drifted right with every new result. The strip
+  now scrolls and the stage keeps the window's width, in every tab (reported on the Tiiny Discord).
+
 ## 0.6.3 (2026-11-20)
 
 Speak works again with VoxCPM2, MOSS-TTS-Nano, OmniVoice and Qwen3-TTS CustomVoice.
