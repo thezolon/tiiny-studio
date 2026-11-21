@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.6.5 (2026-11-21)
+
+The studio fits big-scaling screens (a TV at 200%), and you can read the model's thinking while it works.
+
+- **Settings at high display scaling:** on a TV at 200%, Settings ran off the bottom of the screen and OK couldn't be
+  reached, so nothing could be saved (#124, reported on GitHub). Every dialog now fits the window and scrolls.
+- **The top bar on narrow or scaled screens:** it pushed Models and the settings button off the right edge and cut off
+  the right side of the studio (Save went missing). It now wraps onto a second row. The Audio intro scrolls instead of
+  disappearing under the gallery.
+- **Chat thinking:** while a model thinks, its thinking box no longer jumps back to the top on every update: it stays
+  where you scrolled it and follows the newest thinking while you're at its end. If you open it to read, it stays open
+  when the answer arrives.
+- **Layout checks:** every change is now tested at four window sizes (a TV at 200%, a small window, a wide and short
+  one, a laptop), so size bugs that were fixed stay fixed.
+
 ## 0.6.4 (2026-11-21)
 
 The picture stays in the middle of the window, however many results the gallery holds.
