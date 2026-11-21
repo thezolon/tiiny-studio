@@ -163,7 +163,7 @@ textarea.lyrics:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(-
 .set-status.ok { color: var(--ok); }
 .set-status.bad { color: var(--err); }
 .set-actions { margin-top: 16px; }
-#settingsModal .modal-card { max-height: none; }
+.modal-card > .set-body { overflow-y: auto; min-height: 0; }  /* Settings, update notes: the body scrolls, head and foot stay (#124) */
 .set-help { margin-top: 16px; padding: 10px 12px; border-radius: 10px; background: var(--panel-2); border: 1px solid var(--line); font-size: 12.5px; color: var(--muted); }
 .set-help summary { cursor: pointer; color: var(--text); font-weight: 600; }
 .set-help ol { margin: 10px 0 6px; padding-left: 18px; line-height: 1.55; }
@@ -395,9 +395,9 @@ button { cursor: pointer; }
 ::placeholder { color: var(--faint); opacity: 1; }  /* the browser default fails contrast on the light theme */
 
 /* ---------- shell ---------- */
-.app { display: grid; grid-template-rows: auto 1fr; height: 100vh; }
+.app { display: grid; grid-template-rows: auto 1fr; grid-template-columns: minmax(0, 1fr); height: 100vh; }  /* minmax(0,…): a wide header can't widen the app */
 .topbar {
-  display: flex; align-items: center; gap: 14px; padding: 12px 20px;
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; padding: 12px 20px;  /* wraps when it doesn't fit (a TV at 200%) */
   border-bottom: 1px solid var(--line); background: var(--panel);
 }
 .brand { display: flex; align-items: center; gap: 10px; font-weight: 650; letter-spacing: -.01em; font-size: 15px; }
@@ -624,7 +624,7 @@ details.adv summary .sum { margin-left: auto; color: var(--faint); font-weight: 
 .tb svg { width: 15px; height: 15px; }
 .tb.danger:hover { color: var(--err); border-color: var(--err-line); }
 
-.stage { position: relative; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr); justify-items: center; align-items: center; padding: 8px 24px 16px; overflow: clip; }
+.stage { position: relative; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr); justify-items: center; align-items: center; align-items: safe center; padding: 8px 24px 16px; overflow: hidden auto; }  /* too tall for a short window (a TV at 200%): it scrolls, and safe centring keeps its top reachable */
 .canvas {
   position: relative; max-width: 100%; max-height: 100%; border-radius: var(--radius); overflow: hidden;
   box-shadow: var(--shadow); background: var(--checker);
@@ -829,7 +829,7 @@ span.pick-use { opacity: .85; }
 /* annotate modal */
 .modal { position: fixed; inset: 0; z-index: 45; display: none; place-items: center; background: rgba(0,0,0,.6); backdrop-filter: blur(4px); padding: 16px; }
 .modal.show { display: grid; }
-.modal-card { width: min(920px, 100%); max-height: 100%; display: flex; flex-direction: column; background: var(--panel); border: 1px solid var(--line-2); border-radius: 18px; box-shadow: var(--shadow); overflow: hidden; }
+.modal-card { width: min(920px, 100%); max-height: calc(100dvh - 32px); display: flex; flex-direction: column; background: var(--panel); border: 1px solid var(--line-2); border-radius: 18px; box-shadow: var(--shadow); overflow: hidden; }
 .modal-head { display: flex; align-items: center; gap: 10px; padding: 14px 18px; border-bottom: 1px solid var(--line); }
 .modal-head h3 { margin: 0; font-size: 15px; }
 .modal-head .hint { color: var(--faint); font-size: 12.5px; }
