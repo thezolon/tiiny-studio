@@ -17,7 +17,7 @@ with time: "download_rate" N (% per second, 50 by default), "download_hold" (sta
 status "error" at 30%, like a Tiiny without internet), "offline" (downloads fail at once and every need_update reads false,
 as on the real device), "updates" [ids] (these read need_update until downloaded again). As on 0.1.39 (probed 2026-11-21):
 pause_download leaves status "download_stop", download again resumes from there, interrupt only stops chats. DELETE of a
-paused download drops it (a guess: not yet seen on the device).
+paused download drops it, row and all (also tested on 0.1.39).
 GET /__release (no auth) stands in for GitHub's releases/latest: it answers the "release" flag (a release JSON; 404 when unset), or
 "release_fail" N (that status instead), and logs each call: GET /__release_hits (User-Agent and Accept of every call).
 POST /__seed {"videos": [{"id", "status", "age", "seconds"}], "sessions": [{"session_id", "model_id", "route", "status", "age"}]} plants results the studio never
