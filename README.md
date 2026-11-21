@@ -8,6 +8,9 @@ Nothing leaves your network.
 
 Showcase and discussion: [Tiiny Studio on TiinyVerse](https://tiinyverse.com/posts/5abfe45c-3cf0-4f53-88ab-b397741702c3) · [Tiiny Discord](https://discord.com/invite/R5CHUuXy4A) (#project-showcase → Tiiny Studio).
 
+<p align="center"><img src="docs/screenshots/chat.webp" width="640" alt="Chat: asked in plain words for a samoyed astronaut, the chat model made two pictures on the Tiiny and showed them in the reply"></p>
+<p align="center"><b>Chat</b>: ask in plain words; it makes the pictures on the Tiiny (swapping models if it needs the room) and shows them in the reply</p>
+
 | | |
 |---|---|
 | ![Image: an edit made on the Tiiny, with the toolbar to edit, vary, compare or make it 3D](docs/screenshots/image.webp) | ![3D: the finished textured model in the viewer](docs/screenshots/3d-model.webp) |
