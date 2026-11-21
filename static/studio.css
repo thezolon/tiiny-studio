@@ -305,6 +305,7 @@ textarea.lyrics:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(-
 .msg.bot { align-self: stretch; line-height: 1.6; }
 .msg-md { overflow-wrap: anywhere; }
 .msg-md p { margin: 0 0 10px; } .msg-md p:last-child { margin-bottom: 0; }
+.md-done, .md-tail { display: contents; } .md-done > p:last-child { margin-bottom: 10px; }  /* a streaming reply: finished blocks, then the part still arriving */
 .msg-md h3, .msg-md h4, .msg-md h5, .msg-md h6 { margin: 14px 0 6px; }
 .msg-md pre { background: var(--panel-2); border: 1px solid var(--line); border-radius: 9px; padding: 10px 12px; overflow-x: auto; font-size: 12.5px; }
 .msg-md code { font: 12.5px ui-monospace, Menlo, monospace; background: var(--panel-2); padding: 1px 5px; border-radius: 5px; }
