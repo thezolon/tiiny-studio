@@ -1354,8 +1354,17 @@ mod tests {
                 .unwrap()
                 .contains("not one of this agent's jobs"));
         }
-        // the other job was not touched
-        tokio::time::sleep(Duration::from_millis(200)).await;
+        // the other job was not touched: it runs to the end (wait for it: slow runners took over 200 ms)
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while st.jobs.get(&theirs).unwrap()["status"] == "running"
+            || st.jobs.get(&theirs).unwrap()["status"] == "queued"
+        {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the other job never finished"
+            );
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
         assert_eq!(st.jobs.get(&theirs).unwrap()["status"], "done");
         let (_, res) = rpc(
             &st,
