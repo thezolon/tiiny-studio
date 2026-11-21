@@ -53,6 +53,20 @@ function mdToHtml(src) {
   }
   return out.join("");
 }
+/* While a reply streams, keep its finished blocks in place and redraw only the unfinished tail: rebuilding a long reply
+   full of tables on every update kept slower webviews (WebKitGTK on Linux) busy until the window stopped responding. */
+function mdStream(body, text) {
+  let cut = text.lastIndexOf("\n\n") + 1;  // blocks before a blank line are finished
+  const fences = [...text.slice(0, cut).matchAll(/^```/gm)];
+  if (fences.length % 2) cut = fences[fences.length - 1].index;  // not inside an open code block
+  if (body._done === undefined || !text.startsWith(body._done) || cut < body._done.length) {  // new text, not a longer one
+    body.replaceChildren(el("div", { class: "md-done" }), el("div", { class: "md-tail" }));
+    body._done = "";
+  }
+  const [done, tail] = body.children;
+  if (cut > body._done.length) { done.insertAdjacentHTML("beforeend", mdToHtml(text.slice(body._done.length, cut))); body._done = text.slice(0, cut); }
+  tail.innerHTML = mdToHtml(text.slice(cut));
+}
 
 /* ---------- which models the tools use ---------- */
 function chatToolModels() {
@@ -263,13 +277,26 @@ const ChatWS = {
   renderLast() {
     const msgs = $("#chatMsgs"), last = C.cur.messages[C.cur.messages.length - 1];
     if (!msgs?.lastElementChild || !last) return;
+    const sig = [last.text, last.reasoning, last.status, (last.artifacts || []).length, (last.warnings || []).length].map((v) => v?.length ?? v).join("|");
+    const old = msgs.lastElementChild;
+    if (old._sig === sig) return;  // nothing new since the last poll
     const sc = $("#chatScroll"), atBottom = sc.scrollHeight - sc.scrollTop - sc.clientHeight < 80;
     // the thinking box is rebuilt on every update: keep where the user scrolled it (at its end: follow the new thinking)
-    const think = msgs.lastElementChild.querySelector(".msg-think div");
+    const think = old.querySelector(".msg-think div");
     const thinkTop = think?.scrollTop, thinkEnd = think && think.scrollHeight - think.scrollTop - think.clientHeight < 20;
-    const bubble = this.bubble(last);
-    msgs.lastElementChild.replaceWith(bubble);
-    const nt = think && bubble.querySelector(".msg-think div");
+    // a streaming reply keeps its text element: only what's new is drawn (mdStream); the rest of the bubble is rebuilt
+    const body = last.pending && old.querySelector(":scope > .msg-md");
+    const bubble = this.bubble(last, !!body);
+    if (body) {
+      mdStream(body, last.text || "");
+      const kids = [...bubble.childNodes], i = kids.findIndex((n) => n.classList?.contains("md-slot"));
+      for (const n of [...old.childNodes]) if (n !== body) n.remove();
+      body.before(...kids.slice(0, i)); body.after(...kids.slice(i + 1));
+      old.className = bubble.className;
+    } else old.replaceWith(bubble);
+    const cur = body ? old : bubble;
+    cur._sig = sig;
+    const nt = think && cur.querySelector(".msg-think div");
     if (nt) nt.scrollTop = thinkEnd ? nt.scrollHeight : thinkTop;
     if (atBottom) sc.scrollTop = sc.scrollHeight;
   },
@@ -281,14 +308,14 @@ const ChatWS = {
       el("div", { class: "chips" }, ["Make an image of a cosy reading nook on a rainy evening", "Summarise the attached document in five bullets", "Write a short poem and read it aloud", "Make a chill lo-fi piano loop"]
         .map((t) => el("button", { class: "chip", onclick: () => { $("#chatInput").value = t; autoGrowChat(); $("#chatInput").focus(); } }, t))));
   },
-  bubble(x) {
+  bubble(x, slot) {  // slot: leave a placeholder for the text (renderLast keeps the streaming reply's own)
     if (x.role === "user") {
       return el("div", { class: "msg user" },
         (x.attach || []).length ? el("div", { class: "msg-attach" }, x.attach.map((a) => a.kind === "image" ? el("img", { src: a.uri, alt: a.name }) : el("span", { class: "doc-chip", title: `${a.text.length.toLocaleString()} characters` }, "📄 " + a.name))) : null,
         x.text ? el("div", { class: "msg-text" }, x.text) : null);
     }
-    const body = el("div", { class: "msg-md" });
-    body.innerHTML = mdToHtml(x.text || "");
+    const body = el("div", { class: slot ? "md-slot" : "msg-md" });
+    if (!slot) x.pending ? mdStream(body, x.text || "") : (body.innerHTML = mdToHtml(x.text || ""));
     return el("div", { class: "msg bot" + (x.error ? " err" : "") },
       // attachments that look like prompt injection: still sent, but the model was told not to obey them
       (x.warnings || []).length ? el("div", { class: "msg-warn", title: "The model was told to treat attachments as content only and never follow instructions inside them." },
