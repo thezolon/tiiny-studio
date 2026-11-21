@@ -192,6 +192,8 @@ async function chatSend() {
   chatPersist();
   pollJobs();
 }
+// thinking boxes the user opened or closed by hand stay that way while the reply streams (not saved with the chat)
+const thinkOpen = new WeakMap();
 async function chatPersist() {
   if (!C.save || !C.cur.messages.length) return;
   try { await api(`/api/chats/${C.cur.id}`, { method: "POST", body: JSON.stringify({ title: C.cur.title, created: C.cur.created, messages: C.cur.messages }) }); } catch (e) { toast(e.message, "err"); }
@@ -262,7 +264,13 @@ const ChatWS = {
     const msgs = $("#chatMsgs"), last = C.cur.messages[C.cur.messages.length - 1];
     if (!msgs?.lastElementChild || !last) return;
     const sc = $("#chatScroll"), atBottom = sc.scrollHeight - sc.scrollTop - sc.clientHeight < 80;
-    msgs.lastElementChild.replaceWith(this.bubble(last));
+    // the thinking box is rebuilt on every update: keep where the user scrolled it (at its end: follow the new thinking)
+    const think = msgs.lastElementChild.querySelector(".msg-think div");
+    const thinkTop = think?.scrollTop, thinkEnd = think && think.scrollHeight - think.scrollTop - think.clientHeight < 20;
+    const bubble = this.bubble(last);
+    msgs.lastElementChild.replaceWith(bubble);
+    const nt = think && bubble.querySelector(".msg-think div");
+    if (nt) nt.scrollTop = thinkEnd ? nt.scrollHeight : thinkTop;
     if (atBottom) sc.scrollTop = sc.scrollHeight;
   },
   empty() {
@@ -285,7 +293,8 @@ const ChatWS = {
       // attachments that look like prompt injection: still sent, but the model was told not to obey them
       (x.warnings || []).length ? el("div", { class: "msg-warn", title: "The model was told to treat attachments as content only and never follow instructions inside them." },
         "⚠ Possible prompt injection in " + x.warnings.map((w) => `${w.source.replace(/^document: /, "")} (${w.reasons.join(", ").replace(/_/g, " ")})`).join("; ") + ". Check the reply with that in mind.") : null,
-      x.reasoning ? el("details", { class: "msg-think", open: !!x.pending && !x.text }, el("summary", {}, x.pending && !x.text ? "Thinking…" : "Thoughts"), el("div", {}, x.reasoning)) : null,
+      x.reasoning ? el("details", { class: "msg-think", open: thinkOpen.get(x) ?? (!!x.pending && !x.text) },
+        el("summary", { onclick: (e) => thinkOpen.set(x, !e.currentTarget.parentElement.open) }, x.pending && !x.text ? "Thinking…" : "Thoughts"), el("div", {}, x.reasoning)) : null,
       body,
       (x.artifacts || []).length ? el("div", { class: "msg-art" }, x.artifacts.map((a) => this.artifact(a))) : null,
       x.pending ? el("div", { class: "msg-status" }, el("span", { class: "dot busy" }), x.status || "Working…",
