@@ -203,7 +203,7 @@ function openSettings(firstRun = false) {
 }
 function refreshSettings() {
   const body = $("#setBody");
-  if (body) keepFocus(body, () => body.replaceChildren(...settingsBody(SET.firstRun && !SET.info?.configured)));
+  if (body) keepFocus(body, () => body.replaceChildren(...settingsBody(SET.firstRun && !SET.info?.configured).filter(Boolean)));  // replaceChildren prints null as "null"
 }
 async function wipeEverything() {
   const n = S.history.length;

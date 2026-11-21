@@ -70,6 +70,8 @@ jobs:
           python -m playwright install --with-deps chromium
       - name: Check every workspace, the drawer and the dialogs (fake Tiiny)
         run: python testdata/a11y_check.py
+      - name: Check layout at small and odd window sizes (every control reachable; fixed size bugs stay fixed)
+        run: python testdata/layout_check.py
 
   lint:
     name: Lint (rustfmt, clippy, ruff)
