@@ -604,7 +604,7 @@ details.adv summary .sum { margin-left: auto; color: var(--faint); font-weight: 
 .foot-meta { display: flex; justify-content: space-between; margin-top: 9px; color: var(--faint); font-size: 12px; }
 
 /* ---------- stage ---------- */
-.stage-col { display: grid; grid-template-rows: auto 1fr auto; min-height: 0; min-width: 0; }
+.stage-col { display: grid; grid-template-rows: auto 1fr auto; grid-template-columns: minmax(0, 1fr); min-height: 0; min-width: 0; }  /* minmax(0,…): a long gallery strip scrolls instead of widening the stage */
 .stage-head { display: flex; align-items: center; gap: 10px; padding: 12px 20px; min-height: 57px; }
 .crumb { color: var(--muted); font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .crumb b { color: var(--text); font-weight: 600; }
