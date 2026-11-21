@@ -44,7 +44,8 @@ Showcase and discussion: [Tiiny Studio on TiinyVerse](https://tiinyverse.com/pos
 - **Audio**: voice cloning from a few seconds of speech (with a saved voice library, and long text
   voiced in parts and joined), built-in voices (Qwen3-CustomVoice, MOSS-TTS-Nano) or a voice you describe
   (Qwen3-VoiceDesign); tempo- and key-locked loops; full songs with lyrics, instrumental, vocals only or
-  separate tracks (SongGeneration, with an 8-second preview you can continue to the full song; AceStep with
+  separate tracks (SongGeneration, with an 8-second preview you can continue to the full song and an optional
+  style reference: 10–30 s of music it borrows the feel from; AceStep with
   tempo, key and language; YuE2) and an MP3 copy; transcription in 30 languages. Each panel shows what the
   loaded model can do.
 - **3D** with Hunyuan3D-2.1 or TRELLIS.2-4B: image → shape → simplify → PBR texture → GLB, with an interactive
@@ -295,8 +296,6 @@ Things on the Tiiny's side (TiinyOS 0.1.35 to 0.1.38) that the studio works arou
   the subject out with Qwen-Image first and doesn't offer the stage.
 - GLM-OCR isn't reachable through the gateway (`/v1/ocr` 404, chat 400), so the studio uses its own port, which
   only works over Wi-Fi/LAN; PP-OCRv6 works on every link.
-- SongGeneration's style reference (`reference_audio_base64`) fails with `xh2a backend fail`, so the
-  control is hidden (`SONG_STYLE_REF` in `static/audio.js`).
 - Video (MiniMax-H3-Turbo, 0.1.38) is slow: about 7 minutes for 2 seconds at 480p with 4 steps, over 15 at 7. Only a
   start picture works; an end picture (`last_image`) is ignored, so the studio doesn't offer one.
 - Supertonic-3 fails through the gateway ("The upstream TTS model failed"); the studio uses its own port instead,

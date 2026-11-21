@@ -35,9 +35,10 @@ const PHRASE = ["chord progression", "melody", "arp", "bassline", "rising", "com
 const KEYS = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"].flatMap((k) => [`${k} major`, `${k} minor`]);
 const SONG_CHIPS = ["pop", "rock", "lofi", "edm", "jazz", "folk", "cinematic", "hip hop", "male vocals", "female vocals", "upbeat", "melancholic", "chill", "energetic", "piano", "acoustic guitar", "synth"];
 const LYRICS_TEMPLATE = "[verse]\nCity lights are fading slow\nI keep walking where the rivers go\n\n[chorus]\nHold on, hold on to the night\nWe're burning like a paper kite\n\n[verse]\nEvery step a little song\nEvery mile I'm getting strong\n\n[chorus]\nHold on, hold on to the night\nWe're burning like a paper kite";
-// SongGeneration's reference-audio conditioning fails on TiinyOS 0.1.35 ("xh2a backend fail" for every
-// clip format), so the style-reference controls stay hidden until firmware fixes it.
-const SONG_STYLE_REF = false;
+// SongGeneration's style reference: 10–30 s of music it borrows the feel from. It failed on TiinyOS 0.1.35–0.1.38
+// ("xh2a backend fail"); works on the current TiinyOS (tested 2026-11-21, requested on the Tiiny Discord). SongGeneration
+// only: AceStep and YuE2 ("plain") don't take one.
+const SONG_STYLE_REF = true;
 // Typed text, lyrics and style stay in this page's memory only — never in browser storage.
 for (const k of ["audio.text", "audio.caption", "audio.lyrics"]) { try { localStorage.removeItem("tiiny." + k); } catch {} }
 const AUDIO_KINDS = new Set(["speech", "loop", "song", "transcript"]);
@@ -310,7 +311,7 @@ const AudioWS = {
         el("div", { class: "slider-row" }, el("input", { type: "range", min: 15, max: sm.maxSeconds, step: 5, value: G.seconds, oninput: (e) => { G.seconds = Number(e.target.value); lenOut.textContent = fmtSec(G.seconds); this.renderFoot(); } }), lenOut),
         viaGateway && G.type === "separate" ? el("div", { class: "hint-line warn" }, "Separate tracks need a Wi-Fi/LAN connection; over this one you'll get the mix only.") : null,
         viaGateway ? el("div", { class: "hint-line" }, "On this connection songs come from the device's gateway: shorter lengths are the opening of a full arrangement and may end mid-phrase; 4:00 or more renders a complete full-length song (takes ~15 min). Over Wi-Fi every length is a complete song.") : null),
-      !SONG_STYLE_REF ? null : el("div", { class: "field" }, el("div", { class: "label" }, "Style reference", el("span", { class: "hint" }, "optional · 10–30 s of a song to borrow the feel from")),
+      !SONG_STYLE_REF || sm.plain ? null : el("div", { class: "field" }, el("div", { class: "label" }, "Style reference", el("span", { class: "hint" }, "optional · 10–30 s of music to borrow the feel from")),
         this.captureRow("song", G.ref), G.ref ? el("button", { class: "btn-sm ghost", style: "margin-top:6px", onclick: () => { G.ref = null; rerender(); } }, "Remove reference") : null),
       el("details", { class: "adv" }, el("summary", {}, icon("i-chev"), "Advanced", el("span", { class: "sum" }, "model defaults")),
         el("div", { class: "adv-body" }, seedField(G),
@@ -414,7 +415,7 @@ const AudioWS = {
   files(files) {
     const f = files.find((x) => /^(audio|video)\//.test(x.type));
     if (!f) return false;
-    const target = A.tool === "transcribe" ? "transcribe" : A.tool === "song" && SONG_STYLE_REF ? "song" : A.tool === "song" ? "transcribe" : "speech";
+    const target = A.tool === "transcribe" ? "transcribe" : A.tool === "song" && SONG_STYLE_REF && !this.songModel().plain ? "song" : A.tool === "song" ? "transcribe" : "speech";
     if (target === "speech") { A.tool = "speech"; A.speech.clip = { pending: true }; }
     this.takeClip(target, f);
     return { speech: "voice sample", transcribe: "audio to transcribe", song: "style reference" }[target];
@@ -448,8 +449,8 @@ const AudioWS = {
       const G = A.song;
       if (!G.caption.trim()) return { ok: false, why: "Describe the style" };
       if (G.type !== "bgm" && !G.lyrics.trim()) return { ok: false, why: "Add lyrics, or switch to Instrumental" };
-      if (G.ref && G.ref.duration < 10) return { ok: false, why: "The style reference must be at least 10 seconds long" };
       const sm = this.songModel();
+      if (G.ref && !sm.plain && G.ref.duration < 10) return { ok: false, why: "The style reference must be at least 10 seconds long" };
       if (G.bpm && !(Number(G.bpm) >= 30 && Number(G.bpm) <= 300)) return { ok: false, why: "Tempo is a number of beats per minute (30–300)" };
       const body = { caption: G.caption.trim(), generation_type: G.type, seconds_total: G.seconds, seed: seed(G) };
       if (G.type !== "bgm") body.lyrics = G.lyrics.trim();
@@ -463,7 +464,7 @@ const AudioWS = {
         Object.keys(ace).forEach((k) => (ace[k] === null || ace[k] === "") && delete ace[k]);
         if (Object.keys(ace).length) body.ace_step = ace;
       }
-      if (SONG_STYLE_REF && G.ref) body.reference_audio = G.ref.uri;
+      if (SONG_STYLE_REF && G.ref && !sm.plain) body.reference_audio = G.ref.uri;
       const est = sm.plain ? 15 + G.seconds * (sm.secsPerSec || 1.5) : body.preview ? 50 : S.directAccess === false ? (G.seconds >= 240 ? 900 : 10 + G.seconds * 3.2) : G.seconds * 4.3;
       return { ok: true, est, kind: "song", label: "Song: " + G.caption.slice(0, 36), body };
     }
@@ -515,7 +516,7 @@ const AudioWS = {
         btn("Reuse", "i-copy", () => this.reuse(e, false)),
         e.resume ? btn("Continue to full song", "i-music", () => this.continueSong(e), "tb primary") : null,
         (e.downloads || []).find((f) => f.endsWith(".mp3")) ? el("a", { class: "tb", href: "/images/" + e.downloads.find((f) => f.endsWith(".mp3")), download: `tiiny-song-${e.id}.mp3` }, icon("i-down"), el("span", { class: "lbl" }, "MP3")) : null,
-        SONG_STYLE_REF && e.kind !== "song" && e.kind !== "speech" ? btn("Use as song style", "i-music", () => this.toSongRef("/images/" + main)) : null].filter(Boolean));
+        SONG_STYLE_REF && e.kind !== "speech" ? btn("Use as song style", "i-music", () => this.toSongRef("/images/" + main)) : null].filter(Boolean));
     }
     tb.append(el("button", { class: "tb danger", title: "Delete", "aria-label": "Delete", onclick: () => this.del(e) }, icon("i-trash")));
     head.append(tb);

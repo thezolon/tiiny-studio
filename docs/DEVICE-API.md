@@ -245,7 +245,9 @@ From Tiiny's docs (**docs**), not tested here.
 - Over USB only port 80 (and 3588) is open: no model ports, so no GLM-OCR and no SongGeneration direct
   route (separate tracks, exact-length songs). The USB /30 is derived from the serial and can land in
   Docker's `172.17.x.x`.
-- Hunyuan3D `background` stage fails (BriefNet missing; still on 0.1.37); SongGeneration style reference fails.
+- Hunyuan3D `background` stage fails (BriefNet missing; still on 0.1.37); SongGeneration style reference fails
+  (`xh2a backend fail`); it works on the current TiinyOS (tested 2026-11-21, direct route and gateway preview: the
+  result moves toward the reference's sound).
 - **Song models** (tested 2026-10-30, 0.1.38): `/v1/music/info?model=` gives `service_name` (`SongGenerationTTMService`,
   `AceStepTTMService`, `YuE2TTMService`, `FoundationTTMService`), `default_config` (steps, temperature, top_k, top_p),
   per-task `defaults`, and `model_info.model` (`codec_llm_duration` = longest song in seconds: AceStep 480,
