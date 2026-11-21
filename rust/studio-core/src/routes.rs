@@ -48,6 +48,9 @@ pub fn router(state: AppState) -> Router {
         .route("/api/model/launch", post(model_launch))
         .route("/api/model/stop", post(model_stop))
         .route("/api/model/unload_all", post(unload_all))
+        .route("/api/store", get(model_store))
+        .route("/api/downloads", get(downloads))
+        .route("/api/model/{action}", post(model_change))
         .route("/api/device/shutdown", post(shutdown))
         .route("/api/icon/{org}/{name}", get(icon))
         .route("/api/extract", post(extract_document))
@@ -769,6 +772,32 @@ async fn model_stop(State(state): State<AppState>, body: Bytes) -> Response {
         )
         .await,
     )
+}
+
+async fn model_store(State(state): State<AppState>) -> Response {
+    reply(crate::downloads::model_store(&state).await)
+}
+
+async fn downloads(State(state): State<AppState>) -> Response {
+    reply(crate::downloads::downloads(&state).await)
+}
+
+/// download, pause, cancel, delete, update (the fixed /api/model/* routes above take precedence)
+async fn model_change(
+    State(state): State<AppState>,
+    Path(action): Path<String>,
+    body: Bytes,
+) -> Response {
+    if !matches!(
+        action.as_str(),
+        "download" | "pause" | "cancel" | "delete" | "update"
+    ) {
+        return not_found().await;
+    }
+    match read_json(&body) {
+        Ok(b) => reply(crate::downloads::model_change(&state, &action, &b).await),
+        Err(e) => error(StatusCode::BAD_REQUEST, &e),
+    }
 }
 
 /// Same call the TiinyOS app's "unload all" makes.

@@ -61,6 +61,11 @@ Showcase and discussion: [Tiiny Studio on TiinyVerse](https://tiinyverse.com/pos
 - **Models panel**: load and unload any installed model (or all at once), see the NPU memory budget
   and live device activity (NPU busy %, memory, CPU/RAM; power and temperature too when the
   on-device dashboard on port 9109 runs), and get a prompt when something has to be unloaded.
+- **Model Store** (in the Models panel): browse every model the Tiiny's store offers with all of its details, download
+  one with progress (pause, resume, cancel; one at a time), see which installed models have an update and install
+  them (one or all), and delete models you don't use, with the Tiiny's free storage shown. The Tiiny downloads over its
+  own Wi-Fi, even when the studio is connected by USB. A loaded or busy model is never deleted or updated, and every
+  download, update and delete asks first.
 - The UI adapts to each model's capabilities (for example, Edit is locked for create-only models),
   and remembers steps, guidance, size and negative prompt per image model.
 
@@ -236,6 +241,7 @@ off by default in Docker.
 | `static/shared.js` | workspaces, job polling, model gating, audio helpers, waveform player |
 | `static/audio.js`, `static/mesh.js`, `static/video.js` | Audio, 3D and Video workspaces |
 | `static/extras.js` | gallery tools, live device stats, OCR and documents in Text mode |
+| `static/models.js` | the Model Store tab: downloads, updates and deleting models |
 | `static/chat.js` | Chat workspace |
 | `static/vendor/` | bundled for offline use: [`<model-viewer>`](https://modelviewer.dev) 3.5.0, [pdf.js](https://mozilla.github.io/pdf.js/) 4.10.38 with its CMaps, [UTIF.js](https://github.com/photopea/UTIF.js) 3.1.0 and pako 1.0.11 (TIFF) |
 | `docs/CONNECTING.md` | finding the address and API key; USB notes; troubleshooting |

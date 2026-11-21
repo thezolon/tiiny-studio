@@ -4,6 +4,7 @@
 pub mod chat;
 pub mod config;
 pub mod device;
+mod downloads;
 pub mod extract;
 pub mod jobs;
 mod library;
@@ -54,6 +55,10 @@ pub struct AppState {
     pub(crate) search_cache: Arc<Mutex<SearchCache>>,
     /// (when asked, the answer) of GET /api/update; a failure is cached too
     pub(crate) update_cache: Arc<tokio::sync::Mutex<Option<(Instant, serde_json::Value)>>>,
+    /// The Model Store's entries, cached 60 s per device; see downloads::store_facts
+    pub(crate) store_cache: Arc<Mutex<Option<downloads::StoreCache>>>,
+    /// One download at a time: the check and the start happen under this lock
+    pub(crate) download_lock: Arc<tokio::sync::Mutex<()>>,
 }
 
 impl AppState {
@@ -79,6 +84,8 @@ impl AppState {
             store: Arc::new(store::Store::new(&config_dir)),
             search_cache: Arc::default(),
             update_cache: Arc::default(),
+            store_cache: Arc::default(),
+            download_lock: Arc::default(),
         }
     }
 

@@ -87,7 +87,7 @@ pub fn truthy(v: &Value) -> bool {
     }
 }
 
-fn workspace(kind: &str) -> &'static str {
+pub(crate) fn workspace(kind: &str) -> &'static str {
     match kind {
         "Text-to-Image" | "Image-to-Image" => "image",
         "Text-to-Speech" | "ASR" | "Music Generation" => "audio",

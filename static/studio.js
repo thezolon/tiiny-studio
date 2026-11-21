@@ -181,6 +181,7 @@ function renderModelBtn() {
     $("#modelIco").style.visibility = "hidden";
     $("#modelName").textContent = "Models";
     $("#modelCaps").textContent = S.deviceOk === false ? (S.keyRejected ? "API key rejected" : S.locked ? "Tiiny locked" : "Device offline") : `${run.length} loaded · ${S.npu.used}% NPU`;
+    if (typeof dlBadge === "function") dlBadge();
     return;
   }
   const m = modelById(S.model);
@@ -189,12 +190,13 @@ function renderModelBtn() {
   $("#modelIco").style.visibility = m ? "visible" : "hidden";
   $("#modelName").textContent = m ? shortName(m.id) : S.deviceOk === false ? (S.keyRejected ? "API key rejected" : S.locked ? "Tiiny locked" : "Device offline") : Object.keys(S.loading).length ? "Loading model…" : "No model loaded";
   $("#modelCaps").textContent = m ? capsLine(m) : "Click to manage models";
+  if (typeof dlBadge === "function") dlBadge();
 }
 
 /* ---------- models drawer ---------- */
 const NPU_COLORS = ["#ff7a45", "#60a5fa", "#a78bfa", "#34d399", "#f472b6", "#fbbf24"];
-function openDrawer() { if (typeof pollStats === "function") setTimeout(pollStats, 0); S.drawer = true; $("#drawerBody").scrollTop = 0; $("#scrim").classList.add("show"); renderDrawer(); openModal($("#drawer")); loadModels(true); }
-function closeDrawer() { S.drawer = false; S.confirm = null; $("#scrim").classList.remove("show"); closeModal($("#drawer")); }
+function openDrawer() { if (typeof pollStats === "function") setTimeout(pollStats, 0); if (typeof loadStore === "function") loadStore(); S.drawer = true; $("#drawerBody").scrollTop = 0; $("#scrim").classList.add("show"); renderDrawer(); openModal($("#drawer")); loadModels(true); }
+function closeDrawer() { S.drawer = false; S.confirm = null; S.mconfirm = null; $("#scrim").classList.remove("show"); closeModal($("#drawer")); }
 
 function renderDrawer() { if (S.drawer) keepFocus($("#drawer"), drawDrawer); }  // it redraws on every poll
 function drawDrawer() {
@@ -241,7 +243,10 @@ function drawDrawer() {
       o.status === "running" ? el("button", { class: "btn-sm ghost", onclick: () => stopModel(o.id) }, "Unload")
         : el("button", { class: "btn-sm", disabled: !!S.loading[o.id], onclick: () => loadModel(o.id) }, "Load")))) : null;
   if (otherBox) otherBox.addEventListener("toggle", () => { S.openOther = otherBox.open; });
-  body.replaceChildren(...[npu, typeof statsCard === "function" ? statsCard() : null, ...sections, otherBox].filter(Boolean));
+  const mm = typeof mmTabs === "function";  // models.js: the Store tab, downloads and updates
+  const head = mm ? [mmTabs(), downloadsStrip()] : [];
+  const installed = [...(mm ? updatesArea() : []), npu, typeof statsCard === "function" ? statsCard() : null, ...sections, otherBox];
+  body.replaceChildren(...[...head, ...(mm && S.mtab === "store" ? storeView() : installed)].filter(Boolean));
 }
 
 function modelCard(m) {
@@ -252,7 +257,8 @@ function modelCard(m) {
   card.append(el("div", { class: "mcard-top" },
     el("div", { class: "ico" }, modelImg(m)),
     el("div", { class: "info" },
-      el("div", { class: "nm" }, shortName(m.id), el("span", { class: "status " + status }, active ? "active" : status === "stopped" ? "not loaded" : status)),
+      el("div", { class: "nm" }, shortName(m.id), el("span", { class: "status " + status }, active ? "active" : status === "stopped" ? "not loaded" : status),
+        typeof updateBadge === "function" ? updateBadge(m) : null),
       el("div", { class: "sub" }, [m.params, m.type, m.npu_usage != null && `${m.npu_usage}% NPU`].filter(Boolean).join(" · ")))));
   card.append(el("div", { class: "badges" }, m.workspace === "image" ? [
     el("span", { class: "badge-cap on" }, "Create"),
@@ -292,6 +298,7 @@ function modelCard(m) {
     d.addEventListener("toggle", () => { (S.openDesc ||= {})[m.id] = d.open; });
     card.append(d);
   }
+  if (!loading && typeof manageRow === "function") { const r = manageRow(m); if (r) card.append(r); }
   return card;
 }
 
