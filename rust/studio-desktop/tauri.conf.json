@@ -10,7 +10,7 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["nsis", "msi", "dmg", "app", "deb", "appimage"],
+    "targets": ["nsis", "msi", "dmg", "app", "deb", "rpm", "appimage"],
     "publisher": "Zolon Farsane",
     "copyright": "Apache-2.0",
     "category": "Utility",
@@ -21,7 +21,11 @@
     },
     "linux": {
       "appimage": { "bundleMediaFramework": true },
-      "deb": { "depends": ["gstreamer1.0-plugins-base", "gstreamer1.0-plugins-good", "gstreamer1.0-plugins-bad", "gstreamer1.0-libav"] }
+      "deb": { "depends": ["gstreamer1.0-plugins-base", "gstreamer1.0-plugins-good", "gstreamer1.0-plugins-bad", "gstreamer1.0-libav"] },
+      "rpm": {
+        "depends": ["webkit2gtk4.1", "gtk3", "libayatana-appindicator-gtk3", "gstreamer1-plugins-base", "gstreamer1-plugins-good"],
+        "recommends": ["gstreamer1-plugins-bad-free", "gstreamer1-plugin-libav"]
+      }
     }
   }
 }

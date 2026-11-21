@@ -28,6 +28,7 @@ body:
         - Desktop app on macOS (Apple Silicon)
         - Desktop app on macOS (Intel)
         - Desktop app on Linux (.deb)
+        - Desktop app on Linux (.rpm)
         - Desktop app on Linux (AppImage)
         - Docker
         - From source (Rust or Python server)

@@ -47,8 +47,8 @@ jobs:
           - { name: Windows ARM, os: windows-11-arm, bundles: "nsis,msi" }
           - { name: macOS Apple Silicon, os: macos-15, bundles: "dmg" }
           - { name: macOS Intel, os: macos-15-intel, bundles: "dmg" }
-          - { name: Linux x64, os: ubuntu-22.04, bundles: "deb,appimage" }       # older glibc = runs on more distros
-          - { name: Linux ARM, os: ubuntu-22.04-arm, bundles: "deb,appimage" }
+          - { name: Linux x64, os: ubuntu-22.04, bundles: "deb,rpm,appimage" }       # older glibc = runs on more distros
+          - { name: Linux ARM, os: ubuntu-22.04-arm, bundles: "deb,rpm,appimage" }
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
@@ -102,6 +102,18 @@ jobs:
           done
           if find squashfs-root -name "libsoup-2*" | grep -q .; then echo "libsoup 2 is inside: WebKit would abort"; exit 1; fi
           rm -rf squashfs-root
+      - name: The .rpm installs on Fedora and finds every library it needs
+        if: runner.os == 'Linux'
+        shell: bash
+        working-directory: rust/target/release/bundle/rpm
+        # Fedora's own WebKitGTK instead of the AppImage's bundled copy (a white window on Fedora KDE, Wayland)
+        run: |
+          docker run --rm -v "$PWD:/pkg:ro" fedora:latest bash -c '
+            set -e
+            dnf install -y -q /pkg/*.rpm
+            bin=$(rpm -qlp /pkg/*.rpm | grep "^/usr/bin/" | head -1); echo "$bin"
+            if ldd "$bin" | grep "not found"; then exit 1; fi
+            for p in gstreamer1-plugins-good webkit2gtk4.1 libayatana-appindicator-gtk3; do rpm -q $p; done'
       - name: The macOS app asks for local network access and is signed (or it can't reach the Tiiny, #113)
         if: runner.os == 'macOS'
         shell: bash
@@ -119,7 +131,7 @@ jobs:
         shell: bash
         run: |
           mkdir -p dist
-          find rust/target/release/bundle -maxdepth 2 -type f \( -name "*.exe" -o -name "*.msi" -o -name "*.dmg" -o -name "*.deb" -o -name "*.AppImage" \) -exec cp {} dist/ \;
+          find rust/target/release/bundle -maxdepth 2 -type f \( -name "*.exe" -o -name "*.msi" -o -name "*.dmg" -o -name "*.deb" -o -name "*.rpm" -o -name "*.AppImage" \) -exec cp {} dist/ \;
           # no spaces: GitHub would turn "Tiiny Studio_…" into "Tiiny.Studio_…" on the release page
           for f in dist/*; do mv "$f" "${f// /-}" 2>/dev/null || true; done
           ls -la dist
