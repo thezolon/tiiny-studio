@@ -83,8 +83,8 @@ From the [Releases](../../releases) page, download the installer for your comput
 | Windows 11 on ARM | `Tiiny-Studio_<version>_arm64-setup.exe` (or the `.msi`) |
 | Mac with Apple Silicon (M1 and later) | `Tiiny-Studio_<version>_aarch64.dmg` |
 | Mac with an Intel processor | `Tiiny-Studio_<version>_x64.dmg` |
-| Linux (most PCs) | `Tiiny-Studio_<version>_amd64.deb` or `…_amd64.AppImage` |
-| Linux on ARM (e.g. Raspberry Pi 5) | `Tiiny-Studio_<version>_arm64.deb` or `…_aarch64.AppImage` |
+| Linux (most PCs) | `Tiiny-Studio_<version>_amd64.deb` (Debian, Ubuntu), `Tiiny-Studio-<version>-1.x86_64.rpm` (Fedora) or `…_amd64.AppImage` |
+| Linux on ARM (e.g. Raspberry Pi 5) | `Tiiny-Studio_<version>_arm64.deb`, `Tiiny-Studio-<version>-1.aarch64.rpm` or `…_aarch64.AppImage` |
 
 > **Tested so far:** only the **Windows x64** app and the **Docker** image (amd64) have been tested on real
 > machines with a real Tiiny. The macOS, Linux and Windows ARM apps are built and smoke-tested automatically but
@@ -97,8 +97,11 @@ From the [Releases](../../releases) page, download the installer for your comput
   says it **"is damaged and can't be opened"** (it isn't; it's the quarantine flag macOS puts on downloads, and
   right-click → Open doesn't get past it on recent macOS). Clear the flag once in Terminal, then open it normally:
   `xattr -cr "/Applications/Tiiny Studio.app"`
-- **Linux:** `sudo apt install ./Tiiny-Studio_<version>_amd64.deb`, or make the AppImage executable
-  (`chmod +x`) and run it. Needs WebKitGTK 4.1 (installed with most desktops).
+- **Linux:** `sudo apt install ./Tiiny-Studio_<version>_amd64.deb` (Debian, Ubuntu) or
+  `sudo dnf install ./Tiiny-Studio-<version>-1.x86_64.rpm` (Fedora), or make the AppImage executable (`chmod +x`) and
+  run it. Needs WebKitGTK 4.1 (installed with most desktops). The `.deb` and `.rpm` use your system's own WebKitGTK;
+  if the AppImage's window goes white or blank, use one of those, or start the AppImage with
+  `WEBKIT_DISABLE_DMABUF_RENDERER=1`.
 
 The studio opens in its own window and puts an icon in the tray (open, results folder, start at login,
 power off the Tiiny, quit). Only this computer can reach it. Your results and settings are kept in
