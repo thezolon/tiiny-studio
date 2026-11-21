@@ -246,8 +246,13 @@ From Tiiny's docs (**docs**), not tested here.
   route (separate tracks, exact-length songs). The USB /30 is derived from the serial and can land in
   Docker's `172.17.x.x`.
 - Hunyuan3D `background` stage fails (BriefNet missing; still on 0.1.37); SongGeneration style reference fails
-  (`xh2a backend fail`); it works on the current TiinyOS (tested 2026-11-21, direct route and gateway preview: the
-  result moves toward the reference's sound).
+  (`xh2a backend fail`); it works on the current TiinyOS (tested 2026-11-21). Which models take one: `model_info.model.
+  supported_prompt_sources` in `/v1/music/info` (SongGeneration-v2: `reference_audio_base64`; AceStep-XL: that and
+  `source_audio_base64` for cover/repaint; YuE2: none). SongGeneration refuses a clip under 10 s (the job fails with
+  just "Request failed") and took 10-120 s, 48 kHz mono or 44.1 kHz stereo, direct and through the gateway (a 15 MB
+  body); the clip's length doesn't change the render time; the same clip and seed give the same song, and audio past
+  30 s changes the result. AceStep-XL (mixed only, so with lyrics) took 5-120 s. The result moves toward the
+  reference's sound.
 - **Song models** (tested 2026-10-30, 0.1.38): `/v1/music/info?model=` gives `service_name` (`SongGenerationTTMService`,
   `AceStepTTMService`, `YuE2TTMService`, `FoundationTTMService`), `default_config` (steps, temperature, top_k, top_p),
   per-task `defaults`, and `model_info.model` (`codec_llm_duration` = longest song in seconds: AceStep 480,

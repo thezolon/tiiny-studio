@@ -44,9 +44,9 @@ Showcase and discussion: [Tiiny Studio on TiinyVerse](https://tiinyverse.com/pos
 - **Audio**: voice cloning from a few seconds of speech (with a saved voice library, and long text
   voiced in parts and joined), built-in voices (Qwen3-CustomVoice, MOSS-TTS-Nano) or a voice you describe
   (Qwen3-VoiceDesign); tempo- and key-locked loops; full songs with lyrics, instrumental, vocals only or
-  separate tracks (SongGeneration, with an 8-second preview you can continue to the full song and an optional
-  style reference: 10–30 s of music it borrows the feel from; AceStep with
-  tempo, key and language; YuE2) and an MP3 copy; transcription in 30 languages. Each panel shows what the
+  separate tracks (SongGeneration, with an 8-second preview you can continue to the full song; AceStep with
+  tempo, key and language; YuE2), an optional style reference for SongGeneration and AceStep (up to 30 s of music
+  it borrows the feel from) and an MP3 copy; transcription in 30 languages. Each panel shows what the
   loaded model can do.
 - **3D** with Hunyuan3D-2.1 or TRELLIS.2-4B: image → shape → simplify → PBR texture → GLB, with an interactive
   viewer. **Cut out the subject first** (on by default): Qwen-Image puts the subject on a transparent background
