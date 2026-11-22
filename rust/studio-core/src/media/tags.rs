@@ -109,8 +109,11 @@ fn png_with_text(b: &[u8], title: &str, desc: &str) -> Option<Vec<u8>> {
     if !b.starts_with(SIG) || b.len() < 33 || &b[12..16] != b"IHDR" {
         return None;
     }
-    let ihdr_end = 8 + 8 + u32::from_be_bytes(b[8..12].try_into().ok()?) as usize + 4;
-    let mut out = b[..ihdr_end].to_vec();
+    let ihdr_end = 8usize
+        .checked_add(8 + 4)?
+        .checked_add(u32::from_be_bytes(b[8..12].try_into().ok()?) as usize)?;
+    // a bogus IHDR length leaves the file untagged instead of panicking
+    let mut out = b.get(..ihdr_end)?.to_vec();
     for (key, val) in [
         ("Title", title),
         ("Description", desc),
@@ -194,6 +197,15 @@ fn mp3_with_id3(b: &[u8], title: &str, desc: &str) -> Vec<u8> {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn a_png_with_a_bogus_ihdr_length_is_left_alone() {
+        let mut b = b"\x89PNG\r\n\x1a\n".to_vec();
+        b.extend_from_slice(&0xFFFF_FFF0u32.to_be_bytes());
+        b.extend_from_slice(b"IHDR");
+        b.resize(40, 0);
+        assert!(png_with_text(&b, "t", "d").is_none());
+    }
 
     #[test]
     fn title_and_description_from_the_entry() {
