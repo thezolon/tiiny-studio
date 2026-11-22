@@ -139,7 +139,7 @@ The desktop app: `cd rust/studio-desktop && cargo tauri build` (needs the Tauri 
 `127.0.0.1:7861` (a free port instead if that one is taken).
 
 The original Python server still runs as well (`python server.py`, Python 3.10+, no packages); it's kept as the
-reference the Rust version is tested against. Data goes to `./data` either way.
+reference the Rust version is tested against (not for use on a network: it lacks the Rust server's protections, such as the Host check and request limits). Data goes to `./data` either way.
 
 ## Configuration
 
@@ -148,7 +148,7 @@ reference the Rust version is tested against. Data goes to `./data` either way.
 | Devices (address + API key) | **Settings** (gear icon), saved to `data/config.json` | Save each way you reach your Tiiny (home Wi-Fi, phone hotspot, USB). With auto-switch on, the studio uses the first device in the list that answers (checked every 20 s) and comes back to a preferred one when it returns; a device you pick with **Use** stays until it stops answering. Each key is only sent to its own address and never to the browser. `TIINY_URL` / `TIINY_KEY` seed the first device. |
 | `STUDIO_BIND` | `.env` (copy `.env.example`) | Who can open the studio. Default `127.0.0.1`, meaning only this computer. `0.0.0.0` opens it to your network. |
 | `STUDIO_PASSWORD` | `.env` | Optional. Makes the browser ask for a password (any username). Set one if you open the studio to your network. |
-| `STUDIO_HOSTS` | `.env` | Optional, with network access on: extra names the studio answers to, comma separated, e.g. `studio.example.org` for a reverse proxy. Without it the studio answers at IP addresses, `localhost`, one-word names (`http://nas:7860`) and `.local`, `.lan`, `.home.arpa` names, and refuses other domain names (that is what stops a website from re-pointing its own domain at the studio). |
+| `STUDIO_HOSTS` | `.env` | Optional, with network access on: extra names the studio answers to, comma separated, e.g. `studio.example.org` for a reverse proxy. Without it the studio answers at IP addresses, `localhost`, one-word names (`http://nas:7860`) and `.local`, `.lan`, `.home`, `.home.arpa`, `.fritz.box`, `.internal` and Tailscale (`.ts.net`) names, and refuses other domain names (that is what stops a website from re-pointing its own domain at the studio). |
 | `PORT`, `DATA_DIR`, `HOST` | env | Default `7860`, `./data` (Docker: `/data`, mounted from `./data`) and, for native runs, `127.0.0.1`. |
 
 **Network access is off by default.** Out of the box only the computer running the studio can open
@@ -206,7 +206,7 @@ studio, MCP only answers on this computer unless you open the studio to your net
 These limits are limits on what the MCP tools offer, not a sandbox. The studio's normal web API on the same port is open
 unless you set `STUDIO_PASSWORD`, so an agent that can make its own HTTP requests (a fetch or curl tool, a shell) is not
 held back by them. If you run agents like that, set `STUDIO_PASSWORD`, and treat the agent as trusted with the studio.
-In chat, a message with a suspected prompt injection in an attachment is answered with the chat tools switched off.
+In chat, a reply to a message with a suspected prompt injection in an attachment is made with the chat tools switched off (an earlier flagged attachment stays marked, but doesn't switch the tools off for later messages).
 
 ## Privacy
 

@@ -68,7 +68,10 @@ function toast(msg, kind = "") {
 const UNREACHABLE = "Can't reach your Tiiny. Is it on, and on the same network or USB cable? Check the address in Settings.";
 function plainError(msg) {
   const raw = String(msg ?? "");
-  const out = /^Device unreachable/.test(raw) ? UNREACHABLE
+  // a wrong address that answers (not like a Tiiny) already has its own plain sentence from the server
+  const wrong = raw.match(/^Device unreachable: (this address answered, but not like a Tiiny)/);
+  const out = wrong ? wrong[1][0].toUpperCase() + wrong[1].slice(1) + ". Check the address in Settings."
+    : /^Device unreachable/.test(raw) ? UNREACHABLE
     : raw.replace(/\s*\(https?:\/\/[^\s)]*\)/g, "").replace(/https?:\/\/\S*\/(?:api|v1)\/\S*/g, "the device");
   if (out !== raw) console.info("[tiiny-studio] error details:", raw);
   return out;

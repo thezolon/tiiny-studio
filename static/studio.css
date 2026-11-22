@@ -723,6 +723,10 @@ details.adv summary .sum { margin-left: auto; color: var(--faint); font-weight: 
 }
 .toast.err { border-color: var(--err-line); }
 .toast.err b { color: var(--err); }
+.toast.notice { cursor: default; }
+.toast.notice p { margin: 6px 0 10px; }
+.toast.notice .notice-row { display: flex; align-items: center; gap: 8px; }
+.toast.notice .spacer { flex: 1; }
 @keyframes tin { from { opacity: 0; transform: translateY(8px); } }
 
 .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
