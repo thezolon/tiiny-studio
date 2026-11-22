@@ -519,6 +519,9 @@ async fn device_action(
                 .set_update_check(req.get("update_check").map(device::truthy).unwrap_or(false));
             state.update_cache.lock().await.take(); // a fresh answer the next time it's on
         }
+        "tags" => state
+            .settings
+            .set_tag_prompts(req.get("tag_prompts").map(device::truthy).unwrap_or(true)),
         "check" => state.settings.check(&state.http).await,
         _ => return not_found().await,
     }

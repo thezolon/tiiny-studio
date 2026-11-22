@@ -16,3 +16,16 @@ services:
     volumes:
       - ./data:/data
     restart: unless-stopped
+    # Hardening: the image is read-only (the studio writes only to /data and a small /tmp); every Linux capability is
+    # dropped except the three the server needs at start to give /data to its owner and then drop root (never regained).
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - SETUID
+      - SETGID
+    security_opt:
+      - no-new-privileges:true

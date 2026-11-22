@@ -250,7 +250,11 @@ user to load {0} from the Models panel (or turn swapping on), then ask again.", 
         let e = entry.as_object_mut().unwrap();
         crate::jobs::stamp(e, &sub.id, kind, started);
         e.insert("via".into(), json!("chat"));
-        crate::media::tags::embed(&ctx.state.store.images, &entry); // the prompt inside the files (#58)
+        crate::media::tags::embed(
+            &ctx.state.store.images,
+            &entry,
+            ctx.state.settings.tag_prompts(),
+        ); // the prompt inside the files (#58)
         if let Err(e) = ctx.state.store.add_history(entry.clone()) {
             sub.discard_saved();
             return Err(JobError(format!("Couldn't save the result: {e}")));

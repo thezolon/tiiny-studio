@@ -540,7 +540,11 @@ async fn work(ctx: Ctx, kind: String, run: KindFn) {
                     }
                     // helper text and chat replies live with the job, not in the gallery; throwaway jobs never touch disk
                     if !matches!(k.as_str(), "assist" | "chat") && !ephemeral {
-                        crate::media::tags::embed(&state.store.images, &entry); // the prompt inside the files (#58)
+                        crate::media::tags::embed(
+                            &state.store.images,
+                            &entry,
+                            state.settings.tag_prompts(),
+                        ); // the prompt inside the files (#58)
                         if let Err(e) = state.store.add_history(entry.clone()) {
                             let msg = format!("Couldn't save the result: {e}");
                             discard(&state, &saved);

@@ -83,7 +83,8 @@ struct State {
     swap: Swap,
     mcp: McpSettings,
     helper_model: String,       // the text model helpers use ("" = automatic)
-    update_check: Option<bool>, // "Check for updates": None until the user decides, then the default (on, off in Docker)
+    update_check: Option<bool>, // "Check for updates": None until the user answers (counts as off)
+    tag_prompts: Option<bool>,  // "Write prompts into files" (#58): None = on
     devices: Vec<Device>,
     active: Option<String>,
     auto: bool,
@@ -258,6 +259,7 @@ impl Settings {
             .unwrap_or("")
             .to_string();
         st.update_check = saved.get("update_check").and_then(Value::as_bool);
+        st.tag_prompts = saved.get("tag_prompts").and_then(Value::as_bool);
         Settings {
             path,
             lan_access,
@@ -295,9 +297,25 @@ impl Settings {
         self.lock().devices.clone()
     }
 
-    /// "Check for updates": on by default, off by default in Docker (updates come with the image).
+    /// "Check for updates": off until the user answers the one-time question (always off in Docker, where updates come with the image).
     pub fn update_check(&self) -> bool {
-        self.lock().update_check.unwrap_or(!in_docker())
+        self.lock().update_check.unwrap_or(false)
+    }
+
+    /// Not decided yet and not Docker: the page asks "Check for updates automatically?" once (S14).
+    pub fn update_ask(&self) -> bool {
+        !in_docker() && self.lock().update_check.is_none()
+    }
+
+    /// "Write prompts into files": on by default (#58); off keeps the prompt and spoken text out of result files.
+    pub fn tag_prompts(&self) -> bool {
+        self.lock().tag_prompts.unwrap_or(true)
+    }
+
+    pub fn set_tag_prompts(&self, on: bool) {
+        let mut st = self.lock();
+        st.tag_prompts = Some(on);
+        self.save(&mut st);
     }
 
     pub fn set_update_check(&self, on: bool) {
@@ -308,6 +326,7 @@ impl Settings {
 
     pub fn public(&self) -> Value {
         let update_check = self.update_check();
+        let update_ask = self.update_ask();
         let st = self.lock();
         let cur = st.current().cloned();
         let (url, key) = cur
@@ -325,7 +344,7 @@ impl Settings {
             "source": st.source, "lan_access": self.lan_access, "password": self.password,
             "last_switch": st.last_switch, "version": crate::version(),
             "swap": st.swap, "mcp": st.mcp, "helper_model": st.helper_model, "docker": in_docker(),
-            "update_check": update_check,
+            "update_check": update_check, "update_ask": update_ask, "tag_prompts": st.tag_prompts.unwrap_or(true),
             "app": self.app, // the desktop app: no .env to edit, so the UI words the network notes differently
         })
     }
@@ -334,6 +353,9 @@ impl Settings {
         let mut body = json!({"devices": st.devices, "active": st.active, "auto": st.auto, "swap": st.swap, "mcp": st.mcp, "helper_model": st.helper_model});
         if let Some(on) = st.update_check {
             body["update_check"] = json!(on);
+        }
+        if let Some(on) = st.tag_prompts {
+            body["tag_prompts"] = json!(on);
         }
         let tmp = self.path.with_extension("tmp");
         let written = std::fs::write(
@@ -615,6 +637,26 @@ mod tests {
         );
         assert_eq!(hint("abcdefgh1234"), "…1234");
         assert_eq!(hint("short"), "");
+    }
+
+    #[test]
+    fn update_check_is_off_until_answered_and_prompt_tags_default_on() {
+        let dir = std::env::temp_dir().join(format!("studio-settings-{}", new_id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let s = Settings::load(&dir, false, false, false);
+        assert!(!s.update_check()); // never contacts GitHub before the question is answered
+        assert_eq!(s.update_ask(), !in_docker());
+        assert_eq!(s.public()["update_ask"], json!(!in_docker()));
+        assert!(s.tag_prompts());
+        assert_eq!(s.public()["tag_prompts"], json!(true));
+        s.set_update_check(true);
+        s.set_tag_prompts(false);
+        let again = Settings::load(&dir, false, false, false);
+        assert!(again.update_check());
+        assert!(!again.update_ask());
+        assert!(!again.tag_prompts());
+        assert_eq!(again.public()["tag_prompts"], json!(false));
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
