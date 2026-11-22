@@ -1,5 +1,6 @@
 """Stage 0 contract tests: the shell of the Rust server matches the Python one, and the fake Tiiny behaves."""
 import json
+import socket
 import time
 import unittest
 
@@ -103,9 +104,61 @@ class FakeTiiny(unittest.TestCase):
     def test_launch_makes_model_running(self):
         r = request(self.url, "POST", "/api/v1/models/Qwen%2FQwen-Image-2.1/launch", {"model_id": "x"}, headers=AUTH)
         self.assertEqual(r.status, 200)
-        time.sleep(0.5)
-        run = request(self.url, "GET", "/api/v1/models/running", headers=AUTH).json
+        end = time.monotonic() + 10  # the launch takes the fake's launch_delay: poll, don't guess a pause
+        while True:
+            run = request(self.url, "GET", "/api/v1/models/running", headers=AUTH).json
+            if "Qwen/Qwen-Image-2.1" in [i["model_id"] for i in run["instances"]["running"]] or time.monotonic() > end:
+                break
+            time.sleep(0.05)
         self.assertIn("Qwen/Qwen-Image-2.1", [i["model_id"] for i in run["instances"]["running"]])
+
+    def raw(self, method, path, body=b"", key=True):
+        """One request over a bare socket; returns everything the server wrote back before it closed."""
+        host, port = self.url.removeprefix("http://").split(":")
+        head = f"{method} {path} HTTP/1.1\r\nHost: x\r\nContent-Length: {len(body)}\r\nContent-Type: application/json\r\nConnection: close\r\n"
+        if key:
+            head += "Authorization: Bearer fake-key\r\n"
+        with socket.create_connection((host, int(port)), timeout=10) as s:
+            s.sendall(head.encode() + b"\r\n" + body)
+            out = b""
+            while chunk := s.recv(65536):
+                out += chunk
+        return out
+
+    def test_one_answer_per_request(self):
+        # an image_warmup 500 and the video model's icon 404 once got a second "404 endpoint not found" behind them
+        request(self.url, "POST", "/__reset")
+        self.srv.state.unrouted.clear()
+        request(self.url, "POST", "/__flags", {"image_warmup": 1})
+        out = self.raw("POST", "/v1/images/generations", b'{"model": "x", "prompt": "y"}')
+        self.assertEqual(out.count(b"HTTP/1."), 1, out[:300])
+        self.assertIn(b" 500 ", out.split(b"\r\n", 1)[0])
+        out = self.raw("GET", "/api/v1/models/online_models/MiniMax-H3-Turbo/icon", key=False)
+        self.assertEqual(out.count(b"HTTP/1."), 1, out[:300])
+        self.assertEqual(self.srv.state.unrouted, [])
+
+    def test_device_rules_the_docs_state(self):
+        request(self.url, "POST", "/__reset")
+        body = {"model": "Qwen/Qwen-Image-2.1", "prompt": "x", "size": "512x512"}
+        self.assertEqual(request(self.url, "POST", "/v1/images/generations", {**body, "n": 1}, headers=AUTH).status, 200)
+        self.assertEqual(request(self.url, "POST", "/v1/images/generations", {**body, "n": 2}, headers=AUTH).status, 500)  # one image per request
+        self.assertEqual(request(self.url, "POST", "/v1/images/edits", body, headers=AUTH).status, 404)  # doesn't exist
+        self.assertIn("POST /v1/images/edits", self.srv.state.unrouted)  # and is on the record
+        self.srv.state.unrouted.clear()
+        speech = {"model": "Qwen/Qwen3-TTS-Base", "input": "hi"}  # the Base model only clones: ref_audio and ref_text, both
+        self.assertEqual(request(self.url, "POST", "/v1/audio/speech", speech, headers=AUTH).status, 400)
+        self.assertEqual(request(self.url, "POST", "/v1/audio/speech", {**speech, "ref_audio": "AAAA"}, headers=AUTH).status, 400)
+        self.assertEqual(request(self.url, "POST", "/v1/audio/speech", {**speech, "ref_audio": "AAAA", "ref_text": "hi"}, headers=AUTH).status, 200)
+        song = {"model": "Fake/SongGeneration-v2", "prompt": "x"}  # plain /generate fails for SongGeneration
+        self.assertEqual(request(self.url, "POST", "/v1/music/generate", song, headers=AUTH).status, 404)
+        self.assertEqual(request(self.url, "POST", "/v1/music/generate/preview", song, headers=AUTH).status, 200)
+
+    def test_locked_answers_502_before_the_key_is_checked(self):
+        request(self.url, "POST", "/__reset")
+        request(self.url, "POST", "/__flags", {"locked": True})
+        self.addCleanup(request, self.url, "POST", "/__flags", {"locked": False})
+        self.assertEqual(request(self.url, "GET", "/v1/models", headers=AUTH).status, 502)
+        self.assertEqual(request(self.url, "GET", "/v1/models", headers={"Authorization": "Bearer wrong"}).status, 502)  # not 401
 
 
 if __name__ == "__main__":

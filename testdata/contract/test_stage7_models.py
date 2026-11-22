@@ -396,5 +396,24 @@ class Models(ContractCase):
         self.scenario(steps)
 
 
+class DefaultCaches(ContractCase):
+    """The production cache times (60 s for the device's free space and the store's facts); every other class runs with
+    them off so a test can change what the fake reports."""
+    extra_env = {"STUDIO_DISK_TTL": "60", "STUDIO_STORE_TTL": "60"}
+    scenario, forget, flags = Models.scenario, Models.forget, Models.flags
+
+    def test_free_space_is_cached_but_a_change_through_the_studio_shows_at_once(self):
+        def steps(call):
+            def free():
+                return call("GET", "/api/store", record=False)[1]["disk"]["free_gb"]
+            before = free()  # read when the scenario began, so it is cached now
+            self.flags(disk_free_gb=before - 100)  # the device changed by itself: the studio still shows what it read before
+            self.assertEqual(free(), before)
+            request(self.h.fake_url, "POST", "/api/v1/models/Qwen%2FQwen3-4B-Instruct/stop", {}, headers=AUTH)
+            self.assertEqual(call("POST", "/api/model/delete", {"id": CHAT, "confirm": CHAT})[0], 200)
+            self.assertLess(free(), before - 90)  # a delete through the studio: read again, so the 100 GB less shows
+        self.scenario(steps)
+
+
 if __name__ == "__main__":
     unittest.main()

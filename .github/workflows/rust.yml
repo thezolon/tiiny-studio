@@ -1,6 +1,7 @@
 # Rust port checks on pull requests and on main when they touch it: cargo tests on Windows, macOS and
-# Linux, the contract tests (Python reference vs Rust, against the fake Tiiny), a desktop app build and an
-# accessibility check of the web UI (axe-core).
+# Linux, the contract tests (Python reference vs Rust, against the fake Tiiny), a desktop app build, the
+# web UI checks (accessibility, layout, Model Store) against the Rust server, and a Docker image build that is
+# started once.
 # Not on tags or other branch pushes: a release's commit is already tested in its PR and on main, and the
 # extra runs held up the release build's runners. Never contacts a real device.
 name: Rust
@@ -8,13 +9,21 @@ name: Rust
 on:
   push:
     branches: [main]
-    paths: ["rust/**", "static/**", "testdata/fake_tiiny.py", "testdata/a11y_check.py", "testdata/contract/**", "*.py", ".github/workflows/rust.yml"]
+    paths: ["rust/**", "static/**", "docs/**", "testdata/**", "tools/**", "*.py", "VERSION", "Dockerfile", "compose.yaml", ".github/workflows/**"]
   pull_request:
-    paths: ["rust/**", "static/**", "testdata/fake_tiiny.py", "testdata/a11y_check.py", "testdata/contract/**", "*.py", ".github/workflows/rust.yml"]
+    paths: ["rust/**", "static/**", "docs/**", "testdata/**", "tools/**", "*.py", "VERSION", "Dockerfile", "compose.yaml", ".github/workflows/**"]
   workflow_dispatch:
 
 permissions:
   contents: read
+
+# a new push to a pull request replaces the run still going for it; main's runs are never cancelled
+concurrency:
+  group: rust-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  RUST_VERSION: "1.99.1"   # one compiler for tests, lint and the desktop app; bump on purpose (a new release brings new lints)
 
 jobs:
   test:
@@ -23,51 +32,67 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { name: Windows, os: windows-latest }
+          - { name: Windows, os: windows-2025 }
           - { name: Windows ARM, os: windows-11-arm }
           - { name: macOS, os: macos-15 }
+          - { name: macOS Intel, os: macos-15-intel }   # shipped in the releases, so tested too
           - { name: Linux, os: ubuntu-22.04 }
+          - { name: Linux ARM, os: ubuntu-22.04-arm }
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
     defaults:
       run:
         working-directory: rust
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with: { persist-credentials: false }
       - name: Linux desktop libraries (WebKitGTK)
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec  # stable branch, 2026-10-16
-        with: { toolchain: stable }   # pinned by commit, so the toolchain can't come from the ref name
+        with: { toolchain: "${{ env.RUST_VERSION }}" }   # the action is pinned by commit, so the toolchain can't come from the ref name
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0  # v2.9.3
         with: { workspaces: rust }
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7.1.0
         with: { python-version: "3.12" }
       - name: cargo test
-        run: cargo test --workspace
+        run: cargo test --workspace --locked
       - name: Build the server and the desktop app
-        run: cargo build --workspace
+        run: cargo build --workspace --locked
       - name: Contract tests (fake Tiiny)
         working-directory: .
         shell: bash
-        run: if [ -d testdata/contract ]; then python -m unittest discover testdata/contract -v; else echo "no contract tests yet"; fi
+        env:
+          STUDIO_REQUIRE_RUST: "1"   # a missing Rust server fails the run; it must never skip all the tests
+        run: python -m unittest discover -s testdata/contract -v
       - name: Document reader parity (Python vs Rust)
         working-directory: .
         shell: bash
         run: |
-          pip install pillow python-docx
+          pip install pillow==13.0.0 python-docx==1.2.0
           python testdata/extract_parity.py
 
   a11y:
-    name: Accessibility (axe-core, WCAG 2.2 AA)
-    runs-on: ubuntu-latest
+    name: Web UI checks (axe-core, layout, Model Store)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with: { persist-credentials: false }
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec  # stable branch, 2026-10-16
+        with: { toolchain: "${{ env.RUST_VERSION }}" }
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0  # v2.9.3
+        with: { workspaces: rust }
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7.1.0
         with: { python-version: "3.12" }
       - name: Playwright and Chromium
         run: |
           pip install playwright==1.64.1
           python -m playwright install --with-deps chromium
+      - name: Build the Rust server (the one the installers and the Docker image contain)
+        working-directory: rust
+        run: cargo build -p studio-server --locked
+      # The three checks start the Rust server by default (--server python runs the reference) and fail on JavaScript errors too.
       - name: Check every workspace, the drawer and the dialogs (fake Tiiny)
         run: python testdata/a11y_check.py
       - name: Check layout at small and odd window sizes (every control reachable; fixed size bugs stay fixed)
@@ -75,15 +100,29 @@ jobs:
       - name: Model Store click-through (download, cancel, Update all; fake Tiiny)
         run: python testdata/model_store_ui_check.py
 
-  lint:
-    name: Lint (rustfmt, clippy, ruff)
-    runs-on: ubuntu-22.04
+  docker:
+    name: Docker image builds and starts
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with: { persist-credentials: false }
+      - name: Build the image (amd64, no push)
+        run: docker build -t tiiny-studio:ci .
+      - name: Start it once (GET /, GET /api/settings with this version, stop)
+        run: bash testdata/docker_smoke.sh tiiny-studio:ci
+
+  lint:
+    name: Lint (rustfmt, clippy, ruff, JavaScript syntax)
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with: { persist-credentials: false }
       - name: Linux desktop libraries (WebKitGTK)
         run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec  # stable branch, 2026-10-16
-        with: { toolchain: 1.99.1, components: "clippy, rustfmt" }   # pinned: a new release brings new lints; bump on purpose
+        with: { toolchain: "${{ env.RUST_VERSION }}", components: "clippy, rustfmt" }
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0  # v2.9.3
         with: { workspaces: rust }
       - name: rustfmt (standard layout)
@@ -96,3 +135,5 @@ jobs:
         run: |
           pip install ruff==0.17.3
           ruff check --select F,B server.py media.py chat.py extract.py safety.py tools testdata
+      - name: JavaScript syntax (every script of the web UI; the vendored libraries are in static/vendor and left out)
+        run: for f in static/*.js; do echo "$f"; node --check "$f"; done

@@ -7,24 +7,34 @@ What `.github/workflows/release.yml` builds:
 
 | job | runs on | output |
 |---|---|---|
-| Desktop app for Windows x64 | `windows-latest` | `Tiiny-Studio_<v>_x64-setup.exe`, `Tiiny-Studio_<v>_x64_en-US.msi` |
+| Desktop app for Windows x64 | `windows-2025` | `Tiiny-Studio_<v>_x64-setup.exe`, `Tiiny-Studio_<v>_x64_en-US.msi` |
 | Desktop app for Windows ARM | `windows-11-arm` | `Tiiny-Studio_<v>_arm64-setup.exe`, `Tiiny-Studio_<v>_arm64_en-US.msi` |
-| Desktop app for macOS Apple Silicon | `macos-latest` | `Tiiny-Studio_<v>_aarch64.dmg` |
+| Desktop app for macOS Apple Silicon | `macos-15` | `Tiiny-Studio_<v>_aarch64.dmg` |
 | Desktop app for macOS Intel | `macos-15-intel` | `Tiiny-Studio_<v>_x64.dmg` |
 | Desktop app for Linux x64 | `ubuntu-22.04` | `Tiiny-Studio_<v>_amd64.deb`, `Tiiny-Studio-<v>-1.x86_64.rpm`, `Tiiny-Studio_<v>_amd64.AppImage` |
 | Desktop app for Linux ARM | `ubuntu-22.04-arm` | `Tiiny-Studio_<v>_arm64.deb`, `Tiiny-Studio-<v>-1.aarch64.rpm`, `Tiiny-Studio_<v>_aarch64.AppImage` |
-| Docker image | `ubuntu-latest` | `ghcr.io/<owner>/tiiny-studio:<v>` and `:latest` (amd64 + arm64) |
-| GitHub release | `ubuntu-latest` | source zip (`tools/release.py`), the installers, `SHA256SUMS.txt`, notes from `CHANGELOG.md` |
+| Docker image | `ubuntu-24.04` | `ghcr.io/<owner>/tiiny-studio:<v>` and `:latest` (amd64 + arm64) |
+| GitHub release | `ubuntu-24.04` | source zip (`tools/release.py`), the installers, `SHA256SUMS.txt`, notes from `CHANGELOG.md` |
 
-Each app job also builds `studio-server` and smoke-tests it (starts, serves the page and `/api/settings`). The
-installers are **unsigned** (see ROADMAP.md).
+Each app job also builds `studio-server` and smoke-tests it (starts, serves the page, and `/api/settings` says
+`VERSION`); the Linux x64/ARM jobs also start the desktop app itself under a virtual display for 15 s (advisory: a
+warning, not a red job). The Docker job builds the amd64 image, **starts it and checks it** before it pushes anything.
+The installers are **unsigned** (see ROADMAP.md).
 
 **Started by a tag (`v*`)** everything runs: the Docker image is pushed and the release is created.
 **Started by hand** (`workflow_dispatch`) it's a dry run: the installers are kept as workflow artifacts on the
 run's page, the Docker image is built but **not pushed**, and **no release** is created. `rust.yml` (tests on
-Windows/macOS/Linux, contract tests, document parity) runs on pull requests and on `main` when they touch the code. The release
+Windows/macOS/Linux on x64 and ARM, contract tests, document parity, the web UI checks against the Rust server, a Docker
+build that is started once, lint) runs on pull requests and on `main` when they touch the code, tests, docs, `tools/`,
+`VERSION`, the Dockerfile or the workflows. The release
 workflow's first job checks that the tag, `VERSION`, `rust/Cargo.toml` and `tauri.conf.json` agree; nothing else runs
 if they don't.
+
+**A release is published even if some parts failed** (a runner label changed, one platform broke), so the other
+platforms still get theirs. The release job then names what is missing: a `::warning::` in the log, the job summary,
+and a line at the top of the release notes. Read the run before announcing: a missing part means the in-app update
+pill already offers this version to everyone. (The Docker image is the exception that matters least: a failed image
+never reaches `:latest`, which stays on the previous version.)
 
 ## 1. Private push and dry run (no tag, nothing public)
 

@@ -15,12 +15,22 @@ on:
 permissions:
   contents: read
 
+# one release run per ref at a time, and never cancelled halfway
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  RUST_VERSION: "1.99.1"   # the compiler the Rust workflow tests with; bump both on purpose
+
 jobs:
   check:
     name: Version check
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with: { persist-credentials: false }
       - name: VERSION, Cargo.toml, tauri.conf.json and the tag agree
         shell: bash
         run: |
@@ -43,15 +53,17 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { name: Windows x64, os: windows-latest, bundles: "nsis,msi" }
+          - { name: Windows x64, os: windows-2025, bundles: "nsis,msi" }
           - { name: Windows ARM, os: windows-11-arm, bundles: "nsis,msi" }
           - { name: macOS Apple Silicon, os: macos-15, bundles: "dmg" }
           - { name: macOS Intel, os: macos-15-intel, bundles: "dmg" }
           - { name: Linux x64, os: ubuntu-22.04, bundles: "deb,rpm,appimage" }       # older glibc = runs on more distros
           - { name: Linux ARM, os: ubuntu-22.04-arm, bundles: "deb,rpm,appimage" }
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with: { persist-credentials: false }
       - name: Linux desktop libraries (WebKitGTK)
         if: runner.os == 'Linux'
         # GStreamer: WebKitGTK plays audio and video through it, and the AppImage bundles the plugins installed here.
@@ -69,27 +81,45 @@ jobs:
           done
           echo "GSTREAMER_PLUGINS_DIR=$dir" >> "$GITHUB_ENV"
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec  # stable branch, 2026-10-16
-        with: { toolchain: stable }   # pinned by commit, so the toolchain can't come from the ref name
+        with: { toolchain: "${{ env.RUST_VERSION }}" }   # the action is pinned by commit, so the toolchain can't come from the ref name
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0  # v2.9.3
         with: { workspaces: rust }
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1  # v7.1.0
-        with: { node-version: "20" }
+        with: { node-version: "22" }
       - name: Build the app and its installers
         working-directory: rust/studio-desktop
-        run: npx --yes @tauri-apps/cli@2.12.4 build --bundles ${{ matrix.bundles }}
-      - name: Smoke test (the bundled server starts and serves the page)
+        env:
+          BUNDLES: ${{ matrix.bundles }}
+        run: npx --yes @tauri-apps/cli@2.12.4 build --bundles "$BUNDLES" -- --locked
+      - name: Smoke test (the headless server starts, serves the page and says this version)
         shell: bash
         env:
-          PORT: "7999"
           DATA_DIR: ${{ runner.temp }}/tiiny-data
         working-directory: rust
         run: |
-          cargo build --release -p studio-server
+          cargo build --release -p studio-server --locked
           exe=target/release/tiiny-studio-server; [ -f "$exe.exe" ] && exe="$exe.exe"
-          "$exe" & pid=$!
-          for i in $(seq 1 30); do curl -sf http://127.0.0.1:7999/ >/dev/null && break; sleep 1; done
-          curl -sf http://127.0.0.1:7999/api/settings | grep -q '"version"'
-          kill $pid || true
+          export PORT=$((20000 + RANDOM % 20000))
+          log="$RUNNER_TEMP/smoke-server.log"
+          "$exe" >"$log" 2>&1 & pid=$!
+          trap 'kill $pid 2>/dev/null || true' EXIT
+          up=; for i in $(seq 1 30); do curl -sf "http://127.0.0.1:$PORT/" >/dev/null && { up=1; break; }; sleep 1; done
+          want=$(tr -d '\r\n' < ../VERSION)
+          if [ -z "$up" ] || ! curl -sf "http://127.0.0.1:$PORT/api/settings" | grep -Eq "\"version\" *: *\"$want\""; then
+            echo "::error::the server did not serve version $want; its output:"; cat "$log"; exit 1
+          fi
+      - name: The desktop app itself starts and stays up (Linux, virtual display; advisory)
+        if: runner.os == 'Linux'
+        # Only a start-up crash (a plugin or capability error) is caught here. The window can't be seen, so a failure is a
+        # warning to look at, not a red release: a CI display is not a real desktop.
+        continue-on-error: true
+        shell: bash
+        working-directory: rust
+        run: |
+          sudo apt-get install -y xvfb
+          code=0; timeout 15 xvfb-run -a target/release/tiiny-studio >"$RUNNER_TEMP/app.log" 2>&1 || code=$?
+          tail -n 30 "$RUNNER_TEMP/app.log"
+          [ "$code" = 124 ] || { echo "::warning::the desktop app exited with code $code within 15 s"; exit 1; }
       - name: The AppImage can play audio and video (its GStreamer plugins are inside)
         if: runner.os == 'Linux'
         shell: bash
@@ -108,7 +138,7 @@ jobs:
         working-directory: rust/target/release/bundle/rpm
         # Fedora's own WebKitGTK instead of the AppImage's bundled copy (a white window on Fedora KDE, Wayland)
         run: |
-          docker run --rm -v "$PWD:/pkg:ro" fedora:latest bash -c '
+          docker run --rm -v "$PWD:/pkg:ro" fedora:44 bash -c '
             set -e
             dnf install -y -q /pkg/*.rpm
             bin=$(rpm -qlp /pkg/*.rpm | grep "^/usr/bin/" | head -1); echo "$bin"
@@ -144,12 +174,14 @@ jobs:
   docker:
     name: Docker image (amd64 + arm64)
     needs: check
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
     permissions:
       contents: read
       packages: write   # push the image
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with: { persist-credentials: false }
       - id: meta
         shell: bash
         run: |
@@ -164,6 +196,18 @@ jobs:
           { echo "tags<<EOF"; echo "$image:$v"; if [ -n "$latest" ]; then echo "$image:latest"; fi; echo "EOF"; } >> "$GITHUB_OUTPUT"
       - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1  # v4.4.0
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069  # v4.4.1
+      # Build the amd64 image and run it once before anything is pushed: a broken image never becomes :latest.
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc  # v7.4.0
+        env:
+          DOCKER_BUILD_RECORD_UPLOAD: "false"   # no .dockerbuild artifact (gh run download can't unpack it)
+        with:
+          context: .
+          load: true
+          tags: tiiny-studio:smoke
+          cache-to: type=gha,scope=docker,mode=max
+          cache-from: type=gha,scope=docker
+      - name: Start the image once (GET /, GET /api/settings with this version, stop)
+        run: bash testdata/docker_smoke.sh tiiny-studio:smoke
       - uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6  # v4.7.0
         with:
           registry: ghcr.io
@@ -171,9 +215,10 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
       - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc  # v7.4.0
         env:
-          DOCKER_BUILD_RECORD_UPLOAD: "false"   # no .dockerbuild artifact (gh run download can't unpack it)
+          DOCKER_BUILD_RECORD_UPLOAD: "false"
         with:
           context: .
+          cache-from: type=gha,scope=docker
           platforms: linux/amd64,linux/arm64
           push: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}   # a run by hand never publishes, even on a tag
           tags: ${{ steps.meta.outputs.tags }}
@@ -186,28 +231,45 @@ jobs:
     name: GitHub release
     needs: [check, apps, docker]
     # still release with the downloads that did build if one platform fails (e.g. a runner label changes),
-    # but never when the version check failed
+    # but never when the version check failed. What is missing is said in the log, the job summary and the release notes.
     if: ${{ !cancelled() && needs.check.result == 'success' && github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
     permissions:
       contents: write   # create the release
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with: { persist-credentials: false }
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7.1.0
         with:
           python-version: "3.12"
       - run: python tools/release.py
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
         with:
-          path: dist
+          path: dist/parts
           pattern: app-*
-          merge-multiple: true
-      - name: Checksums and release notes
+      - name: Gather the files, checksums and release notes (and say what is missing)
         shell: bash
+        env:
+          DOCKER_RESULT: ${{ needs.docker.result }}
         run: |
-          cd dist && sha256sum * > SHA256SUMS.txt && cd ..
+          # one artifact per desktop-app leg of the matrix in the apps job (keep the two lists in step); a leg that failed uploaded none
+          missing=()
+          for pair in "windows-2025:Windows x64" "windows-11-arm:Windows ARM" "macos-15:macOS Apple Silicon" "macos-15-intel:macOS Intel" "ubuntu-22.04:Linux x64" "ubuntu-22.04-arm:Linux ARM"; do
+            dir="dist/parts/app-${pair%%:*}"
+            if [ -d "$dir" ] && [ -n "$(ls -A "$dir")" ]; then mv "$dir"/* dist/; else missing+=("${pair#*:} installers"); fi
+          done
+          rm -rf dist/parts
+          [ "$DOCKER_RESULT" = success ] || missing+=("the Docker image (job $DOCKER_RESULT; :latest stays on the previous version)")
+          (cd dist && find . -maxdepth 1 -type f ! -name '*.sha256' ! -name SHA256SUMS.txt -printf '%f\n' | sort | xargs -d '\n' sha256sum > SHA256SUMS.txt)
           v=$(cat VERSION)
           awk -v v="## $v" '$0 ~ "^## " { on = index($0, v) == 1 } on' CHANGELOG.md > notes.md
+          if [ ${#missing[@]} -gt 0 ]; then
+            list=$(printf '%s; ' "${missing[@]}"); list=${list%; }
+            echo "::warning::This release is missing: $list"
+            echo "### Missing from this release: $list" >> "$GITHUB_STEP_SUMMARY"
+            { printf '> **Not part of this release (the build failed): %s.**\n\n' "$list"; cat notes.md; } > notes.tmp && mv notes.tmp notes.md
+          fi
           printf '\n---\n\nShowcase and discussion: [Tiiny Studio on TiinyVerse](https://tiinyverse.com/posts/5abfe45c-3cf0-4f53-88ab-b397741702c3) · [Tiiny Discord](https://discord.com/invite/R5CHUuXy4A) (#project-showcase → Tiiny Studio)\n' >> notes.md
           printf '\nKnown Tiiny-side issues and how the studio works around them: [Known device issues](https://github.com/%s#known-device-issues)\n' "$GITHUB_REPOSITORY" >> notes.md
       - uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64  # v3.0.3
