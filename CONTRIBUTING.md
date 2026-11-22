@@ -25,7 +25,7 @@ questions. Logs and screenshots help; please leave out API keys and your network
 | Headless server / Docker | `rust/studio-server` |
 | Desktop app (Tauri) | `rust/studio-desktop` |
 | The UI (plain JavaScript, no build step) | `static/` |
-| The original Python server (the reference the Rust version is tested against) | `server.py`, `media.py`, `chat.py`, `extract.py` |
+| The original Python server (kept for now; not tested any more, and without 0.7.1's network protections) | `server.py`, `media.py`, `chat.py`, `extract.py` |
 | What the Tiiny's API does, as found by testing | `docs/DEVICE-API.md` |
 | A fake Tiiny and the tests | `testdata/` |
 

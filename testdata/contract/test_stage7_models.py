@@ -1,43 +1,33 @@
 """Stage 7 contract tests: the model store, downloads, updates and delete (requested on the Tiiny Discord).
-Both servers share one fake Tiiny, so each scenario runs once per server from a fresh fake (reset), and the answers
-and the requests each server made to the device are compared. Nothing here touches a real Tiiny."""
+Each scenario runs from a fresh fake (reset); the answers it checks and the requests the server made to the device
+(the changes, not the GETs) are asserted. Nothing here touches a real Tiiny."""
 import json
 import threading
 import time
 import unittest
 
-from harness import AUTH, ContractCase, request, strip  # first: puts testdata/ on the path
+from harness import AUTH, ContractCase, request  # first: puts testdata/ on the path
 
 SMALL, BIG, CHAT = "Fake/Store-Small", "Fake/Store-Big", "Qwen/Qwen3-4B-Instruct"
-IGNORE = ("progress", "t", "device", "last_switch")  # progress depends on timing; device ids differ per server
 
 
 class Models(ContractCase):
     def scenario(self, steps):
-        """Run steps(call) against each server from a fresh fake; call(method, path, body) returns (status, json).
-        The device log is compared without its GETs (polling counts differ), so only the changes must match.
-        Returns (python results, the device requests python made); asserts Rust got the same of both."""
-        out = []
-        for base in (self.h.py_url, self.h.rs_url):
-            request(self.h.fake_url, "POST", "/__reset")
-            results = []
+        """Run steps(call) against the server from a fresh fake; call(method, path, body) returns (status, json).
+        Returns the device requests that changed something (GETs left out: how many polls there were depends on timing)."""
+        base = self.h.rs_url
+        request(self.h.fake_url, "POST", "/__reset")
 
-            def call(method, path, body=None, record=True, base=base, results=results):
-                r = request(base, method, path, body)
-                if record:  # polls until something happens are left out: how many there are depends on timing
-                    results.append((method, path, r.status, strip(json.loads(r.body or b"{}"), IGNORE)))
-                return r.status, json.loads(r.body or b"{}")
-            self.forget(base)
-            try:
-                steps(call)
-            finally:
-                self.forget(base)  # nothing queued may run on into the other server's turn or the next test
-            log = json.loads(request(self.h.fake_url, "GET", "/__requests").body)
-            out.append((results, [(r["method"], r["path"]) for r in log if r["method"] != "GET"]))
-        (py, py_log), (rs, rs_log) = out
-        self.assertEqual(py, rs)
-        self.assertEqual(py_log, rs_log)
-        return py, py_log
+        def call(method, path, body=None, record=True):
+            r = request(base, method, path, body)
+            return r.status, json.loads(r.body or b"{}")
+        self.forget(base)
+        try:
+            steps(call)
+        finally:
+            self.forget(base)  # nothing queued may run on into the next test
+        log = json.loads(request(self.h.fake_url, "GET", "/__requests").body)
+        return None, [(r["method"], r["path"]) for r in log if r["method"] != "GET"]
 
     def forget(self, base):
         """Clear a server's download queue and its list of models an update left missing (both live in memory)."""
@@ -399,24 +389,24 @@ class Models(ContractCase):
         # download a store model, load it, speak with it, unload it: the fake knows every model in the store, and (like the
         # device) refuses to speak with a model that isn't loaded
         say = {"kind": "speech", "model": SMALL, "text": "RUST TEST hello there."}
-        for base in (self.h.py_url, self.h.rs_url):
-            request(self.h.fake_url, "POST", "/__reset")
-            self.forget(base)
-            self.flags(download_rate=1000)
-            self.assertEqual(request(base, "POST", "/api/model/download", {"id": SMALL}).status, 200)
-            self.wait_until(lambda base=base: any(m["id"] == SMALL and m["status"] == "downloaded"
-                                                  for m in request(base, "GET", "/api/store").json["models"]), "the download to finish")
-            job, _ = self.run_job(base, say, reset=False)  # installed, but not loaded: the device says so
-            self.assertEqual(job["status"], "error", job)
-            self.load_on_fake(SMALL)
-            code = request(self.h.fake_url, "GET", f"/api/v1/models/{SMALL}/unload_candidate", headers=AUTH).status
-            self.assertEqual(code, 200)
-            job, calls = self.run_job(base, say, reset=False)
-            self.assertEqual(job["status"], "done", job.get("error"))
-            self.assertIn(("POST", "/v1/audio/speech"), [c[:2] for c in calls])
-            request(self.h.fake_url, "POST", f"/api/v1/models/{SMALL}/stop", {}, headers=AUTH)
-            self.assertNotIn(SMALL, self.fake.state.running)
-            self.forget(base)
+        base = self.h.rs_url
+        request(self.h.fake_url, "POST", "/__reset")
+        self.forget(base)
+        self.flags(download_rate=1000)
+        self.assertEqual(request(base, "POST", "/api/model/download", {"id": SMALL}).status, 200)
+        self.wait_until(lambda: any(m["id"] == SMALL and m["status"] == "downloaded"
+                                    for m in request(base, "GET", "/api/store").json["models"]), "the download to finish")
+        job, _ = self.run_job(say, reset=False)  # installed, but not loaded: the device says so
+        self.assertEqual(job["status"], "error", job)
+        self.load_on_fake(SMALL)
+        code = request(self.h.fake_url, "GET", f"/api/v1/models/{SMALL}/unload_candidate", headers=AUTH).status
+        self.assertEqual(code, 200)
+        job, calls = self.run_job(say, reset=False)
+        self.assertEqual(job["status"], "done", job.get("error"))
+        self.assertIn(("POST", "/v1/audio/speech"), [c[:2] for c in calls])
+        request(self.h.fake_url, "POST", f"/api/v1/models/{SMALL}/stop", {}, headers=AUTH)
+        self.assertNotIn(SMALL, self.fake.state.running)
+        self.forget(base)
 
     def test_the_fake_answers_a_model_that_is_not_loaded_like_the_device(self):
         # tested on 0.1.39: 404 for a named model that isn't running, 503 for `default` when no such model runs

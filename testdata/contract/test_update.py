@@ -1,6 +1,6 @@
 """Update-notice contract tests: GET /api/update and the "Check for updates" setting. "GitHub" is the fake Tiiny's
-/__release route (both servers get it as STUDIO_UPDATE_URL); the harness runs them with STUDIO_DOCKER=1, so the check
-starts off, as in the Docker image. Turning the setting off and on again clears a server's one-day cache."""
+/__release route (the server gets it as STUDIO_UPDATE_URL); the harness runs it with STUDIO_DOCKER=1, so the check
+starts off, as in the Docker image. Turning the setting off and on again clears the server's one-day cache."""
 import json
 import re
 import unittest
@@ -19,8 +19,8 @@ class Update(ContractCase):
     def setUpClass(cls):
         super().setUpClass()
         # before any test touches the setting: the Docker default, and no request to "GitHub" while it's off
-        cls.initial = [request(b, "GET", "/api/settings").json["update_check"] for b in (cls.h.py_url, cls.h.rs_url)]
-        cls.initial_answers = [request(b, "GET", "/api/update").json for b in (cls.h.py_url, cls.h.rs_url)]
+        cls.initial = request(cls.h.rs_url, "GET", "/api/settings").json["update_check"]
+        cls.initial_answers = request(cls.h.rs_url, "GET", "/api/update").json
         cls.initial_hits = cls.hits_now()
 
     @classmethod
@@ -30,12 +30,8 @@ class Update(ContractCase):
     def hits(self):
         return self.hits_now()
 
-    def servers(self):
-        return (self.h.py_url, self.h.rs_url)
-
     def setting(self, on):
-        for base in self.servers():
-            request(base, "POST", "/api/settings/updates", {"update_check": on})
+        request(self.h.rs_url, "POST", "/api/settings/updates", {"update_check": on})
 
     def serve(self, **flags):
         """Start from nothing remembered, with the fake answering as given, and the check on."""
@@ -45,20 +41,20 @@ class Update(ContractCase):
         self.setting(True)
 
     def ask(self):
-        pair = self.get("/api/update")
-        self.same(pair)
-        return pair[0].json
+        r = self.get("/api/update")
+        self.assertEqual(r.status, 200)
+        return r.json
 
     def test_default_is_off_in_docker_and_asks_nobody(self):
-        self.assertEqual(self.initial, [False, False])
-        self.assertEqual(self.initial_answers, [OFF, OFF])
+        self.assertIs(self.initial, False)
+        self.assertEqual(self.initial_answers, OFF)
         self.assertEqual(self.initial_hits, [])
 
-    def test_newer_release_is_offered_the_same_by_both(self):
+    def test_newer_release_is_offered(self):
         self.serve(release=NEWER)
         self.assertEqual(self.ask(), {"available": True, "version": "99.0.0", "notes": NEWER["body"], "url": NEWER["html_url"]})
         hits = self.hits()
-        self.assertEqual(len(hits), 2)  # one anonymous GET per server
+        self.assertEqual(len(hits), 1)  # one anonymous GET
         for h in hits:
             self.assertEqual(h["user_agent"], f"tiiny-studio/{VERSION}")
             self.assertEqual(h["accept"], "application/vnd.github+json")
@@ -73,7 +69,7 @@ class Update(ContractCase):
             with self.subTest(tag=tag):
                 self.serve(release={**NEWER, "tag_name": tag})
                 self.assertEqual(self.ask(), OFF)
-                self.assertEqual(len(self.hits()), 2)  # it did ask; the answer is just "no"
+                self.assertEqual(len(self.hits()), 1)  # it did ask; the answer is just "no"
 
     def test_prereleases_and_drafts_are_not_offered(self):
         for what, release in (("rc tag", {**NEWER, "tag_name": "v99.0.0-rc1"}), ("prerelease flag", {**NEWER, "prerelease": True}),
@@ -88,12 +84,12 @@ class Update(ContractCase):
             with self.subTest(status=status):
                 self.serve(release_fail=status)
                 self.assertEqual(self.ask(), OFF)
-                self.assertEqual(len(self.hits()), 2)
+                self.assertEqual(len(self.hits()), 1)
                 # within the cache window: no new request, even though GitHub would now answer
                 request(self.h.fake_url, "POST", "/__flags", {"release_fail": 0, "release": NEWER})
                 self.assertEqual(self.ask(), OFF)
                 self.assertEqual(self.ask(), OFF)
-                self.assertEqual(len(self.hits()), 2)
+                self.assertEqual(len(self.hits()), 1)
 
     def test_an_unknown_release_route_says_nothing(self):
         self.serve()  # the fake answers 404
@@ -104,7 +100,7 @@ class Update(ContractCase):
         first = self.ask()
         for _ in range(3):
             self.assertEqual(self.ask(), first)
-        self.assertEqual(len(self.hits()), 2)
+        self.assertEqual(len(self.hits()), 1)
 
     def test_setting_off_makes_no_request(self):
         self.serve(release=NEWER)
@@ -112,40 +108,34 @@ class Update(ContractCase):
         self.setting(False)
         request(self.h.fake_url, "POST", "/__reset")  # forgets the hits
         request(self.h.fake_url, "POST", "/__flags", {"release": NEWER})
-        for base in self.servers():
-            self.assertEqual(request(base, "GET", "/api/settings").json["update_check"], False)
+        self.assertEqual(self.get("/api/settings").json["update_check"], False)
         self.assertEqual(self.ask(), OFF)
         self.assertEqual(self.hits(), [])
 
     def test_the_setting_shows_in_settings_and_survives_a_bad_value(self):
         self.setting(True)
-        pair = self.get("/api/settings")
-        self.assertEqual([r.json["update_check"] for r in pair], [True, True])
-        for base in self.servers():
-            request(base, "POST", "/api/settings/updates", {})  # nothing given counts as off
-        pair = self.get("/api/settings")
-        self.assertEqual([r.json["update_check"] for r in pair], [False, False])
+        self.assertIs(self.get("/api/settings").json["update_check"], True)
+        self.post("/api/settings/updates", {})  # nothing given counts as off
+        self.assertIs(self.get("/api/settings").json["update_check"], False)
 
     def test_the_first_launch_question_is_not_asked_in_docker_and_prompt_tags_switch(self):
-        pair = self.get("/api/settings")
-        self.assertEqual([r.json["update_ask"] for r in pair], [False, False])  # Docker: never asked
-        self.assertEqual([r.json["tag_prompts"] for r in pair], [True, True])  # on unless switched off
+        s = self.get("/api/settings").json
+        self.assertIs(s["update_ask"], False)  # Docker: never asked
+        self.assertIs(s["tag_prompts"], True)  # on unless switched off
         try:
-            for base in self.servers():
-                self.assertEqual(request(base, "POST", "/api/settings/tags", {"tag_prompts": False}).status, 200)
-            self.assertEqual([r.json["tag_prompts"] for r in self.get("/api/settings")], [False, False])
+            self.assertEqual(self.post("/api/settings/tags", {"tag_prompts": False}).status, 200)
+            self.assertIs(self.get("/api/settings").json["tag_prompts"], False)
         finally:
             self.post("/api/settings/tags", {"tag_prompts": True})
-        self.assertEqual([r.json["tag_prompts"] for r in self.get("/api/settings")], [True, True])
+        self.assertIs(self.get("/api/settings").json["tag_prompts"], True)
 
     def test_the_page_has_the_notice(self):
-        for base in self.servers():
-            page = request(base, "GET", "/").body.decode()
-            self.assertIn('id="updatePill"', page)
-            self.assertIn('id="updateModal"', page)
-            js = request(base, "GET", "/static/update.js")
-            self.assertEqual(js.status, 200)
-            self.assertTrue(re.search(rb"/api/update", js.body))
+        page = self.get("/").body.decode()
+        self.assertIn('id="updatePill"', page)
+        self.assertIn('id="updateModal"', page)
+        js = self.get("/static/update.js")
+        self.assertEqual(js.status, 200)
+        self.assertTrue(re.search(rb"/api/update", js.body))
 
 
 if __name__ == "__main__":

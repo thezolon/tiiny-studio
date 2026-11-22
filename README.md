@@ -72,8 +72,7 @@ Showcase and discussion: [Tiiny Studio on TiinyVerse](https://tiinyverse.com/pos
   and remembers steps, guidance, size and negative prompt per image model.
 
 It's written in Rust (one server library used by both the desktop app and the Docker image) with a vanilla-JS
-front end. The original Python server is still in the repo as the behaviour reference the Rust version is tested
-against.
+front end. The original Python server is still in the repo for now, but it is no longer tested.
 
 ## Install
 
@@ -138,8 +137,8 @@ The server: `cd rust && cargo run --release -p studio-server` (a current stable 
 The desktop app: `cd rust/studio-desktop && cargo tauri build` (needs the Tauri CLI; on Linux, WebKitGTK). It listens on
 `127.0.0.1:7861` (a free port instead if that one is taken).
 
-The original Python server still runs as well (`python server.py`, Python 3.10+, no packages); it's kept as the
-reference the Rust version is tested against (not for use on a network: it lacks the Rust server's protections, such as the Host check and request limits). Data goes to `./data` either way.
+The original Python server still runs as well (`python server.py`, Python 3.10+, no packages), but it is no longer tested
+and doesn't have the Rust server's protections (the Host check, request limits, and the network protections added in 0.7.1), so don't use it on a network. Data goes to `./data` either way.
 
 ## Configuration
 
@@ -258,7 +257,7 @@ off in Docker. New pictures, songs and videos carry their prompt (or spoken text
 | `rust/studio-core/` | the server: routes, device client and settings, job queue, media jobs, chat and tools, documents, untrusted-content screening |
 | `rust/studio-server/` | `tiiny-studio-server`, the headless server (Docker, home server) |
 | `rust/studio-desktop/` | the desktop app (Tauri 2): window, tray, downloads, clipboard |
-| `server.py`, `media.py`, `chat.py`, `extract.py`, `safety.py` | the original Python server, kept as the behaviour reference (`testdata/contract/` runs the same requests against both) |
+| `server.py`, `media.py`, `chat.py`, `extract.py`, `safety.py` | the original Python server, kept in the repo for now and no longer tested (the contract tests in `testdata/contract/` run the Rust server only; `testdata/extract_parity.py` still compares the document readers with `extract.py`) |
 | `static/index.html` | shell, Image workspace, Models panel |
 | `static/settings.js` | device settings and first-run setup |
 | `static/update.js` | the "new version is available" notice and its Settings switch |
