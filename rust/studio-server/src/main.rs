@@ -8,15 +8,25 @@ async fn main() {
     let config = Config::from_env(std::path::PathBuf::from("data"));
     #[cfg(unix)]
     run_as_data_owner(&config.data_dir);
-    let addr = format!("{}:{}", config.host, config.port);
+    // an IPv6 host needs its brackets to read back as an address (`[::1]:7860`)
+    let addr = if config.host.contains(':') && !config.host.starts_with('[') {
+        format!("[{}]:{}", config.host, config.port)
+    } else {
+        format!("{}:{}", config.host, config.port)
+    };
     let url = format!("http://localhost:{}/", config.port);
-    let listener = match tokio::net::TcpListener::bind(&addr).await {
+    let bind_to = (config.host.trim_matches(['[', ']']), config.port);
+    let listener = match tokio::net::TcpListener::bind(bind_to).await {
         Ok(l) => l,
-        Err(_) => {
-            eprintln!(
-                "Port {} is already in use. If Tiiny Studio is already running, it's at {url}",
-                config.port
-            );
+        Err(e) => {
+            if e.kind() == std::io::ErrorKind::AddrInUse {
+                eprintln!(
+                    "Port {} is already in use. If Tiiny Studio is already running, it's at {url}",
+                    config.port
+                );
+            } else {
+                eprintln!("Can't listen on {addr}: {e}. Check HOST and PORT.");
+            }
             std::process::exit(1);
         }
     };

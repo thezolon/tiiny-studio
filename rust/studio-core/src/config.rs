@@ -27,7 +27,13 @@ impl Config {
             .filter(|b| !b.is_empty())
             .unwrap_or_else(|| host.clone());
         Config {
-            port: env("PORT").parse().unwrap_or(7860),
+            port: match env("PORT").trim() {
+                "" => 7860,
+                p => p.parse().unwrap_or_else(|_| {
+                    eprintln!("PORT={p} isn't a port number (1-65535); using 7860.");
+                    7860
+                }),
+            },
             lan_access: !matches!(bind.as_str(), "127.0.0.1" | "localhost" | "::1"),
             host,
             password: env("STUDIO_PASSWORD"),

@@ -1006,18 +1006,8 @@ async fn model_launch(State(state): State<AppState>, body: Bytes) -> Response {
     if mid.is_empty() {
         return error(StatusCode::BAD_REQUEST, "id required");
     }
-    let path = format!("/api/v1/models/{}/launch", quote(&mid));
-    reply(
-        device::call(
-            &state,
-            "POST",
-            &path,
-            Some(json!({"model_id": mid})),
-            120,
-            None,
-        )
-        .await,
-    )
+    let cur = state.settings.current();
+    reply(crate::media::launch_on(&state, (&cur.url, &cur.key), &mid, || false).await)
 }
 
 async fn model_stop(State(state): State<AppState>, body: Bytes) -> Response {
