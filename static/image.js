@@ -443,7 +443,8 @@ function renderStage() {
     stage.append(el("div", { class: "result-wrap" }, el("div", { class: "var-grid" + (entry.outputs.length > 2 ? " four" : "") },
       entry.outputs.map((o, i) => el("button", { class: "var-cell" + (i === idx ? " on" : ""), title: `Open variation ${i + 1}`, onclick: () => { S.view.idx = i; S.grid = false; renderStage(); } },
         el("img", { src: "/images/" + o, alt: `variation ${i + 1}` }), el("span", {}, i + 1)))),
-      el("div", { class: "prompt-line" }, p.prompt)));
+      el("div", { class: "prompt-line" }, p.prompt),
+      entry.note ? el("div", { class: "hint-line warn", role: "status" }, entry.note) : null));  // e.g. "Only 3 of 4 pictures were made."
     return;
   }
   const canvas = el("div", { class: "canvas" + (S.view.fresh ? " fade-in" : "") });
@@ -474,7 +475,8 @@ function renderStage() {
       p.steps ? el("span", {}, `${p.steps} steps`) : null,
       p.guidance_scale ? el("span", {}, `cfg ${p.guidance_scale}`) : null,
       p.seed != null ? el("button", { class: "seed-copy", title: "Click to copy seed", onclick: () => { navigator.clipboard?.writeText(String(p.seed)); toast("Seed copied"); } }, `seed ${p.seed}`) : null,
-      el("span", {}, fmtSec(entry.seconds))));
+      el("span", {}, fmtSec(entry.seconds))),
+    entry.note ? el("div", { class: "hint-line warn", role: "status" }, entry.note) : null);
   const cap = S.captions[entry.outputs[idx]];
   if (cap) wrap.append(el("div", { class: "caption-box" }, el("p", {}, cap),
     el("div", { class: "row" }, el("small", {}, "Description"), el("span", { class: "spacer" }),

@@ -109,6 +109,13 @@ class Chat(ContractCase):
         self.same_job({"kind": "chat", "voice_id": "missing", "messages": [{"role": "user", "content": "RUST TEST hi"}]})
 
 
+    def test_chosen_chat_model_is_sent_as_its_id(self):
+        # the chat head picks one of several running chat models (#149 U21): that id, not "default", reaches the device
+        py, _ = self.same_job({"kind": "chat", "model": "Fake/No-Thinking", "load": "Fake/No-Thinking",
+                               "messages": [{"role": "user", "content": "RUST TEST hi"}]})
+        self.assertEqual((py["status"], py["entry"]["params"]["model"]), ("done", "Fake/No-Thinking"))
+        self.assertEqual(next(b for m, p, b in self.last_calls if p == "/v1/chat/completions")["model"], "Fake/No-Thinking")
+
     # ---------- thinking follows the model's own "thinking" info (#23) ----------
     def test_thinking_follows_the_model(self):
         cases = [("Fake/Always-Thinks", "reasoning_effort", "chat_template_kwargs"),   # reasons anyway: never sent enable_thinking
