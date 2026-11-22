@@ -5,7 +5,10 @@ use std::collections::HashMap;
 use super::render::Block;
 use super::text::{dirname, is_digit, join, normpath, py_int, strip};
 use super::xml::{a, p, r, rel, s, v, w, Elem};
-use super::{Doc, Fail, MAX_ROWS, R};
+use super::{Doc, Fail, MAX_CELLS, MAX_COLS, MAX_ROWS, R};
+
+/// `mc:Fallback`: the stand-in Word writes next to `mc:Choice` (a text box then comes out twice if both are read).
+const MC_FALLBACK: &str = "{http://schemas.openxmlformats.org/markup-compatibility/2006}Fallback";
 
 /// Relationship id -> target path for an OOXML part (a dict: a repeated id keeps its first position).
 pub struct Rels(Vec<(Option<String>, String)>);
@@ -38,7 +41,10 @@ fn rels(doc: &mut Doc, part: &str) -> R<Rels> {
         if e.get("TargetMode") != Some("External") {
             out.insert(
                 e.get("Id").map(str::to_string),
-                normpath(&join(&d, e.get("Target").unwrap_or(""))),
+                // an absolute target ("/xl/worksheets/sheet1.xml") names the zip member without its slash
+                normpath(&join(&d, e.get("Target").unwrap_or("")))
+                    .trim_start_matches('/')
+                    .to_string(),
             );
         }
     }
@@ -64,7 +70,20 @@ fn runs(el: &Elem, pics: &mut Vec<String>) -> String {
             if let Some(rid) = rid.filter(|s| !s.is_empty()) {
                 pics.push(rid.to_string());
             }
-        } else if ![w!("delText"), w!("instrText"), w!("pPr"), a!("pPr")].contains(&t) {
+        } else if t == w!("p") {
+            // a paragraph inside a paragraph (a text box): kept apart from the text around it
+            out.push('\n');
+            out.push_str(&runs(node, pics));
+            out.push('\n');
+        } else if ![
+            w!("delText"),
+            w!("instrText"),
+            w!("pPr"),
+            a!("pPr"),
+            MC_FALLBACK,
+        ]
+        .contains(&t)
+        {
             out.push_str(&runs(node, pics));
         }
     }
@@ -113,10 +132,7 @@ fn docx_styles(doc: &mut Doc) -> R<StyleMaps> {
     for st in doc.xml("word/styles.xml")?.iter(Some(w!("style"))) {
         let sid = st.get(w!("styleId")).map(str::to_string);
         let name = match st.child(w!("name")) {
-            Some(n) => n
-                .get(w!("val"))
-                .ok_or(Fail::Other("AttributeError"))?
-                .to_lowercase(),
+            Some(n) => n.get(w!("val")).unwrap_or("").to_lowercase(),
             None => String::new(),
         };
         let lvl = st.path(&[w!("pPr"), w!("outlineLvl")]);
@@ -128,7 +144,7 @@ fn docx_styles(doc: &mut Doc) -> R<StyleMaps> {
         } else if name == "title" {
             heads.insert(sid.clone(), 1);
         } else if let Some(l) = lvl {
-            let val = l.get(w!("val")).ok_or(Fail::Other("TypeError"))?;
+            let val = l.get(w!("val")).unwrap_or("");
             if let Some(n) = py_int(val).filter(|&n| is_digit(val) && n < 6) {
                 heads.insert(sid.clone(), n + 1);
             }
@@ -201,24 +217,15 @@ fn docx_body(doc: &mut Doc, root: &Elem, rel: &Rels, label: &str, st: &Styles) -
                 .map(str::to_string);
             let num = ppr.and_then(|p| p.child(w!("numPr")));
             let olvl = ppr.and_then(|p| p.child(w!("outlineLvl")));
-            let olvl_ok = match olvl {
-                Some(o) if !st.heads.contains_key(&style) => {
-                    let val = o.get(w!("val")).ok_or(Fail::Other("TypeError"))?;
-                    is_digit(val) && py_int(val).is_some_and(|n| n < 6)
-                }
-                _ => false,
+            let olvl_val = olvl.and_then(|o| o.get(w!("val"))).unwrap_or("");
+            let level = match st.heads.get(&style).copied() {
+                Some(l) if l != 0 => Some(l),
+                // a style that is a heading but names no level: the paragraph's own outline level, if it has one
+                Some(_) => py_int(olvl_val).map(|n| n.saturating_add(1)),
+                None => (is_digit(olvl_val) && py_int(olvl_val).is_some_and(|n| n < 6))
+                    .then(|| py_int(olvl_val).unwrap_or(0) + 1),
             };
-            if st.heads.contains_key(&style) || olvl_ok {
-                let level = match st.heads.get(&style).copied().filter(|&l| l != 0) {
-                    Some(l) => l,
-                    None => {
-                        let val = olvl
-                            .ok_or(Fail::Other("AttributeError"))?
-                            .get(w!("val"))
-                            .ok_or(Fail::Other("TypeError"))?;
-                        py_int(val).ok_or(Fail::Other("ValueError"))? + 1
-                    }
-                };
+            if let Some(level) = level {
                 doc.add(Block::H(level, strip(&text).to_string()));
             } else if num.is_some() || st.lists.contains_key(&style) {
                 let ilvl = num.and_then(|n| n.child(w!("ilvl")));
@@ -255,9 +262,10 @@ fn docx_body(doc: &mut Doc, root: &Elem, rel: &Rels, label: &str, st: &Styles) -
             images(doc, rel, &pics, label)?;
         } else if t == w!("tbl") {
             let (mut rows, mut pics) = (vec![], vec![]);
-            for tr in el.iter(Some(w!("tr"))) {
+            for tr in table_rows(el) {
                 rows.push(
-                    tr.children(w!("tc"))
+                    table_cells(tr)
+                        .into_iter()
                         .map(|tc| {
                             let cell: Vec<String> = tc
                                 .iter(Some(w!("p")))
@@ -276,6 +284,36 @@ fn docx_body(doc: &mut Doc, root: &Elem, rel: &Rels, label: &str, st: &Styles) -
         }
     }
     Ok(())
+}
+
+/// The rows of a table, through content controls (`w:sdt`) but not into tables nested in a cell.
+fn table_rows(tbl: &Elem) -> Vec<&Elem> {
+    let mut out = vec![];
+    for k in &tbl.kids {
+        if k.tag == w!("tr") {
+            out.push(k);
+        } else if k.tag == w!("sdt") {
+            if let Some(c) = k.child(w!("sdtContent")) {
+                out.extend(table_rows(c));
+            }
+        }
+    }
+    out
+}
+
+/// The cells of a row, also those inside a content control.
+fn table_cells(tr: &Elem) -> Vec<&Elem> {
+    let mut out = vec![];
+    for k in &tr.kids {
+        if k.tag == w!("tc") {
+            out.push(k);
+        } else if k.tag == w!("sdt") {
+            if let Some(c) = k.child(w!("sdtContent")) {
+                out.extend(table_cells(c));
+            }
+        }
+    }
+    out
 }
 
 pub fn docx(doc: &mut Doc) -> R<()> {
@@ -368,7 +406,14 @@ fn pptx_shapes(doc: &mut Doc, tree: &Elem, rel: &Rels, label: &str) -> R<()> {
                     .children(a!("tr"))
                     .map(|tr| {
                         tr.children(a!("tc"))
-                            .map(|tc| strip(&runs(tc, &mut vec![])).to_string())
+                            .map(|tc| {
+                                let paras: Vec<String> = tc
+                                    .iter(Some(a!("p")))
+                                    .into_iter()
+                                    .map(|p| strip(&runs(p, &mut vec![])).to_string())
+                                    .collect();
+                                strip(&paras.join(" ")).to_string()
+                            })
                             .collect::<Vec<_>>()
                     })
                     .collect();
@@ -416,8 +461,9 @@ pub fn pptx(doc: &mut Doc) -> R<()> {
 
 // ---------- Excel ----------
 
-/// Column number (0-based) of a cell reference like "AB12".
-fn col_index(cell: &str) -> R<usize> {
+/// Column number (0-based) of a cell reference like "AB12": `None` when it has no letters (the cell then follows
+/// the previous one), `Some(None)` beyond Excel's last column (XFD; the cell is ignored).
+fn col_index(cell: &str) -> Option<Option<usize>> {
     let letters = cell.bytes().take_while(u8::is_ascii_uppercase);
     let mut n = 0usize;
     let mut any = false;
@@ -426,29 +472,38 @@ fn col_index(cell: &str) -> R<usize> {
         n = n.saturating_mul(26).saturating_add((b - 64) as usize);
     }
     if !any {
-        return Err(Fail::Other("AttributeError"));
+        return None;
     }
-    if n > 1 << 20 {
-        return Err(Fail::Other("MemoryError"));
+    Some((n <= MAX_COLS).then(|| n - 1))
+}
+
+/// Text of a shared string or inline string: its `t` and the `t` of its runs, not the phonetic guide (`rPh`).
+fn string_item(si: &Elem) -> String {
+    let mut out = String::new();
+    for k in &si.kids {
+        if k.tag == s!("t") {
+            out.push_str(&k.text);
+        } else if k.tag == s!("r") {
+            for t in k.children(s!("t")) {
+                out.push_str(&t.text);
+            }
+        }
     }
-    Ok(n - 1)
+    out
 }
 
 pub fn xlsx(doc: &mut Doc) -> R<()> {
     let mut shared: Vec<String> = vec![];
     if doc.has("xl/sharedStrings.xml") {
         for si in doc.xml("xl/sharedStrings.xml")?.iter(Some(s!("si"))) {
-            shared.push(
-                si.iter(Some(s!("t")))
-                    .iter()
-                    .map(|t| t.text.as_str())
-                    .collect(),
-            );
+            shared.push(string_item(si));
         }
     }
     let rel = rels(doc, "xl/workbook.xml")?;
     let book = doc.xml("xl/workbook.xml")?;
     for sheet in book.iter(Some(s!("sheet"))) {
+        doc.check()?;
+        let mut cell_count = 0usize;
         let Some(target) = sheet
             .get(r!("id"))
             .and_then(|id| rel.get(id))
@@ -459,6 +514,7 @@ pub fn xlsx(doc: &mut Doc) -> R<()> {
         let mut rows: Vec<Vec<String>> = vec![];
         for row in doc.xml(target)?.iter(Some(s!("row"))) {
             let mut cells: HashMap<usize, String> = HashMap::new();
+            let mut next_col = 0usize; // where a cell without a reference goes
             for c in row.iter(Some(s!("c"))) {
                 let (kind, vel) = (c.get("t"), c.child(s!("v")));
                 let vtext = vel.map(|v| v.text.as_str()).filter(|t| !t.is_empty());
@@ -469,26 +525,37 @@ pub fn xlsx(doc: &mut Doc) -> R<()> {
                 let val = if let Some(n) = shared_idx {
                     shared[n].clone()
                 } else if kind == Some("inlineStr") {
-                    c.iter(Some(s!("t")))
-                        .iter()
-                        .map(|t| t.text.as_str())
-                        .collect()
+                    match c.child(s!("is")) {
+                        Some(is) => string_item(is),
+                        None => c
+                            .iter(Some(s!("t")))
+                            .iter()
+                            .map(|t| t.text.as_str())
+                            .collect(),
+                    }
                 } else {
                     vtext.unwrap_or("").to_string()
                 };
-                if let (false, Some(cell)) = (val.is_empty(), c.get("r").filter(|r| !r.is_empty()))
-                {
-                    cells.insert(col_index(cell)?, val.replace('\t', " "));
+                let col = match c.get("r").filter(|r| !r.is_empty()) {
+                    Some(cell) => col_index(cell).unwrap_or(Some(next_col)),
+                    None => Some(next_col),
+                };
+                if let Some(col) = col {
+                    next_col = col + 1;
+                    if !val.is_empty() && col < MAX_COLS {
+                        cells.insert(col, val.replace('\t', " "));
+                    }
                 }
             }
             if let Some(&max) = cells.keys().max() {
+                cell_count += max + 1;
                 rows.push(
                     (0..=max)
                         .map(|i| cells.get(&i).cloned().unwrap_or_default())
                         .collect(),
                 );
             }
-            if rows.len() >= MAX_ROWS {
+            if rows.len() >= MAX_ROWS || cell_count >= MAX_CELLS {
                 break;
             }
         }

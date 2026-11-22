@@ -856,7 +856,7 @@ async fn extract_document(headers: axum::http::HeaderMap, body: Bytes) -> Respon
         .and_then(|v| v.to_str().ok())
         .unwrap_or("file");
     let name = percent_decode(raw);
-    match crate::extract::extract(&name, &body) {
+    match crate::extract::extract_isolated(name, body).await {
         Ok(parts) => Json(json!({"parts": parts})).into_response(),
         Err(e) => error(StatusCode::BAD_REQUEST, &e.0),
     }
