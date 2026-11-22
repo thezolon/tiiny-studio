@@ -1,25 +1,28 @@
 # Changelog
 
-## Unreleased
+## 0.7.2 (2026-11-22)
+
+A quick fix for a crash on Linux while a video renders, plus complete sentences in Speak over Wi-Fi and a better
+Improve prompt with Qwen-Image's prompt enhancers. Recommended for everyone on 0.7.1, and for Linux users who make videos.
 
 **Fixed**
-- **Models:** a model that is being loaded is no longer shown as a download; a model that isn't in the Model Store no
-  longer shows its progress twice ("41% · 41%"); "No updates found" no longer sounds as if the Tiiny were offline.
 - **Video (Linux):** the app no longer crashes while a video renders when the gallery already holds clips. Each video
   thumbnail was a live video player, rebuilt every second while a render ran, until WebKit ran out of open files
   ("Too many open files"). Thumbnails are now still frames, read one clip at a time; replaced players are released.
   (Reported on the Tiiny Discord.)
-- **Improve prompt with Qwen-Image's prompt enhancers:** in Edit mode it now uses a loaded Qwen-Image-2.1-PE-I2I
-  instead of loading a chat model, and the "Rewritten by" line names the model that actually did the rewrite (it
-  always named the chat model). PE-I2I answers with a small JSON object; only its text goes into the box. To use a
-  different model, that line now has a **Change** link to Settings > "Helpers use", which explains what Automatic picks
-  and that a model chosen there is used for every helper, even with an enhancer loaded. (Reported on the Tiiny Discord.)
 - **Speak: no more missing sentences.** Through the Tiiny's gateway, MOSS-TTS-Nano, OmniVoice, VoxCPM2, Qwen3-TTS
   CustomVoice and VibeVoice-Realtime often fail, and sometimes give a clip that leaves out the last sentence or says it
   first (TiinyOS 0.1.39). The studio now talks to the voice model's own port whenever the connection reaches it
   (Wi-Fi/LAN), where every sentence comes out in order. Over USB only the gateway is reachable: picking one of these
   models there shows a warning that suggests Kokoro-82M or Supertonic-3. This also corrects 0.6.3, which said these
   models worked again: ending the text with a full stop and a space only helped about half the time.
+- **Improve prompt with Qwen-Image's prompt enhancers:** in Edit mode it now uses a loaded Qwen-Image-2.1-PE-I2I
+  instead of loading a chat model, and the "Rewritten by" line names the model that actually did the rewrite (it
+  always named the chat model). PE-I2I answers with a small JSON object; only its text goes into the box. To use a
+  different model, that line now has a **Change** link to Settings > "Helpers use", which explains what Automatic picks
+  and that a model chosen there is used for every helper, even with an enhancer loaded. (Reported on the Tiiny Discord.)
+- **Models:** a model that is being loaded is no longer shown as a download; a model that isn't in the Model Store no
+  longer shows its progress twice ("41% · 41%"); "No updates found" no longer sounds as if the Tiiny were offline.
 
 ## 0.7.1 (2026-11-22)
 
