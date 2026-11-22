@@ -17,6 +17,7 @@ TRELLIS = "microsoft/TRELLIS.2-4B"
 VIDEO = fake_tiiny.VIDEO
 PNG = "data:image/png;base64," + base64.b64encode(fake_tiiny.tiny_png()).decode()
 WAV = "data:audio/wav;base64," + base64.b64encode(fake_tiiny.tiny_wav()).decode()
+LONG_REF = "data:audio/wav;base64," + base64.b64encode(fake_tiiny.tiny_wav(12, 8000)).decode()  # a style reference the device takes
 WAV_44K = "data:audio/x-wav;base64," + base64.b64encode(fake_tiiny.tiny_wav(0.05, 44100)).decode()
 MP3 = "data:audio/mpeg;base64," + base64.b64encode(fake_tiiny.MP3).decode()
 # ids, times and file names (they contain the job id) differ per run; files are compared by files_equal
@@ -45,6 +46,13 @@ class Jobs(ContractCase):
     def view(self, job):
         return strip(job)
 
+    def comparable(self, calls):
+        # the Rust server also asks the song model what a style reference may be before it sends anything, and lists the
+        # sessions before a plain song so it can tell its own from older ones (by identity, not by the clocks)
+        calls = [c for c in calls if c[:2] != ("GET", "/v1/music/info")]
+        return [c for i, c in enumerate(calls)
+                if not (c[:2] == ("GET", "/v1/music/sessions") and i + 1 < len(calls) and calls[i + 1][:2] == ("POST", "/v1/music/generate"))]
+
     def failed(self, req, text=None, **kw):
         py, _ = self.same_job(req, **kw)
         self.assertEqual(py["status"], "error")
@@ -57,6 +65,13 @@ class Audio(Jobs):
     # ---------- speech ----------
     def speech(self, **kw):
         return {"kind": "speech", "model": TTS, "text": "RUST TEST hello there.", "ref_audio": WAV, "ref_text": "hi", "load": TTS, **kw}
+
+    def test_speech_without_a_voice_uses_the_models_default(self):
+        py, rs = self.same_job(self.speech(ref_audio=None, ref_text=None))
+        self.assertEqual(py["status"], "done", py.get("error"))
+        body = next(c[3] for c in self.calls() if c[1] == "/v1/audio/speech")
+        for k in ("voice", "ref_audio", "instruct"):
+            self.assertNotIn(k, body)
 
     def test_speech_short(self):
         py, rs = self.same_job(self.speech(language="en", instruct=" calm ", voice_name="RUST TEST voice"))
@@ -72,7 +87,7 @@ class Audio(Jobs):
 
     def test_speech_errors(self):
         self.failed(self.speech(text="  "), "Nothing to say")
-        self.failed(self.speech(ref_audio=None), "cloned voice")
+        self.failed(self.speech(ref_audio=None, flags={"fail": {"/v1/audio/speech": [500, "boom"]}}), "No voice was chosen")
         self.failed(self.speech(ref_text=" "), "transcript")
         self.failed(self.speech(ref_audio="nope"), "base64 data URI")
         self.failed({**self.speech(), "load": None}, "isn't loaded")
@@ -86,9 +101,9 @@ class Audio(Jobs):
         self.assertEqual(py["entry"]["text"], "fake transcript")
         self.files_equal(py, rs, "sources")
         self.same_job({**base, "audio": WAV_44K, "ephemeral": True})
-        py, rs = self.same_job({**base, "audio": MP3})  # not a WAV: sent as it is
-        self.assertTrue(py["entry"]["sources"][0].endswith("audio.mp3"))
-        self.same_job({**base, "audio": "data:audio/webm;base64," + base64.b64encode(b"webm?").decode()})
+        # not a WAV: refused up front (the device can hang on it) instead of forwarded
+        self.failed({**base, "audio": MP3}, "needs a WAV file")
+        self.failed({**base, "audio": "data:audio/webm;base64," + base64.b64encode(b"webm?").decode()}, "needs a WAV file")
         self.same_job({**base, "audio": "data:audio/wav;base64," + base64.b64encode(b"RIFFjunk").decode()})
 
     def test_transcribe_long_audio_in_parts(self):
@@ -163,10 +178,29 @@ class Audio(Jobs):
         self.assertEqual([name_suffix(f) for f in py["entry"]["tracks"]], [name_suffix(f) for f in rs["entry"]["tracks"]])
 
     def test_song_instrumental_with_style_reference(self):
-        py, rs = self.same_job(self.song(generation_type="bgm", lyrics="", reference_audio=WAV))
-        self.assertEqual(py["status"], "done")
+        py, rs = self.same_job(self.song(generation_type="bgm", lyrics="", reference_audio=LONG_REF))
+        self.assertEqual(py["status"], "done", py.get("error"))
         self.files_equal(py, rs)
         self.files_equal(py, rs, "sources")
+
+    def test_song_style_reference_is_checked_before_the_device_is_asked(self):
+        short = "data:audio/wav;base64," + base64.b64encode(fake_tiiny.tiny_wav(3, 8000)).decode()
+        long = "data:audio/wav;base64," + base64.b64encode(fake_tiiny.tiny_wav(125, 4000)).decode()
+        ace = "ACE-Step/AceStep-Fake"
+        cases = [(self.song(reference_audio=short), "at least 10 seconds"),
+                 (self.song(reference_audio=long), "at most 120 seconds"),
+                 (self.song(reference_audio="data:audio/mpeg;base64," + base64.b64encode(b"ID3junk").decode()), "must be a WAV"),
+                 (self.song(model="Fake/YuE2", load="Fake/YuE2", reference_audio=LONG_REF), "doesn't take a style reference")]
+        for req, text in cases:
+            job, calls = self.run_job(self.h.rs_url, req)
+            self.assertEqual(job["status"], "error", text)
+            self.assertIn(text, job["error"])
+            self.assertFalse([c for c in calls if c[0] == "POST" and "generate" in c[1]], "nothing was sent to the song model")
+        # AceStep takes 5 s and up; 3 s is refused, 12 s goes through
+        job, _ = self.run_job(self.h.rs_url, self.song(model=ace, load=ace, reference_audio=short))
+        self.assertIn("at least 5 seconds", job["error"])
+        job, _ = self.run_job(self.h.rs_url, self.song(model=ace, load=ace, reference_audio=LONG_REF))
+        self.assertEqual(job["status"], "done", job.get("error"))
 
     def test_song_polls_progress_while_composing(self):
         py, _ = self.same_job(self.song(flags={"delay": {"/v1/generate": 3.4}}))
@@ -453,13 +487,32 @@ class Video(Jobs):
         self.assertEqual(sent, {"model": VIDEO, "prompt": "RUST TEST a red apple rolls", "size": "832x480", "seconds": "2", "steps": 4})
 
     def test_video_from_frames(self):
-        py, rs = self.same_job(self.video(prompt="", image=PNG, last_image=PNG))
+        py, rs = self.same_job(self.video(prompt="", image=PNG, last_image=PNG))  # the device ignores an end frame: not sent
         self.assertEqual(py["status"], "done", py.get("error"))
-        self.assertEqual(len(py["entry"]["sources"]), 2)
+        self.assertEqual(len(py["entry"]["sources"]), 1)
         self.files_equal(py, rs, "sources")
         sent = next(c[3] for c in self.calls() if c[:2] == ("POST", "/v1/videos"))
         self.assertEqual(sent["prompt"], "Bring this picture to life")
-        self.assertEqual([sent[k].split(",")[0] for k in ("image", "last_image")], ["data:image/png;base64"] * 2)
+        self.assertEqual(sent["image"].split(",")[0], "data:image/png;base64")
+        self.assertNotIn("last_image", sent)
+
+    def test_video_longer_than_the_device_renders_is_refused(self):
+        self.failed(self.video(seconds=8), "1 to 7 seconds")
+        self.failed(self.video(seconds=0), "1 to 7 seconds")
+        py, rs = self.same_job(self.video(seconds=7, steps=4))
+        self.assertEqual((py["status"], rs["status"]), ("done", "done"), py.get("error"))
+
+    def test_transcribe_can_be_cancelled_while_the_device_holds_the_request(self):
+        base = self.h.rs_url
+        request(self.h.fake_url, "POST", "/__reset")
+        self.load_on_fake(ASR)
+        request(self.h.fake_url, "POST", "/__reset_log")
+        request(self.h.fake_url, "POST", "/__flags", {"delay": {"/v1/audio/transcriptions": 20}})
+        job = request(base, "POST", "/api/jobs", {"kind": "transcribe", "model": ASR, "audio": WAV, "ephemeral": True}).json
+        self.wait_sent("POST", "/v1/audio/transcriptions")
+        request(base, "POST", f"/api/jobs/{job['id']}/cancel", {})
+        done, _ = self.finish(base, job, timeout=10)  # well before the fake answers
+        self.assertEqual(done["status"], "cancelled")
 
     def test_video_errors(self):
         self.failed(self.video(prompt=" "), "Describe the clip")

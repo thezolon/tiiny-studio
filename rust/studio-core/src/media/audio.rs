@@ -148,7 +148,6 @@ struct Wav {
     channels: usize,
     sampwidth: usize,
     rate: u32,
-    nframes: u64,  // as declared by the data chunk
     data: Vec<u8>, // what readframes(nframes) returns: shorter when the file is cut off
 }
 
@@ -168,7 +167,12 @@ fn parse(buf: &[u8]) -> Result<Wav, WavError> {
     if &buf[..4] != b"RIFF" {
         return Err(err("file does not start with RIFF id"));
     }
-    let declared = le32(&buf[4..8]); // chunks inside can't read past the RIFF chunk's own size
+    let mut declared = le32(&buf[4..8]); // chunks inside can't read past the RIFF chunk's own size
+    // a streamed WAV (ffmpeg or a TTS server writing to a pipe) has no sizes yet: 0 or 0xFFFFFFFF, "to the end"
+    let streaming = declared == 0 || declared == 0xFFFF_FFFF;
+    if streaming {
+        declared = (buf.len() - 8) as u64;
+    }
     let body = &buf[8..8 + declared.min((buf.len() - 8) as u64) as usize];
     if body.len() < 4 || &body[..4] != b"WAVE" {
         return Err(err("not a WAVE file"));
@@ -177,7 +181,10 @@ fn parse(buf: &[u8]) -> Result<Wav, WavError> {
     let mut fmt: Option<(usize, usize, u32)> = None;
     while pos + 8 <= body.len() as u64 {
         let p = pos as usize;
-        let sz = le32(&body[p + 4..p + 8]);
+        let mut sz = le32(&body[p + 4..p + 8]);
+        if &body[p..p + 4] == b"data" && (sz == 0xFFFF_FFFF || (sz == 0 && streaming)) {
+            sz = (body.len() - p - 8) as u64;
+        }
         let chunk = &body[p + 8..p + 8 + sz.min((body.len() - p - 8) as u64) as usize];
         match &body[p..p + 4] {
             b"fmt " => fmt = Some(read_fmt(chunk)?),
@@ -191,7 +198,6 @@ fn parse(buf: &[u8]) -> Result<Wav, WavError> {
                     channels,
                     sampwidth,
                     rate,
-                    nframes,
                     data: chunk[..want].to_vec(),
                 });
             }
@@ -273,21 +279,26 @@ pub fn join_wavs(parts: &[Vec<u8>]) -> Result<Vec<u8>, WavError> {
     if parts.len() == 1 {
         return Ok(parts[0].clone());
     }
-    let mut first: Option<(usize, usize, u32)> = None;
+    let mut formats: Vec<(usize, usize, u32)> = vec![];
     let mut frames = vec![];
     for p in parts {
         let w = parse(p)?;
-        first.get_or_insert((w.channels, w.sampwidth, w.rate));
+        formats.push((w.channels, w.sampwidth, w.rate));
         frames.push(w.data);
     }
-    let (channels, sampwidth, rate) = first.ok_or_else(|| WavError::Value("no parts".into()))?;
-    let silence = vec![0u8; (rate as f64 * GAP) as usize * sampwidth * channels];
+    let (channels, sampwidth, rate) = *formats
+        .first()
+        .ok_or_else(|| WavError::Value("no parts".into()))?;
     if sampwidth > 4 {
         return Err(err("bad sample width"));
     }
     if rate == 0 {
         return Err(err("bad frame rate"));
     }
+    if formats.iter().any(|f| *f != (channels, sampwidth, rate)) {
+        return Err(err("the parts are in different audio formats"));
+    }
+    let silence = vec![0u8; (rate as f64 * GAP) as usize * sampwidth * channels];
     let joined = frames.join(&silence[..]);
     Ok(write_wav(channels, sampwidth, rate, &joined))
 }
@@ -295,9 +306,13 @@ pub fn join_wavs(parts: &[Vec<u8>]) -> Result<Vec<u8>, WavError> {
 /// Length in seconds, to 2 decimals; None when it isn't a readable WAV.
 pub fn wav_seconds(data: &[u8]) -> Result<Option<f64>, WavError> {
     match parse(data) {
-        Ok(w) if w.rate != 0 => Ok(format!("{:.2}", w.nframes as f64 / w.rate as f64)
-            .parse()
-            .ok()),
+        // what was really read, not what the header declares (a cut-off or streamed file)
+        Ok(w) if w.rate != 0 => Ok(format!(
+            "{:.2}",
+            (w.data.len() / (w.channels * w.sampwidth)) as f64 / w.rate as f64
+        )
+        .parse()
+        .ok()),
         Ok(_) | Err(WavError::Error(_) | WavError::Eof) => Ok(None),
         Err(e) => Err(e),
     }
@@ -426,6 +441,32 @@ pub fn to_asr_wav(audio: &[u8]) -> Result<Option<Vec<u8>>, WavError> {
 
 #[cfg(test)]
 mod tests {
+    /// A mono 16-bit WAV of `secs` seconds at `rate`, with the RIFF and data sizes as given.
+    fn wav_with(rate: u32, secs: u32, riff: u32, data: u32) -> Vec<u8> {
+        let mut w = super::write_wav(1, 2, rate, &vec![0u8; (rate * secs * 2) as usize]);
+        w[4..8].copy_from_slice(&riff.to_le_bytes());
+        w[40..44].copy_from_slice(&data.to_le_bytes());
+        w
+    }
+
+    #[test]
+    fn streamed_wav_headers_still_give_the_real_length() {
+        for (riff, data) in [(0xFFFF_FFFF, 0xFFFF_FFFF), (0, 0)] {
+            let w = wav_with(8000, 1, riff, data);
+            assert_eq!(super::wav_seconds(&w).unwrap(), Some(1.0), "{riff:x}");
+        }
+        let one = wav_with(8000, 1, 0xFFFF_FFFF, 0xFFFF_FFFF);
+        let two = super::join_wavs(&[one.clone(), one]).unwrap();
+        assert_eq!(super::wav_seconds(&two).unwrap(), Some(2.25));
+    }
+
+    #[test]
+    fn joining_parts_in_different_formats_is_refused() {
+        let (a, b) = (wav_with(8000, 1, 44 + 16000 - 8, 16000), wav_with(16000, 1, 44 + 32000 - 8, 32000));
+        let e = super::join_wavs(&[a, b]).unwrap_err();
+        assert!(e.to_string().contains("different audio formats"), "{e}");
+    }
+
     #[test]
     fn speech_pieces_end_with_punctuation_and_a_space() {
         for (given, sent) in [

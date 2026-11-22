@@ -6,7 +6,7 @@ import shutil
 import unittest
 
 from harness import IMAGE as DOCKER, request  # first: puts testdata/ on the path
-from test_stage5_audio import ASR, Jobs, PNG, SONG, VIDEO, WAV  # noqa: E402
+from test_stage5_audio import ASR, LONG_REF, Jobs, PNG, SONG, VIDEO, WAV  # noqa: E402
 import fake_tiiny  # noqa: E402
 
 IMAGE_MODEL = "Qwen/Qwen-Image-2.1"
@@ -132,7 +132,7 @@ class Hardening(Jobs):
 
     def test_a_failed_song_keeps_its_style_reference_no_longer(self):
         before = self.files()
-        py = self.failed({"kind": "song", "model": SONG, "caption": "RUST TEST pop", "lyrics": "[verse]\nla la", "reference_audio": WAV, "load": SONG,
+        py = self.failed({"kind": "song", "model": SONG, "caption": "RUST TEST pop", "lyrics": "[verse]\nla la", "reference_audio": LONG_REF, "load": SONG,
                           "flags": {"fail": {"/v1/generate": [500, "boom"]}}}, "boom")
         self.assertEqual(py["status"], "error")
         self.assertEqual(self.files(), before)

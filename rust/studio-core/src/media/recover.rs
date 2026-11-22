@@ -131,9 +131,11 @@ pub async fn recover(state: &AppState, check: bool) -> Value {
             .partial_cmp(&when(b))
             .unwrap_or(std::cmp::Ordering::Equal)
     });
-    let recent = now() - MUSIC_SECONDS;
+    let sessions = sessions.unwrap_or_default();
+    // the window is measured from the device's newest session, on the device's own clock (the PC's may differ)
+    let newest = sessions.iter().map(when).fold(0.0, f64::max);
+    let recent = if newest > 0.0 { newest } else { now() } - MUSIC_SECONDS;
     let mut new: Vec<Value> = sessions
-        .unwrap_or_default()
         .into_iter()
         .filter(|s| {
             text(s, "status") == "completed"
