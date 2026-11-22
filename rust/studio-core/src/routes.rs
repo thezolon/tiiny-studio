@@ -119,7 +119,7 @@ async fn security_headers(req: Request, next: Next) -> Response {
     );
     h.insert(
         header::REFERRER_POLICY,
-        header::HeaderValue::from_static("no-referrer"),
+        header::HeaderValue::from_static("same-origin"),
     );
     res
 }
@@ -149,14 +149,24 @@ fn host_name(h: &str) -> &str {
 /// Which names a studio opened to a network answers to. A page that re-points its own public name at the studio
 /// (DNS rebinding) sends that name as Host, so a public domain name is refused unless STUDIO_HOSTS lists it. Fine
 /// without listing: IP addresses (an attacker can't make a browser send another site's name with one), localhost,
-/// names with no dot (the computer's own name, as in `http://nas:7860`) and the private-network suffixes.
+/// names with no dot (the computer's own name, as in `http://nas:7860`) and the home-network suffixes (including
+/// `.ts.net`, Tailscale's).
 fn host_allowed(name: &str, extra: &[String]) -> bool {
     let name = name.trim_end_matches('.');
     name.parse::<std::net::IpAddr>().is_ok()
         || !name.contains('.')
-        || [".local", ".lan", ".home.arpa", ".localdomain", ".internal"]
-            .iter()
-            .any(|s| name.ends_with(s))
+        || [
+            ".local",
+            ".lan",
+            ".home",
+            ".home.arpa",
+            ".fritz.box",
+            ".localdomain",
+            ".internal",
+            ".ts.net",
+        ]
+        .iter()
+        .any(|s| name.ends_with(s))
         || extra.iter().any(|h| h == name)
 }
 
@@ -201,7 +211,7 @@ fn foreign(
             }
         } else if !host_allowed(name, extra_hosts) {
             return Some(
-                "This studio doesn't answer to that name. Add it to STUDIO_HOSTS, or open the studio by its IP address.",
+                "This studio doesn't answer to that name. To allow it, add the name to STUDIO_HOSTS (a setting in the .env file, with several names separated by commas) and restart the studio; or open the studio by its IP address instead.",
             );
         }
     }
@@ -359,7 +369,7 @@ pub(crate) fn too_many_attempts(wait: u64) -> Response {
         StatusCode::TOO_MANY_REQUESTS,
         [(header::RETRY_AFTER, wait.to_string())],
         Json(
-            json!({"error": {"message": "Too many wrong attempts. Wait a moment and try again."}}),
+            json!({"error": {"message": "Too many wrong attempts. Wait a minute and try again. If another tab of the studio is still open with an old password, close it first: it keeps trying."}}),
         ),
     )
         .into_response()
@@ -404,8 +414,8 @@ pub(crate) const MAX_BODY: usize = 150 << 20;
 const TOO_LARGE: &str = "That request is too large (over 150 MB).";
 /// Settings, history, search, export, model and device calls: a few KB in practice.
 const SMALL_BODY: usize = 2 << 20;
-/// A saved chat can carry its attached pictures.
-pub(crate) const CHAT_BODY: usize = 32 << 20;
+/// A saved chat carries its attached pictures (up to six per message, kept for the whole conversation).
+pub(crate) const CHAT_BODY: usize = MAX_BODY;
 /// MCP calls (an agent may pass a picture or clip as base64).
 const MCP_BODY: usize = 32 << 20;
 
@@ -1456,6 +1466,9 @@ mod tests {
             "[fe80::1]:7860",
             "studio.local",
             "localhost:7860",
+            "nas.fritz.box",
+            "pc.home",
+            "laptop.tail1234.ts.net:7860",
         ] {
             assert_eq!(
                 foreign(&Method::GET, &h(ok, None), true, none),

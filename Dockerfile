@@ -1,7 +1,7 @@
 # Tiiny Studio server (Rust, tiiny-studio-server) in a small image. compose.yaml builds this.
 # By hand:  docker build -t tiiny-studio .
 # Base images are pinned by digest (multi-arch index; the tag names the version): update them on purpose.
-FROM rust:1.97-slim-bookworm@sha256:2775a09d208ff0d7c1f50490c45b62db929e87ba1dcbc3f2132ac71a704bcdd3 AS build
+FROM rust:1.99.1-slim-bookworm@sha256:f2c004e3d2d8b547e8cf7ffbc29205385f4e71d23e53e4e383065db5e9f822cd AS build
 WORKDIR /src
 COPY rust ./rust
 COPY static ./static

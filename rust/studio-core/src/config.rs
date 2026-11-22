@@ -46,19 +46,27 @@ impl Config {
     }
 }
 
-/// Makes the data folder (and its parents as needed) readable by this user only on Unix (0700), so the chats,
-/// pictures and voices inside can't be read by other accounts on a shared computer whatever the umask made the
-/// files. A folder the user already tightened stays as it is; elsewhere (Windows) the profile's own rights apply.
+/// Makes the data folder (and its parents as needed). When the studio creates it, it is readable by this user only on
+/// Unix (0700), so the chats, pictures and voices inside can't be read by other accounts on a shared computer
+/// whatever the umask made the files. A folder that already exists is left as it is (the user may have shared it on
+/// purpose), and a refused chmod (exFAT, a network share) is a warning, never a failure; on Windows the profile's own
+/// rights apply.
 pub fn private_dir(path: &std::path::Path) -> std::io::Result<()> {
+    #[cfg(unix)]
+    let existed = path.is_dir();
     std::fs::create_dir_all(path)?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let mode = std::fs::metadata(path)?.permissions().mode();
         // not in Docker: there the folder is a bind mount owned by the image's user, and the host's user must
         // still be able to open the results (the container has no other accounts anyway)
-        if mode & 0o077 != 0 && !crate::settings::in_docker() {
-            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700))?;
+        if !existed && !crate::settings::in_docker() {
+            if let Err(e) = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700)) {
+                crate::store::warn_data(format!(
+                    "The data folder could not be made private to this account ({}).",
+                    crate::store::io_reason(&e)
+                ));
+            }
         }
     }
     Ok(())
@@ -94,16 +102,16 @@ pub fn user_data_dir() -> PathBuf {
 #[cfg(all(test, unix))]
 mod tests {
     #[test]
-    fn data_folder_is_private() {
+    fn data_folder_is_private_when_created_and_left_alone_when_it_exists() {
         use std::os::unix::fs::PermissionsExt;
+        let mode = |d: &std::path::Path| std::fs::metadata(d).unwrap().permissions().mode() & 0o777;
         let dir = std::env::temp_dir().join(format!("studio-private-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755)).unwrap();
-        super::private_dir(&dir).unwrap();
-        assert_eq!(
-            std::fs::metadata(&dir).unwrap().permissions().mode() & 0o777,
-            0o700
-        );
+        super::private_dir(&dir.join("data")).unwrap();
+        assert_eq!(mode(&dir.join("data")), 0o700);
+        // a folder that was already there (maybe shared on purpose) is not re-tightened
+        std::fs::set_permissions(dir.join("data"), std::fs::Permissions::from_mode(0o750)).unwrap();
+        super::private_dir(&dir.join("data")).unwrap();
+        assert_eq!(mode(&dir.join("data")), 0o750);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }

@@ -82,6 +82,20 @@ class Chat(ContractCase):
                            "messages": [{"role": "user", "content": "Summarise." + doc}]})
             sent = next(b for m, p, b in reversed(self.last_calls) if p == "/v1/chat/completions")
             self.assertEqual("tools" in sent, tools_sent, doc)
+        # a flagged attachment in an EARLIER message stays flagged but doesn't switch the tools off for a later turn
+        py, rs = self.same_job({"kind": "chat", "tools": ["create_image"], "messages": [
+            {"role": "user", "content": "Summarise." + bad}, {"role": "assistant", "content": "RUST TEST ok"},
+            {"role": "user", "content": "RUST TEST thanks, and now a plain question"}]})
+        sent = next(b for m, p, b in reversed(self.last_calls) if p == "/v1/chat/completions")
+        self.assertIn("tools", sent)
+        self.assertEqual([w["source"] for w in py["entry"]["warnings"]], ["document: RUST TEST bad.txt"])
+        self.assertIn("<untrusted source=", json.dumps(sent))
+        # hidden_text alone (a zero-width space) is still flagged, but the tools stay on
+        zw = "\n\n--- Attached document: RUST TEST zw.txt ---\nA plain list​ with a zero-width space."
+        py, rs = self.same_job({"kind": "chat", "tools": ["create_image"], "messages": [{"role": "user", "content": "Summarise." + zw}]})
+        sent = next(b for m, p, b in reversed(self.last_calls) if p == "/v1/chat/completions")
+        self.assertIn("tools", sent)
+        self.assertEqual([w["reasons"] for w in py["entry"]["warnings"]], [["hidden_text"]])
         pic = "data:image/png;base64,iVBORw0KGgo="
         self.same_job({"kind": "chat", "messages": [{"role": "user", "content": [
             {"type": "text", "text": "RUST TEST what is this"}, {"type": "image_url", "image_url": {"url": pic}}]}]})

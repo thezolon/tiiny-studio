@@ -434,7 +434,7 @@ function renderStage() {
     entry.outputs.length > 1 ? el("button", { class: "tb", "aria-pressed": !!S.grid, title: "Show all variations side by side", "aria-label": "Grid", onclick: () => { S.grid = !S.grid; renderStage(); } }, el("span", { class: "lbl-x" }, "▦"), el("span", { class: "lbl" }, "Grid")) : null,
     ocrModel() ? el("button", { class: "tb", title: "Read the text in this image (not saved)", "aria-label": "Text", onclick: () => ocrImage(url) }, el("span", { class: "lbl-x" }, "Aa"), el("span", { class: "lbl" }, "Text")) : null,
     el("button", { class: "tb", title: "Load these settings into the composer (R)", onclick: () => reuse(entry) }, icon("i-copy"), el("span", { class: "lbl" }, "Reuse")),
-    el("a", { class: "tb", href: url, download: `tiiny-${entry.id}-${idx}.png`, title: "Download (D)" }, icon("i-down"), el("span", { class: "lbl" }, "Save")),
+    el("a", { class: "tb", href: url, download: `tiiny-${entry.id}-${idx}.${(entry.outputs[idx].match(/\.(\w+)$/) || [])[1] || "png"}`, title: "Download (D)" }, icon("i-down"), el("span", { class: "lbl" }, "Save")),
     showInFolderBtn(entry.id),
     el("button", { class: "tb danger", title: "Delete", "aria-label": "Delete", onclick: () => deleteImage(entry) }, icon("i-trash")));
   head.append(tb);
