@@ -23,6 +23,24 @@ pub struct Device {
     pub key: String,
 }
 
+impl Device {
+    /// The saved address passes `device_url` (checked every time, so an address saved by an older version or
+    /// edited in config.json is covered too).
+    pub fn usable(&self) -> bool {
+        device_url(&self.url).is_ok()
+    }
+}
+
+/// Said once at start-up for each saved address that isn't usable (see `Device::usable`).
+fn warn_unusable(devices: &[Device]) {
+    for d in devices.iter().filter(|d| !d.usable()) {
+        eprintln!(
+            "Device \"{}\" has an address that isn't usable (backslash, user name, query or odd scheme): it gets no key and no requests until it is corrected in Settings.",
+            d.name
+        );
+    }
+}
+
 #[derive(Clone, Debug, Serialize)]
 pub struct Probe {
     pub ok: bool,
@@ -313,6 +331,7 @@ impl Settings {
             .unwrap_or("")
             .to_string();
         st.update_check = saved.get("update_check").and_then(Value::as_bool);
+        warn_unusable(&st.devices);
         Settings {
             path,
             lan_access,
@@ -333,7 +352,13 @@ impl Settings {
                 id: Some(d.id.clone()),
                 name: d.name.clone(),
                 url: d.url.clone(),
-                key: d.key.clone(),
+                // an address the HTTP client would read differently from us is kept (so it can be corrected in
+                // Settings) but is never sent a key
+                key: if d.usable() {
+                    d.key.clone()
+                } else {
+                    String::new()
+                },
             })
             .unwrap_or_default()
     }
@@ -371,13 +396,19 @@ impl Settings {
             .map(|d| (d.url.clone(), d.key.clone()))
             .unwrap_or_default();
         json!({
-            "devices": st.devices.iter().map(|d| json!({
-                "id": d.id, "name": d.name, "url": d.url, "host": hostname(&d.url),
-                "key_set": !d.key.is_empty(), "key_hint": hint(&d.key), "status": st.status.get(&d.id),
-            })).collect::<Vec<_>>(),
+            "devices": st.devices.iter().map(|d| {
+                let mut row = json!({
+                    "id": d.id, "name": d.name, "url": d.url, "host": hostname(&d.url),
+                    "key_set": !d.key.is_empty(), "key_hint": hint(&d.key), "status": st.status.get(&d.id),
+                });
+                if !d.usable() {
+                    row["usable"] = json!(false); // only said when it is not
+                }
+                row
+            }).collect::<Vec<_>>(),
             "active": cur.as_ref().map(|d| d.id.clone()), "name": cur.as_ref().map(|d| d.name.clone()).unwrap_or_default(),
             "url": url, "host": hostname(&url), "auto": st.auto,
-            "key_set": !key.is_empty(), "key_hint": hint(&key), "configured": !url.is_empty() && !key.is_empty(),
+            "key_set": !key.is_empty(), "key_hint": hint(&key), "configured": !url.is_empty() && !key.is_empty() && cur.as_ref().is_some_and(Device::usable),
             "source": st.source, "lan_access": self.lan_access, "password": self.password,
             "last_switch": st.last_switch, "version": crate::version(),
             "swap": st.swap, "mcp": st.mcp, "helper_model": st.helper_model, "docker": in_docker(),
@@ -577,8 +608,14 @@ impl Settings {
 
     pub async fn probe(client: reqwest::Client, url: String) -> Probe {
         let t0 = Instant::now();
+        let Ok(endpoint) = device_endpoint(&url, "/") else {
+            return Probe {
+                ok: false,
+                ms: None,
+            };
+        };
         match client
-            .get(format!("{url}/"))
+            .get(endpoint)
             .timeout(Duration::from_secs(2))
             .send()
             .await
@@ -733,6 +770,26 @@ mod tests {
             .is_err());
         assert_eq!(s.devices()[0].url, "http://192.168.1.50");
         assert_eq!(s.devices()[0].key, "key-aaaa-1111");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_bad_saved_address_is_kept_but_gets_no_key() {
+        let dir = std::env::temp_dir().join(format!("studio-settings-{}", new_id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let cfg = json!({"devices": [{"id": "d1", "name": "Old", "url": "http://127.0.0.1:9\\@192.168.1.50", "key": "secret-key-1"}], "active": "d1"});
+        std::fs::write(dir.join("config.json"), cfg.to_string()).unwrap();
+        let s = Settings::load(&dir, false, false, false);
+        assert_eq!(s.devices()[0].url, "http://127.0.0.1:9\\@192.168.1.50"); // kept, so it can be corrected
+        assert_eq!(s.current().key, ""); // but nothing is sent a key
+        let p = s.public();
+        assert_eq!(p["devices"][0]["usable"], json!(false));
+        assert_eq!(p["configured"], json!(false));
+        // correcting it makes it usable again (the old key is dropped with the origin change)
+        s.upsert(Some("d1"), "", "http://192.168.1.50", "new-key-2222")
+            .unwrap();
+        assert_eq!(s.current().key, "new-key-2222");
+        assert!(s.public()["devices"][0].get("usable").is_none());
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

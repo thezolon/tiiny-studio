@@ -11,6 +11,7 @@ use axum::{
 };
 use rust_embed::RustEmbed;
 use serde_json::{json, Value};
+use std::net::IpAddr;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -68,12 +69,18 @@ pub fn router(state: AppState) -> Router {
         .route("/api/model/{action}", post(model_change))
         .route("/api/device/shutdown", post(shutdown))
         .route("/api/icon/{org}/{name}", get(icon))
-        .route("/api/extract", post(extract_document))
-        .route("/mcp", any(crate::mcp::endpoint))
+        .route(
+            "/api/extract",
+            post(extract_document).layer(axum::extract::DefaultBodyLimit::max(MAX_BODY)),
+        )
+        .route(
+            "/mcp",
+            any(crate::mcp::endpoint).layer(axum::extract::DefaultBodyLimit::max(MCP_BODY)),
+        )
         .merge(crate::library::routes())
         .fallback(not_found)
-        // same cap as server.py (for a body without a Content-Length too); /api/extract checks its own 100 MB
-        .layer(axum::extract::DefaultBodyLimit::max(MAX_BODY))
+        // most routes only ever get small JSON; the few that take uploads set their own, larger limit (body_limit_for)
+        .layer(axum::extract::DefaultBodyLimit::max(SMALL_BODY))
         .layer(middleware::from_fn(body_limit))
         .layer(middleware::from_fn_with_state(
             (state.clone(), guards.clone()),
@@ -223,11 +230,12 @@ async fn authorized(
         return next.run(req).await;
     }
     let password = &state.config.password;
+    let ip = client_ip(req.extensions());
     if password.is_empty() {
         return next.run(req).await;
     }
     // after a run of wrong passwords every attempt waits, the right one included, so guessing doesn't pay
-    if let Some(wait) = guards.password.wait() {
+    if let Some(wait) = guards.password.wait(ip) {
         return too_many_attempts(wait);
     }
     let sent = req.headers().get(header::AUTHORIZATION).is_some();
@@ -244,12 +252,12 @@ async fn authorized(
                 .unwrap_or_default()
         });
     if given.is_some_and(|g| constant_time_eq(g.as_bytes(), password.as_bytes())) {
-        guards.password.succeeded();
+        guards.password.succeeded(ip);
         return next.run(req).await;
     }
     if sent {
         // a browser's first request has no credentials yet (that is the prompt, not a guess)
-        guards.password.failed("password");
+        guards.password.failed(ip, "password");
     }
     (
         StatusCode::UNAUTHORIZED,
@@ -261,35 +269,44 @@ async fn authorized(
         .into_response()
 }
 
-/// Failed password / MCP-token attempts, counted over the whole studio (a guesser can come from many addresses
-/// behind one proxy). The first `FREE_FAILURES` wrong tries cost nothing; after that, every attempt is refused
-/// for a time that doubles with each further failure (1 s, 2 s, 4 s ... up to a minute), and a good attempt, or
-/// ten quiet minutes, starts over.
-pub(crate) struct AuthGuard(Mutex<(u32, Option<Instant>)>);
+/// Failed password / MCP-token attempts, counted per client address (so one machine on the LAN guessing can't
+/// lock the real user out). The first `FREE_FAILURES` wrong tries of an address cost nothing; after that, its
+/// attempts are refused for a time that doubles with each further failure (1 s, 2 s, 4 s ... up to a minute), and
+/// a good attempt, or ten quiet minutes, starts over. At most `MAX_CLIENTS` addresses are remembered (the one
+/// quiet longest is dropped first). Behind a reverse proxy every client has the proxy's address, so they share
+/// one count there.
+pub(crate) struct AuthGuard(Mutex<Vec<(IpAddr, u32, Instant)>>);
 
 const FREE_FAILURES: u32 = 10;
 const MAX_LOCKOUT_SECS: u64 = 60;
 const FORGET_AFTER: Duration = Duration::from_secs(600);
+const MAX_CLIENTS: usize = 256;
 
 pub(crate) static MCP_GUARD: AuthGuard = AuthGuard::new();
 
+/// Who is asking: the connection's address (the unspecified address when the server wasn't given it, as in tests).
+pub(crate) fn client_ip(ext: &axum::http::Extensions) -> IpAddr {
+    ext.get::<axum::extract::ConnectInfo<std::net::SocketAddr>>()
+        .map(|c| c.0.ip().to_canonical())
+        .unwrap_or(IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED))
+}
+
 impl AuthGuard {
     pub(crate) const fn new() -> Self {
-        AuthGuard(Mutex::new((0, None)))
+        AuthGuard(Mutex::new(Vec::new()))
     }
 
-    fn lock(&self) -> std::sync::MutexGuard<'_, (u32, Option<Instant>)> {
+    fn lock(&self) -> std::sync::MutexGuard<'_, Vec<(IpAddr, u32, Instant)>> {
         self.0.lock().unwrap_or_else(|e| e.into_inner())
     }
 
-    /// Seconds an attempt has to wait now, if it has to.
-    pub(crate) fn wait(&self) -> Option<u64> {
-        self.wait_at(Instant::now())
+    /// Seconds an attempt from `ip` has to wait now, if it has to.
+    pub(crate) fn wait(&self, ip: IpAddr) -> Option<u64> {
+        self.wait_at(ip, Instant::now())
     }
 
-    fn wait_at(&self, now: Instant) -> Option<u64> {
-        let (n, last) = *self.lock();
-        let last = last?;
+    fn wait_at(&self, ip: IpAddr, now: Instant) -> Option<u64> {
+        let (_, n, last) = *self.lock().iter().find(|(a, _, _)| *a == ip)?;
         if n < FREE_FAILURES {
             return None;
         }
@@ -300,26 +317,40 @@ impl AuthGuard {
             .map(|left| left.as_secs() + 1)
     }
 
-    pub(crate) fn failed(&self, what: &str) {
-        self.failed_at(Instant::now(), what);
+    pub(crate) fn failed(&self, ip: IpAddr, what: &str) {
+        self.failed_at(ip, Instant::now(), what);
     }
 
-    fn failed_at(&self, now: Instant, what: &str) {
+    fn failed_at(&self, ip: IpAddr, now: Instant, what: &str) {
         let mut g = self.lock();
-        if g.1
-            .is_some_and(|t| now.saturating_duration_since(t) > FORGET_AFTER)
-        {
-            g.0 = 0;
+        let i = match g.iter().position(|(a, _, _)| *a == ip) {
+            Some(i) => i,
+            None => {
+                if g.len() >= MAX_CLIENTS {
+                    // drop the address that has been quiet the longest
+                    if let Some(old) = (0..g.len()).min_by_key(|&k| g[k].2) {
+                        g.swap_remove(old);
+                    }
+                }
+                g.push((ip, 0, now));
+                g.len() - 1
+            }
+        };
+        let e = &mut g[i];
+        if now.saturating_duration_since(e.2) > FORGET_AFTER {
+            e.1 = 0;
         }
-        g.0 = g.0.saturating_add(1);
-        g.1 = Some(now);
-        if g.0 == FREE_FAILURES {
-            eprintln!("Too many wrong {what} attempts: further attempts are slowed down.");
+        e.1 = e.1.saturating_add(1);
+        e.2 = now;
+        if e.1 == FREE_FAILURES {
+            eprintln!(
+                "Too many wrong {what} attempts from {ip}: its further attempts are slowed down."
+            );
         }
     }
 
-    pub(crate) fn succeeded(&self) {
-        *self.lock() = (0, None);
+    pub(crate) fn succeeded(&self, ip: IpAddr) {
+        self.lock().retain(|(a, _, _)| *a != ip);
     }
 }
 
@@ -369,8 +400,27 @@ pub(crate) fn read_json(body: &Bytes) -> Result<Value, String> {
 }
 
 /// The largest request body: pictures, voice clips and video frames arrive as base64 JSON; /api/extract checks its own 100 MB.
-const MAX_BODY: usize = 150 << 20;
+pub(crate) const MAX_BODY: usize = 150 << 20;
 const TOO_LARGE: &str = "That request is too large (over 150 MB).";
+/// Settings, history, search, export, model and device calls: a few KB in practice.
+const SMALL_BODY: usize = 2 << 20;
+/// A saved chat can carry its attached pictures.
+pub(crate) const CHAT_BODY: usize = 32 << 20;
+/// MCP calls (an agent may pass a picture or clip as base64).
+const MCP_BODY: usize = 32 << 20;
+
+/// The body size a route accepts; the routes that take uploads or chats set the same number with a layer.
+fn body_limit_for(method: &axum::http::Method, path: &str) -> usize {
+    if *method != axum::http::Method::POST && *method != axum::http::Method::PUT {
+        return SMALL_BODY;
+    }
+    match path {
+        "/api/jobs" | "/api/extract" | "/api/voices" => MAX_BODY,
+        "/mcp" => MCP_BODY,
+        p if p.starts_with("/api/chats/") && !p.ends_with("/delete") => CHAT_BODY,
+        _ => SMALL_BODY,
+    }
+}
 
 async fn body_limit(req: Request, next: Next) -> Response {
     let len = req
@@ -380,6 +430,12 @@ async fn body_limit(req: Request, next: Next) -> Response {
         .and_then(|v| v.trim().parse::<usize>().ok());
     if len.is_some_and(|n| n > MAX_BODY) {
         return error(StatusCode::PAYLOAD_TOO_LARGE, TOO_LARGE);
+    }
+    if len.is_some_and(|n| n > body_limit_for(req.method(), req.uri().path())) {
+        return error(
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "That request is too large for this part of the studio.",
+        );
     }
     next.run(req).await
 }
@@ -1479,28 +1535,71 @@ mod tests {
     #[test]
     fn wrong_attempts_are_slowed_down() {
         let g = AuthGuard::new();
+        let ip: IpAddr = "192.168.1.20".parse().unwrap();
         let t0 = Instant::now();
         for _ in 0..FREE_FAILURES - 1 {
-            g.failed_at(t0, "password");
-            assert_eq!(g.wait_at(t0), None);
+            g.failed_at(ip, t0, "password");
+            assert_eq!(g.wait_at(ip, t0), None);
         }
-        g.failed_at(t0, "password");
-        assert_eq!(g.wait_at(t0), Some(2)); // a 1 s lockout, rounded up
-        assert_eq!(g.wait_at(t0 + Duration::from_secs(2)), None);
-        g.failed_at(t0 + Duration::from_secs(2), "password");
-        assert!(g.wait_at(t0 + Duration::from_secs(3)).is_some()); // 2 s now
+        g.failed_at(ip, t0, "password");
+        assert_eq!(g.wait_at(ip, t0), Some(2)); // a 1 s lockout, rounded up
+        assert_eq!(g.wait_at(ip, t0 + Duration::from_secs(2)), None);
+        g.failed_at(ip, t0 + Duration::from_secs(2), "password");
+        assert!(g.wait_at(ip, t0 + Duration::from_secs(3)).is_some()); // 2 s now
         for i in 0..20 {
-            g.failed_at(t0 + Duration::from_secs(10 + i), "password");
+            g.failed_at(ip, t0 + Duration::from_secs(10 + i), "password");
         }
         let t = t0 + Duration::from_secs(30);
-        assert!(g.wait_at(t).is_some_and(|w| w <= MAX_LOCKOUT_SECS + 1));
+        assert!(g.wait_at(ip, t).is_some_and(|w| w <= MAX_LOCKOUT_SECS + 1));
         // ten quiet minutes, or a good attempt, start over
         assert_eq!(
-            g.wait_at(t + FORGET_AFTER + Duration::from_secs(MAX_LOCKOUT_SECS)),
+            g.wait_at(ip, t + FORGET_AFTER + Duration::from_secs(MAX_LOCKOUT_SECS)),
             None
         );
-        g.succeeded();
-        assert_eq!(g.wait_at(t), None);
+        g.succeeded(ip);
+        assert_eq!(g.wait_at(ip, t), None);
+    }
+
+    #[tokio::test]
+    async fn only_upload_routes_take_big_bodies() {
+        let big = "x".repeat(3 << 20); // over the small limit, under the others
+        let post = |path: &str| {
+            Request::post(path)
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(big.clone()))
+                .unwrap()
+        };
+        for path in ["/api/history/delete", "/api/settings/auto", "/api/search"] {
+            let (code, _, _) = send(app(""), post(path)).await;
+            assert_eq!(code, StatusCode::PAYLOAD_TOO_LARGE, "{path}");
+        }
+        for path in ["/api/jobs", "/api/chats/abc", "/api/voices"] {
+            let (code, _, _) = send(app(""), post(path)).await;
+            assert_ne!(code, StatusCode::PAYLOAD_TOO_LARGE, "{path}");
+        }
+        assert!(body_limit_for(&axum::http::Method::POST, "/api/extract") == MAX_BODY);
+    }
+
+    #[test]
+    fn one_clients_failures_do_not_lock_out_another() {
+        let g = AuthGuard::new();
+        let t0 = Instant::now();
+        let guesser: IpAddr = "192.168.1.66".parse().unwrap();
+        let user: IpAddr = "192.168.1.20".parse().unwrap();
+        for _ in 0..FREE_FAILURES + 3 {
+            g.failed_at(guesser, t0, "password");
+        }
+        assert!(g.wait_at(guesser, t0).is_some());
+        assert_eq!(g.wait_at(user, t0), None);
+        g.succeeded(user);
+        assert!(g.wait_at(guesser, t0).is_some());
+        // the table stays bounded, dropping the address quiet the longest
+        for i in 0..(MAX_CLIENTS as u32 + 50) {
+            let ip = IpAddr::from(std::net::Ipv4Addr::from(0x0a00_0000 + i));
+            g.failed_at(ip, t0 + Duration::from_secs(1 + u64::from(i)), "password");
+        }
+        assert!(g.0.lock().unwrap().len() <= MAX_CLIENTS);
+        assert_eq!(g.wait_at(guesser, t0), None, "the oldest was dropped");
     }
 
     #[tokio::test]

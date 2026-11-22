@@ -3,7 +3,7 @@
 
 use axum::{
     body::Bytes,
-    extract::{Path, State},
+    extract::{DefaultBodyLimit, Path, State},
     http::{header, HeaderMap, StatusCode},
     response::{IntoResponse, Response},
     routing::{delete, get, post},
@@ -11,7 +11,7 @@ use axum::{
 };
 use serde_json::{json, Value};
 
-use crate::routes::{error, mime, read_json, str_of};
+use crate::routes::{error, mime, read_json, str_of, CHAT_BODY, MAX_BODY};
 use crate::store::{safe_file, save_json, shred, word};
 
 /// A write to the data folder failed (disk full, no permission): say so.
@@ -25,7 +25,12 @@ use crate::{device, AppState};
 
 pub fn routes() -> Router<AppState> {
     Router::new()
-        .route("/api/jobs", get(list_jobs).post(submit_job))
+        .route(
+            "/api/jobs",
+            get(list_jobs)
+                .post(submit_job)
+                .layer(DefaultBodyLimit::max(MAX_BODY)),
+        )
         .route("/api/jobs/{id}", get(one_job))
         .route("/api/jobs/{id}/cancel", post(cancel_job))
         .route("/api/history", get(history))
@@ -34,10 +39,20 @@ pub fn routes() -> Router<AppState> {
         .route("/api/history/{id}", delete(delete_entry))
         .route("/api/history/{id}/fav", post(fav))
         .route("/images/{name}", get(image))
-        .route("/api/voices", get(voices).post(save_voice))
+        .route(
+            "/api/voices",
+            get(voices)
+                .post(save_voice)
+                .layer(DefaultBodyLimit::max(MAX_BODY)),
+        )
         .route("/api/voices/{id}", delete(delete_voice))
         .route("/api/chats", get(chats))
-        .route("/api/chats/{id}", get(chat).post(save_chat))
+        .route(
+            "/api/chats/{id}",
+            get(chat)
+                .post(save_chat)
+                .layer(DefaultBodyLimit::max(CHAT_BODY)),
+        )
         .route("/api/chats/{id}/delete", post(delete_chat))
         .route("/api/privacy/wipe", post(wipe))
         .route("/api/export", post(export))

@@ -88,6 +88,7 @@ fn rpc_err(id: &Value, code: i64, message: &str) -> Value {
 /// `/mcp`: 404 while MCP is off; 401 without the right bearer token; GET is 405 (no server-to-client stream).
 pub async fn endpoint(
     State(state): State<AppState>,
+    connect: Option<axum::Extension<axum::extract::ConnectInfo<std::net::SocketAddr>>>,
     method: Method,
     headers: HeaderMap,
     body: Bytes,
@@ -96,7 +97,11 @@ pub async fn endpoint(
     if !cfg.on {
         return error(StatusCode::NOT_FOUND, "not found");
     }
-    if let Some(wait) = crate::routes::MCP_GUARD.wait() {
+    // wrong tokens are counted per client address (the unspecified address when the server doesn't know it)
+    let ip = connect.map_or(std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED), |c| {
+        c.0 .0.ip().to_canonical()
+    });
+    if let Some(wait) = crate::routes::MCP_GUARD.wait(ip) {
         return crate::routes::too_many_attempts(wait);
     }
     let given = headers
@@ -107,7 +112,7 @@ pub async fn endpoint(
         .unwrap_or("");
     if cfg.token.is_empty() || !constant_time_eq(given.as_bytes(), cfg.token.as_bytes()) {
         if headers.contains_key(header::AUTHORIZATION) {
-            crate::routes::MCP_GUARD.failed("MCP token");
+            crate::routes::MCP_GUARD.failed(ip, "MCP token");
         }
         return (
             StatusCode::UNAUTHORIZED,
@@ -119,7 +124,7 @@ pub async fn endpoint(
         )
             .into_response();
     }
-    crate::routes::MCP_GUARD.succeeded();
+    crate::routes::MCP_GUARD.succeeded(ip);
     if method != Method::POST {
         return (StatusCode::METHOD_NOT_ALLOWED, [(header::ALLOW, "POST")]).into_response();
     }
