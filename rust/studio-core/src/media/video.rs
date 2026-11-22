@@ -102,7 +102,9 @@ pub async fn run(ctx: Ctx) -> JobResult {
         .unwrap_or("")
         .to_string();
     if vid.is_empty() {
-        return Err(JobError("The Tiiny accepted the video but gave no id for it, so it can't be followed.".into()));
+        return Err(JobError(
+            "The Tiiny accepted the video but gave no id for it, so it can't be followed.".into(),
+        ));
     }
     ctx.set_remote_task(Some(format!("DELETE {url}/{vid}"))); // deleting a clip stops its render (there's no /cancel)
     let mut lost_since: Option<std::time::Instant> = None; // no answer since: a render takes many minutes, so ride out a dropped link
