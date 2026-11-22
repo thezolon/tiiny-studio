@@ -3996,6 +3996,7 @@ dependencies = [
  "http-body-util",
  "mp4ameta",
  "png 0.17.16",
+ "quick-xml",
  "regex",
  "reqwest 0.12.28",
  "roxmltree",
