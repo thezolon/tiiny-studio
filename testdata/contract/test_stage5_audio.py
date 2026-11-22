@@ -20,7 +20,7 @@ WAV = "data:audio/wav;base64," + base64.b64encode(fake_tiiny.tiny_wav()).decode(
 WAV_44K = "data:audio/x-wav;base64," + base64.b64encode(fake_tiiny.tiny_wav(0.05, 44100)).decode()
 MP3 = "data:audio/mpeg;base64," + base64.b64encode(fake_tiiny.MP3).decode()
 # ids, times and file names (they contain the job id) differ per run; files are compared by files_equal
-IGNORE = ("id", "created", "started", "finished", "seconds", "t", "outputs", "sources", "downloads", "from_entry")
+IGNORE = ("id", "device_id", "created", "started", "finished", "seconds", "t", "outputs", "sources", "downloads", "from_entry")
 LONG_TEXT = " ".join(f"Sentence number {i} is here, and it goes on a little." for i in range(14))
 
 

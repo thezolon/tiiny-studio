@@ -309,6 +309,17 @@ impl Settings {
             .unwrap_or_default()
     }
 
+    /// A saved device by id (None when it was removed).
+    pub fn target_of(&self, id: &str) -> Option<Target> {
+        let st = self.lock();
+        st.devices.iter().find(|d| d.id == id).map(|d| Target {
+            id: Some(d.id.clone()),
+            name: d.name.clone(),
+            url: d.url.clone(),
+            key: d.key.clone(),
+        })
+    }
+
     pub fn active(&self) -> Option<String> {
         self.lock().active.clone()
     }

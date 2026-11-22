@@ -255,7 +255,7 @@ async fn recover_session(state: &AppState, to: &Target, s: &Value) -> Option<Val
     let out = super::dated(&format!("{id}-{kind}.mp3"));
     std::fs::write(state.store.images.join(&out), mp3).ok()?;
     let entry = json!({"id": id, "created": now() as i64, "kind": kind, "seconds": 0, "params": {"model": model, "recovered": true},
-        "sources": [], "outputs": [out], "downloads": [], "duration": null, "device": {"music_session": sid}});
+        "sources": [], "outputs": [out], "downloads": [], "duration": null, "device": {"music_session": sid, "device_id": to.id}});
     if state.store.add_history(entry).is_err() {
         crate::store::shred(&state.store.images.join(&out));
         return None;
@@ -266,17 +266,30 @@ async fn recover_session(state: &AppState, to: &Target, s: &Value) -> Option<Val
 
 /// Delete the Tiiny's copy of these songs and loops (their entries are gone). Best effort, in the background (it waits
 /// its turn for the device): never blocks or fails the local delete.
-pub fn delete_device_sessions(state: &AppState, ids: Vec<String>) {
-    let ids: Vec<String> = ids.into_iter().filter(|i| !i.is_empty()).collect();
-    let to = state.settings.current();
-    if ids.is_empty() || to.url.is_empty() {
+/// Each session goes to the Tiiny that made it (the entry's device id); an older entry without one goes to the active
+/// one, and a Tiiny that is no longer saved can't be reached.
+pub fn delete_device_sessions(state: &AppState, sessions: Vec<(String, Option<String>)>) {
+    let current = state.settings.current();
+    let jobs: Vec<(String, Target)> = sessions
+        .into_iter()
+        .filter(|(s, _)| !s.is_empty())
+        .filter_map(|(s, dev)| {
+            let to = match dev {
+                Some(d) => state.settings.target_of(&d)?,
+                None => current.clone(),
+            };
+            (!to.url.is_empty()).then_some((s, to))
+        })
+        .collect();
+    if jobs.is_empty() {
         return;
     }
+    let ids: Vec<String> = jobs.iter().map(|(s, _)| s.clone()).collect();
     state.store.mark_seen(&ids, false);
     let state = state.clone();
     tokio::spawn(async move {
         let _device = state.device_lock.lock().await;
-        for id in ids {
+        for (id, to) in jobs {
             let _ = device::call(
                 &state,
                 "DELETE",
@@ -290,14 +303,14 @@ pub fn delete_device_sessions(state: &AppState, ids: Vec<String>) {
     });
 }
 
-/// The device session ids of these history entries.
-pub fn sessions_of(entries: &[Value]) -> Vec<String> {
+/// The device sessions of these history entries: (session id, id of the Tiiny that made it, when recorded).
+pub fn sessions_of(entries: &[Value]) -> Vec<(String, Option<String>)> {
     entries
         .iter()
         .filter_map(|e| {
-            e.pointer("/device/music_session")
-                .and_then(Value::as_str)
-                .map(String::from)
+            let s = e.pointer("/device/music_session")?.as_str()?;
+            let d = e.pointer("/device/device_id").and_then(Value::as_str);
+            Some((s.to_string(), d.map(String::from)))
         })
         .collect()
 }

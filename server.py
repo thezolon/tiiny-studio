@@ -1415,7 +1415,7 @@ class Handler(BaseHTTPRequestHandler):
             items = load_history()
             for e in items:
                 if e["id"] in ids:
-                    sessions.append((e.get("device") or {}).get("music_session"))
+                    sessions.append(((e.get("device") or {}).get("music_session"), (e.get("device") or {}).get("device_id")))
                     for f in e.get("outputs", []) + e.get("sources", []) + e.get("downloads", []):
                         shred(IMAGES / f)
                     JOBS.pop(e["id"], None)
@@ -1478,7 +1478,7 @@ class Handler(BaseHTTPRequestHandler):
             for p in files:
                 shred(p)
             entries = len(load_history())
-            sessions = [(e.get("device") or {}).get("music_session") for e in load_history()]
+            sessions = [((e.get("device") or {}).get("music_session"), (e.get("device") or {}).get("device_id")) for e in load_history()]
             voices = len(load_voices())
             chats = [p for p in CHATS.glob("*.json")]
             for p in chats:

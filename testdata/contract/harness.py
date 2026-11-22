@@ -28,7 +28,7 @@ AUTH = {"Authorization": f"Bearer {KEY}"}
 IMAGE = os.environ.get("STUDIO_RUST_IMAGE", "")
 RUST_BIN = ROOT / "rust" / "target" / "debug" / ("tiiny-studio-server.exe" if os.name == "nt" else "tiiny-studio-server")
 # Keys that differ between runs and servers: ids, timestamps.
-IGNORE = ("id", "t", "created", "created_at", "updated", "updated_at", "timestamp")
+IGNORE = ("id", "device_id","t", "created", "created_at", "updated", "updated_at", "timestamp")
 
 
 class Response(namedtuple("Response", "status headers body")):

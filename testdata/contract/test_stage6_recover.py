@@ -10,7 +10,7 @@ from harness import request, strip  # first: puts testdata/ on the path
 from test_stage5_audio import Jobs, LOOP, SONG
 import fake_tiiny  # noqa: E402
 
-IGNORE = ("id", "created", "outputs", "sources", "downloads")
+IGNORE = ("id", "device_id", "created", "outputs", "sources", "downloads")
 
 
 class RecoverBase(Jobs):
@@ -51,7 +51,8 @@ class RecoverBase(Jobs):
         # deleting the song and the loop deletes the Tiiny's copy; the clip had none (it was deleted when saved)
         song = next(e for e in entries if e["kind"] == "song")
         loop = next(e for e in entries if e["kind"] == "loop")
-        self.assertEqual((song["device"], loop["device"]), ({"music_session": "s-song"}, {"music_session": "s-loop"}))
+        self.assertEqual((song["device"]["music_session"], loop["device"]["music_session"]), ("s-song", "s-loop"))
+        self.assertTrue(song["device"]["device_id"] and loop["device"]["device_id"])
         self.post_fake("/__reset_log")
         request(base, "DELETE", "/api/history/" + song["id"])
         self.wait_sent("DELETE", "/v1/music/sessions/s-song")
