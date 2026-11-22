@@ -1,11 +1,11 @@
 # testdata
 
-- `contract/` with `fake_tiiny.py`: the contract tests (both servers against a fake Tiiny). CI runs them; no device.
+- `contract/` with `fake_tiiny.py`: the contract tests (the Rust server against a fake Tiiny; the Python server isn't part of them). CI runs them; no device.
   Run them from the repo root with `python -m unittest discover -s testdata/contract`. `STUDIO_REQUIRE_RUST=1` makes a
   missing Rust server an error instead of a skip (CI sets it). The fake records every request none of its routes answered
   (`state.unrouted`) and a test class fails at its end if there was one: a new device call must be added to the fake.
 - `a11y_check.py`, `layout_check.py`, `model_store_ui_check.py`: the web UI in Chromium against the fake Tiiny (CI runs
-  them). They start the **Rust** server by default; `--server python` runs the reference. They also fail on JavaScript
+  them). They start the **Rust** server by default; `--server python` runs the old Python server (no longer tested). They also fail on JavaScript
   errors in the page (uncaught exceptions and `console.error`; the browser's own "Failed to load resource" lines are
   left out). `ui_server.py` starts the server for them.
 - `docker_smoke.sh <image>`: starts a built studio image once and checks `/` and the version in `/api/settings`

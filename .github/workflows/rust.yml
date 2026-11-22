@@ -1,5 +1,5 @@
 # Rust port checks on pull requests and on main when they touch it: cargo tests on Windows, macOS and
-# Linux, the contract tests (Python reference vs Rust, against the fake Tiiny), a desktop app build, the
+# Linux, the contract tests (the Rust server against the fake Tiiny), a desktop app build, the
 # web UI checks (accessibility, layout, Model Store) against the Rust server, and a Docker image build that is
 # started once.
 # Not on tags or other branch pushes: a release's commit is already tested in its PR and on main, and the
