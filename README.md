@@ -135,10 +135,11 @@ network); use the desktop app, or move Docker's network as the connection guide 
 ### 3. From source
 
 The server: `cd rust && cargo run --release -p studio-server` (a current stable Rust), then open <http://localhost:7860>.
-The desktop app: `cd rust/studio-desktop && cargo tauri build` (needs the Tauri CLI; on Linux, WebKitGTK).
+The desktop app: `cd rust/studio-desktop && cargo tauri build` (needs the Tauri CLI; on Linux, WebKitGTK). It listens on
+`127.0.0.1:7861` (a free port instead if that one is taken).
 
 The original Python server still runs as well (`python server.py`, Python 3.10+, no packages); it's kept as the
-reference the Rust version is tested against. Data goes to `./data` either way.
+reference the Rust version is tested against (not for use on a network: it lacks the Rust server's protections, such as the Host check and request limits). Data goes to `./data` either way.
 
 ## Configuration
 
@@ -147,6 +148,7 @@ reference the Rust version is tested against. Data goes to `./data` either way.
 | Devices (address + API key) | **Settings** (gear icon), saved to `data/config.json` | Save each way you reach your Tiiny (home Wi-Fi, phone hotspot, USB). With auto-switch on, the studio uses the first device in the list that answers (checked every 20 s) and comes back to a preferred one when it returns; a device you pick with **Use** stays until it stops answering. Each key is only sent to its own address and never to the browser. `TIINY_URL` / `TIINY_KEY` seed the first device. |
 | `STUDIO_BIND` | `.env` (copy `.env.example`) | Who can open the studio. Default `127.0.0.1`, meaning only this computer. `0.0.0.0` opens it to your network. |
 | `STUDIO_PASSWORD` | `.env` | Optional. Makes the browser ask for a password (any username). Set one if you open the studio to your network. |
+| `STUDIO_HOSTS` | `.env` | Optional, with network access on: extra names the studio answers to, comma separated, e.g. `studio.example.org` for a reverse proxy. Without it the studio answers at IP addresses, `localhost`, one-word names (`http://nas:7860`) and `.local`, `.lan`, `.home`, `.home.arpa`, `.fritz.box`, `.internal` and Tailscale (`.ts.net`) names, and refuses other domain names (that is what stops a website from re-pointing its own domain at the studio). |
 | `PORT`, `DATA_DIR`, `HOST` | env | Default `7860`, `./data` (Docker: `/data`, mounted from `./data`) and, for native runs, `127.0.0.1`. |
 
 **Network access is off by default.** Out of the box only the computer running the studio can open
@@ -157,7 +159,15 @@ port 7860 through the firewall.
 
 **Other websites can't use it.** The studio refuses changes sent from other web pages, and while network access is
 off it only answers at `localhost`/`127.0.0.1`, so a page you visit can't reach it through a trick domain. If you put
-the studio behind a reverse proxy or open it by a hostname, turn network access on (and set a password).
+the studio behind a reverse proxy or open it by a hostname, turn network access on (and set a password) and list the name in `STUDIO_HOSTS`.
+
+**On a network: password, plain HTTP, reverse proxy.** The password is HTTP basic auth, and the studio speaks plain
+HTTP, so on Wi-Fi or a shared LAN anyone who can sniff the traffic can read it (and everything you make). That is fine
+on a home network you trust; for anything beyond that, put a reverse proxy that does TLS in front (Caddy, nginx,
+Traefik), list its name in `STUDIO_HOSTS`, and keep the studio itself bound to `127.0.0.1` or the proxy's network. After
+ten wrong passwords in a row (or wrong MCP tokens) the studio slows further attempts down (answers 429 for a growing
+time, up to a minute), so pick a password that isn't guessable. On Linux and macOS the data folder (outside Docker) is made readable by its
+owner only.
 
 ## Agents (MCP)
 
@@ -165,10 +175,13 @@ The Rust studio (desktop app and Docker) can act as an [MCP](https://modelcontex
 (Claude, Cline, Hermes, your own scripts) can make images, speech, loops, songs, 3D models and video through it,
 using the studio's one job queue, model loading and gallery. **It is off by default.**
 
-1. **Settings → Agents (MCP)**, switch on *Let agents use the studio (MCP)*. The studio shows the endpoint
-   (`http://localhost:7860/mcp`) and a token of its own, separate from `STUDIO_PASSWORD`. *New token* replaces it and
-   locks out agents that have the old one.
-2. Give your agent the endpoint and the token (as `Authorization: Bearer <token>`). For Claude Code:
+1. **Settings → Agents (MCP)**, switch on *Let agents use the studio (MCP)*. The studio shows the endpoint and a
+   token of its own, separate from `STUDIO_PASSWORD`. The endpoint is `http://localhost:7860/mcp` with Docker (or
+   a native server) and `http://localhost:7861/mcp` in the desktop app, which keeps port 7861 from one start to the next
+   (it only takes another free port if 7861 is in use, and then the address shown in Settings is the one to use).
+   *New token* replaces the token and locks out agents that have the old one.
+2. Give your agent the endpoint and the token (as `Authorization: Bearer <token>`). For Claude Code (Docker; use
+   port 7861 for the desktop app):
 
    ```
    claude mcp add --transport http tiiny-studio http://localhost:7860/mcp --header "Authorization: Bearer <token>"
@@ -183,18 +196,26 @@ once and 30 tool calls a minute.
 
 What an agent can and can't see: only the jobs it started itself. There is no tool that lists or reads your gallery,
 chats or vault, and `get_job` refuses job ids it didn't start. It can see which models are installed and the names of
-your saved voices (to speak with them), but it can't download, update or delete models: that stays in the Models
-panel, behind a confirm. Text that comes back (transcripts, OCR, chat replies) is wrapped in
+your saved voices, and it can make any text in one of those voices (that is how `speak` works with them; if you don't
+want that, don't switch MCP on). It can't download, update or delete models: that stays in the Models panel, behind a
+confirm. Text that comes back (transcripts, OCR, chat replies, job and device error text) is wrapped in
 `<untrusted>` tags and screened for prompt injection; a suspicious one is flagged in the result, never dropped. Links to
 result files use the address the agent called, and need the studio password if you set one. Like the rest of the
 studio, MCP only answers on this computer unless you open the studio to your network.
+
+These limits are limits on what the MCP tools offer, not a sandbox. The studio's normal web API on the same port is open
+unless you set `STUDIO_PASSWORD`, so an agent that can make its own HTTP requests (a fetch or curl tool, a shell) is not
+held back by them. If you run agents like that, set `STUDIO_PASSWORD`, and treat the agent as trusted with the studio.
+In chat, a reply to a message with a suspected prompt injection in an attachment is made with the chat tools switched off (an earlier flagged attachment stays marked, but doesn't switch the tools off for later messages).
 
 ## Privacy
 
 Everything the studio saves stays on your machine: results, prompts, sources and voices live only in
 `data/`, and requests go only to your Tiiny. The one exception: the studio may ask GitHub once a day which version
-is the latest (one anonymous request, nothing about you or your Tiiny); you can turn that off in Settings, and it is
-off by default in Docker.
+is the latest (one anonymous request, nothing about you or your Tiiny). Nothing is sent until you answer a one-time
+question ("Check for updates automatically?") on first launch; you can change the answer in Settings, and it is
+off in Docker. New pictures, songs and videos carry their prompt (or spoken text), model and seed inside the file;
+**Settings → Write prompts into files** turns that off for files made from then on (the model and seed are still written).
 
 - **Deleting a result removes all of it**: the gallery entry with its prompt and settings, the output
   and source files, the server's in-memory copy of the job, and the browser's copy (images are served
@@ -306,8 +327,8 @@ Things on the Tiiny's side (TiinyOS 0.1.35 to 0.1.38) that the studio works arou
   only works over Wi-Fi/LAN; PP-OCRv6 works on every link.
 - Video (MiniMax-H3-Turbo, 0.1.38) is slow: about 7 minutes for 2 seconds at 480p with 4 steps, over 15 at 7. Only a
   start picture works; an end picture (`last_image`) is ignored, so the studio doesn't offer one.
-- Supertonic-3 fails through the gateway ("The upstream TTS model failed"); the studio uses its own port instead,
-  which only works over Wi-Fi/LAN.
+- Supertonic-3 failed through the gateway on TiinyOS 0.1.38 ("The upstream TTS model failed"); it works from 0.1.39. On
+  older TiinyOS the studio falls back to its own port, which only works over Wi-Fi/LAN.
 - PP-DocLayoutV3 has no gateway route and its reading order is wrong even on a simple page, so Text mode doesn't
   use it.
 - The device can't list 3D tasks, so a 3D build cut short (the studio closed mid-build) can't be recovered. Videos,
@@ -320,7 +341,7 @@ Things on the Tiiny's side (TiinyOS 0.1.35 to 0.1.38) that the studio works arou
 
 ## Status
 
-Version 0.7.0 (see [CHANGELOG.md](CHANGELOG.md)). An unofficial community project, not affiliated with
+Version 0.7.1 (see [CHANGELOG.md](CHANGELOG.md)). An unofficial community project, not affiliated with
 Tiiny. Tested against TiinyOS 0.1.35 to 0.1.38; device APIs may change with firmware updates
 (`python tools/api_snapshot.py --check` shows what changed).
 

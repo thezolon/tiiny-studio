@@ -54,7 +54,7 @@ too (**tested**).
 | POST | `/api/v1/sys/shutdown/` | power off (empty body). Replies `{"status":"ok","message":"System shutdown will be initiated in seconds via D-Bus"}` (0.1.36 and earlier: `…via host API`); off within ~10 s. **Broken in TiinyOS 0.1.36** (same reply, the device stays on); **fixed in 0.1.37** (tested over USB and Wi-Fi, 2026-10-29) | **tested** |
 | POST | `/api/v1/sys/reboot/` | restart | **spec** |
 | GET / POST | `/api/v1/sys/ac_power/` | power on automatically when plugged in: GET → `{"status","ac_power": bool}`; POST `{"switch": 0\|1}` | **tested** (GET), **app** (POST) |
-| GET | `/api/v1/sys/status` | live `cpu`, `memory`, `gpu`, `npus`, `disk` | **tested** |
+| GET | `/api/v1/sys/status` | live `cpu`, `memory`, `gpu`, `npus`, `disk` (the top-level keys, 0.1.39); `disk` = `{total_bytes, used_bytes}` | **tested** |
 | GET | `/api/v1/sys/performance` | request timings per endpoint: `summary`, `endpoints` (`limit`, `sort_by`, `include_stats_endpoint`) | **tested** |
 | GET | `/api/v1/sys/device_info` | cpu, gpu, dnpu, ram, storage, network, versions, device name, settings | **tested** |
 | POST | `/api/v1/sys/setting` | change a device setting | **spec** |
@@ -80,12 +80,12 @@ All through port 80 (the model service). `{id}` is the URL-encoded model id, e.g
 | POST | `/api/v1/models/{id}/stop` | unload | **tested** |
 | POST | `/api/v1/models/unload_all` | unload everything | **tested** |
 | GET | `/api/v1/models/?including_downloading=true` | the same plus models being downloaded: `status` downloading → downloaded, or `error` (e.g. no internet), `progress` 0-100, `need_update` | **tested** |
-| POST | `/api/v1/models/{id}/download` (empty body) | start a download: `{"message": "start download …", "progress": 0.0}`; watch it with the list above. The id keeps its `/` here. The Tiiny downloads over its own Wi-Fi: with its Wi-Fi off it refuses, even over USB | **tested** (0.1.39) |
-| POST | `/api/v1/models/{id}/pause_download` (empty body) | pause a download: `{"message": "… download paused successfully.", "status": "download_stop", "progress": 28.06, …}`; the list shows `status: download_stop`. **Resume** = `POST …/download` again: it continues from where it stopped | **tested** (0.1.39, 2026-11-21) |
-| POST | `/api/v1/models/{id}/interrupt`; `/api/v1/models/interrupt_all` | **not a download cancel**: only stops an in-flight chat reply (`"No in-flight chat completion found"`); a download keeps going. To cancel one, pause it and `DELETE` it (the studio does): `DELETE` of a paused download answers `deleted finish.` and the row is gone at once (**tested** 2026-11-21) | **tested** (0.1.39) |
+| POST | `/api/v1/models/{id}/download` (empty body) | start a download: `{"message": "start download …", "progress": 0.0}`; watch it with the list above. The id keeps its `/` here. The Tiiny downloads over its own Wi-Fi. With its Wi-Fi off (on USB) it still answers 200 "start download …", but the row turns `status: error` at `progress: 0` at once and stays there; every `need_update` reads false; `DELETE` of that row answers "deleted finish." and it is gone (**tested** 2026-11-22) | **tested** (0.1.39) |
+| POST | `/api/v1/models/{id}/pause_download` (empty body) | pause a download: `{"message": "… download paused successfully.", "status": "download_stop", "progress": 28.06, …}`; the list shows `status: download_stop`. A second pause is no error: 200 `{"message": "Model … is not currently downloading.", "status": "download_stop", …}`. **Resume** = `POST …/download` again: it continues from where it stopped (the progress may drop a little) | **tested** (0.1.39, 2026-11-21 and 22) |
+| POST | `/api/v1/models/{id}/interrupt`; `/api/v1/models/interrupt_all` | **not a download cancel**: only stops an in-flight chat reply (`"No in-flight chat completion found"`); a download keeps going. To cancel one, pause it and `DELETE` it (the studio does): `DELETE` of a paused download answers `deleted finish.` and the row is gone at once (**tested** 2026-11-21); so does `DELETE` of one that is still downloading (not paused first: 200, gone at once and stays gone, **tested** 2026-11-22) | **tested** (0.1.39) |
 | GET | `/api/v1/models/storage` | disk use per model: `data.models[]` with `model_id`, `size_bytes`, `docker_*_size`; totals (`total_size_bytes`, shared/unique) | **tested** (0.1.39) |
-| GET | `/api/v1/sys/storage` | `total_bytes`, `used_bytes`, `remaining_bytes`, `details[]` (`name`, `size_bytes`) | **tested** (0.1.39) |
-| DELETE | `/api/v1/models/{id}` | delete a downloaded model: `{"message": "Model … deleted finish."}`; the id keeps its `/` | **tested** (0.1.39) |
+| GET | `/api/v1/sys/storage` | `total_bytes`, `used_bytes`, `remaining_bytes`, `details[]` (`name`, `size_bytes`); the same totals are in `GET /api/v1/sys/status` under `disk` (`total_bytes`, `used_bytes`) | **tested** (0.1.39) |
+| DELETE | `/api/v1/models/{id}` | delete a downloaded model: `{"message": "Model … deleted finish."}`; the id keeps its `/`. What the device does with a model that is loaded is **not verified** (the fake refuses it with 409: a guess) | **tested** (0.1.39) |
 | GET | `/api/v1/models/online_models` | the Model Store: a bare list, keyed by `model_id`; `name`, `type`, `params`, `npu_usage`, `desc`, `supported`, `context_window`, `recommend_rank`, `status` (`downloaded`/`not_downloaded`), `progress`, `need_update`, `version_label`; `tags[]`: `size` (bytes, the download), `version`, `update_title`, `update_desc` | **tested** |
 | POST | `/api/v1/models/import`, `/import/inspect`; GET `/import/toolkits` | import a custom model (checks toolkit support) | **docs**/**app** |
 | GET | `/api/v1/models/types`, `/api/v1/model-stats` | model types, stats | probed |
@@ -101,6 +101,8 @@ compare versions. A download that fails after the delete leaves the model missin
 
 The **device handles one request at a time**; parallel requests to different models slow each other down badly.
 
+**A model has to be loaded to answer** (tested 2026-11-22, 0.1.39). A request that names an installed model which isn't loaded (chat, speech, embeddings, images) answers 404 `{"error": {"message": "\"<id>\" is not loaded.", "type": "model_not_found", "code": 404}}`; with model `default` (or none) and no suitable model running, 503 `{"error": {"message": "No suitable model is currently running.", "type": "service_unavailable"}}`; `/v1/ocr` with nothing running gives the same 503. Nothing loads a model on demand, so load first (the studio does). The fake Tiiny in `testdata/fake_tiiny.py` answers the same, for chat, images, speech, transcriptions, OCR and embeddings.
+
 | method | path | what | mark |
 |---|---|---|---|
 | GET | `/v1/models` | loaded models; each has `aliases` (`default` = the loaded chat model), `supports_vision`, `supports_chat`, `thinking`, `context_window` | **tested** |
@@ -112,7 +114,7 @@ The **device handles one request at a time**; parallel requests to different mod
 | POST | `/v1/image/generate/stream` | image generation with progress | **app** |
 | POST | `/v1/audio/speech` | voice clone: `model, input, ref_audio` (base64 WAV), `ref_text` (both required), `language, instruct, response_format wav\|pcm\|mp3`. The Base model only clones | **tested** |
 | POST | `/v1/audio/transcriptions` | multipart `model, file, language`; json/text only. Resample 48 kHz stereo to 16 kHz mono first | **tested** |
-| POST | `/v1/ocr?model=<id>` | `{"input": data URI, "response_format": "json"}` → `data[0].text` + lines. PP-OCRv6 works; GLM-OCR isn't routed (use its own port's chat API) | **tested** |
+| POST | `/v1/ocr?model=<id>` | `{"input": data URI, "response_format": "json"}` → `data[0].text` + lines. PP-OCRv6 works; GLM-OCR isn't routed (still on 0.1.39: `/v1/ocr?model=zai-org/GLM-OCR` answers 404 "Endpoint not found", gateway chat 400 "Model 'zai-org/GLM-OCR' does not support chat."; its own port works over Wi-Fi) | **tested** |
 | GET/POST | `/v1/music/info`, `/v1/music/sessions`, `/v1/music/generate[/wav\|/preview\|/resume]`, `/v1/music/sessions/{id}/download?format=mp3` | music (Foundation-1 loops via `/generate/wav` with `{model, prompt, config}`; SongGeneration via `/generate/preview` + `/resume`) | **tested** |
 | GET/POST | `/v1/3d/capabilities`, `/v1/3d/tasks`, `/v1/3d/tasks/{id}`, `/v1/3d/tasks/{id}/cancel` | 3D models' stages: multipart `stage` (background, shape, simplify, texture, export), `params` JSON, files. Each model lists its stages, inputs and params at `/v1/3d/capabilities` (`api_schema: image-to-3d/v2`); see the 3D notes below | **tested** (Hunyuan3D-2.1, TRELLIS.2-4B) |
 | GET | `/v1/video/info?model=<id>` | a loaded video model's options (0.1.38): `canvases` (the only sizes it takes: MiniMax-H3-Turbo 1344x768, 768x1344, 832x480, 480x832), `step_options` (4-8), `default_steps` (7), `fps` (24), `max_keyframes` (2), `audio` (32 kHz stereo). `/v1/video/capabilities` doesn't exist | **tested** |
@@ -272,16 +274,18 @@ From Tiiny's docs (**docs**), not tested here.
   `/v1/music/generate` ("… preview generation is not implemented"; YuE2: a 15 s request gave 23 s in 93 s; a 30 s
   request with a verse and a chorus took 316 s over USB (2026-11-18, YuE2-3B, load 10 s), so plan on ~10 s per requested
   second: a 270 s song is ~45 minutes). The answer to that one long request arrived normally over USB; a plain-gateway
-  song's session shows in `/v1/music/sessions` only once it's `completed`, and is gone once the answer was sent. AceStep's own
+  song's session shows in `/v1/music/sessions` only once it's `completed`, and is gone once the answer was sent (the fake
+  does the same; a song whose answer was lost stays listed, which is what the studio's recovery looks for). AceStep's own
   settings go **nested** in `config.ace_step` (`bpm` number, `key_scale` "G major", `time_signature` "4",
   `vocal_language`, `negative_prompt`); at the top of `config` they're refused ("Extra inputs are not permitted").
 - **Voice models** (tested 2026-10-30, 0.1.38, `POST /v1/audio/speech`): a built-in speaker goes in `voice` (Qwen3-TTS
   CustomVoice: aiden, dylan, eric, ono_anna, ryan, serena, sohee, uncle_fu, vivian; an unknown name: `Unsupported
   speaker`), a voice description in `instruct` (VoiceDesign; required), a clone in `ref_audio` + `ref_text` (Base);
   `language` works for all. CustomVoice reports `support_instruct` but rejects `instruct` ("voice_design is not
-  supported"). Supertonic-3 fails through the gateway whatever it's sent ("The upstream TTS model failed"), though its
-  container answers directly over Wi-Fi when called by its own name `Supertonic-3`; it also refuses `speed` other than
-  1.0 despite `support_speed`. MOSS-TTS-Nano speaks with `voice: default`; cloning fails (the gateway demands
+  supported"). Supertonic-3 failed through the gateway whatever it was sent on 0.1.38 ("The upstream TTS model failed"; its
+  container answered directly over Wi-Fi when called by its own name `Supertonic-3`). **Fixed on 0.1.39** (tested
+  2026-11-22): `POST /v1/audio/speech` with the store id answers a WAV. It refuses `speed` other than 1.0 (400 "Unsupported
+  speed: 1.2. Only 1.0 is supported") although its capabilities report `support_speed`; the studio sends no `speed`. MOSS-TTS-Nano speaks with `voice: default`; cloning fails (the gateway demands
   `ref_text`, the container refuses it).
 - **Thinking** (tested 2026-10-30, 0.1.38): follow the model's `thinking` object, not its name. `toggleable` models
   (Qwen3.5/3.6) switch with `chat_template_kwargs.enable_thinking` (off: no reasoning, ~10x faster); `reasoning_effort`

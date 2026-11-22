@@ -10,7 +10,7 @@ const SOFTWARE: &str = concat!("Tiiny Studio ", env!("CARGO_PKG_VERSION"));
 
 /// What goes into the files: a short title (the prompt's first line) and a description (the whole prompt plus the
 /// model and the settings that reproduce it).
-fn text(entry: &Value) -> Option<(String, String)> {
+fn text(entry: &Value, with_prompt: bool) -> Option<(String, String)> {
     let p = entry.get("params")?;
     let s = |k: &str| {
         p.get(k)
@@ -19,11 +19,16 @@ fn text(entry: &Value) -> Option<(String, String)> {
             .trim()
             .to_string()
     };
-    let prompt = ["prompt", "caption", "text", "tags"]
-        .iter()
-        .map(|k| s(k))
-        .find(|x| !x.is_empty())
-        .unwrap_or_default();
+    // "Write prompts into files" off: no prompt or spoken text; model, seed and the other settings stay
+    let prompt = if with_prompt {
+        ["prompt", "caption", "text", "tags"]
+            .iter()
+            .map(|k| s(k))
+            .find(|x| !x.is_empty())
+            .unwrap_or_default()
+    } else {
+        String::new()
+    };
     let model = s("model");
     if prompt.is_empty() && model.is_empty() {
         return None;
@@ -60,8 +65,8 @@ fn text(entry: &Value) -> Option<(String, String)> {
 }
 
 /// Tag every output and download of a finished entry (in `dir`, the results folder).
-pub fn embed(dir: &Path, entry: &Value) {
-    let Some((title, desc)) = text(entry) else {
+pub fn embed(dir: &Path, entry: &Value, with_prompt: bool) {
+    let Some((title, desc)) = text(entry, with_prompt) else {
         return;
     };
     let files = ["outputs", "downloads"]
@@ -104,8 +109,11 @@ fn png_with_text(b: &[u8], title: &str, desc: &str) -> Option<Vec<u8>> {
     if !b.starts_with(SIG) || b.len() < 33 || &b[12..16] != b"IHDR" {
         return None;
     }
-    let ihdr_end = 8 + 8 + u32::from_be_bytes(b[8..12].try_into().ok()?) as usize + 4;
-    let mut out = b[..ihdr_end].to_vec();
+    let ihdr_end = 8usize
+        .checked_add(8 + 4)?
+        .checked_add(u32::from_be_bytes(b[8..12].try_into().ok()?) as usize)?;
+    // a bogus IHDR length leaves the file untagged instead of panicking
+    let mut out = b.get(..ihdr_end)?.to_vec();
     for (key, val) in [
         ("Title", title),
         ("Description", desc),
@@ -191,14 +199,34 @@ mod tests {
     use serde_json::json;
 
     #[test]
+    fn a_png_with_a_bogus_ihdr_length_is_left_alone() {
+        let mut b = b"\x89PNG\r\n\x1a\n".to_vec();
+        b.extend_from_slice(&0xFFFF_FFF0u32.to_be_bytes());
+        b.extend_from_slice(b"IHDR");
+        b.resize(40, 0);
+        assert!(png_with_text(&b, "t", "d").is_none());
+    }
+
+    #[test]
     fn title_and_description_from_the_entry() {
         let e = json!({"params": {"prompt": "A steampunk robot\nwalking", "model": "Qwen/Qwen-Image-2.1", "seed": 7, "steps": 4}});
-        let (t, d) = text(&e).unwrap();
+        let (t, d) = text(&e, true).unwrap();
         assert_eq!(t, "A steampunk robot");
         assert!(d.starts_with(
             "A steampunk robot\nwalking\n\nModel: Qwen/Qwen-Image-2.1 · seed: 7 · steps: 4"
         ));
-        assert!(text(&json!({"params": {}})).is_none());
+        assert!(text(&json!({"params": {}}), true).is_none());
+    }
+
+    #[test]
+    fn without_the_prompt_switch_no_prompt_or_spoken_text_is_written() {
+        let e = json!({"params": {"prompt": "SECRET prompt", "text": "SECRET spoken", "model": "m1", "seed": 7}});
+        let (t, d) = text(&e, false).unwrap();
+        assert_eq!(t, "");
+        assert!(!d.contains("SECRET"));
+        assert_eq!(d, "Model: m1 · seed: 7");
+        let only_prompt = json!({"params": {"prompt": "SECRET"}});
+        assert!(text(&only_prompt, false).is_none());
     }
 
     #[test]

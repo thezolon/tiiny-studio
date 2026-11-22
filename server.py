@@ -147,15 +147,20 @@ class Settings:
         # "on" is the global switch; each section's switch only counts while it's on. All on by default.
         self.swap = {k: bool((saved.get("swap") or {}).get(k, True)) for k in SWAP_KEYS}
         self.helper_model = str(saved.get("helper_model") or "")  # the text model helpers use ("" = automatic)
-        # "Check for updates": None until the user decides, then the default applies (on, but off in Docker)
+        # "Check for updates": None until the user answers (counts as off)
         self.update_check = saved["update_check"] if isinstance(saved.get("update_check"), bool) else None
+        self.tag_prompts = saved["tag_prompts"] if isinstance(saved.get("tag_prompts"), bool) else None  # None = on
         self.status = {}        # device id -> {"ok": bool, "ms": int}
         self.pinned = None      # a device picked by hand stays in use while it answers
         self.last_switch = None  # {"to": name, "from": name, "t": epoch}
 
     @property
     def update_check_on(self):
-        return (not STUDIO_DOCKER) if self.update_check is None else self.update_check
+        return bool(self.update_check)
+
+    @property
+    def update_ask(self):
+        return (not STUDIO_DOCKER) and self.update_check is None
 
     def current(self):
         return next((d for d in self.devices if d["id"] == self.active), self.devices[0] if self.devices else None)
@@ -185,7 +190,8 @@ class Settings:
                 "active": cur.get("id"), "name": cur.get("name", ""), "url": self.url, "host": self.host, "auto": self.auto,
                 "key_set": bool(self.key), "key_hint": hint(self.key), "configured": self.configured, "source": self.source,
                 "lan_access": LAN_ACCESS, "password": bool(PASSWORD), "last_switch": self.last_switch, "version": VERSION,
-                "swap": self.swap, "helper_model": self.helper_model, "docker": STUDIO_DOCKER, "update_check": self.update_check_on,
+                "swap": self.swap, "helper_model": self.helper_model, "docker": STUDIO_DOCKER, "update_check": self.update_check_on, "update_ask": self.update_ask,
+                "tag_prompts": self.tag_prompts is not False,
                 "app": FROZEN}  # the standalone app: no .env to edit, so the UI words the network notes differently
 
     def _save(self):
@@ -193,6 +199,8 @@ class Settings:
         saved = {"devices": self.devices, "active": self.active, "auto": self.auto, "swap": self.swap, "helper_model": self.helper_model}
         if self.update_check is not None:
             saved["update_check"] = self.update_check
+        if self.tag_prompts is not None:
+            saved["tag_prompts"] = self.tag_prompts
         tmp.write_text(json.dumps(saved, indent=1), "utf-8")
         try:
             os.chmod(tmp, 0o600)
@@ -259,6 +267,11 @@ class Settings:
                     self.swap[k] = bool(v)
             if isinstance(req.get("helper_model"), str):
                 self.helper_model = req["helper_model"].strip()[:200]
+            self._save()
+
+    def set_tag_prompts(self, on):
+        with self.lock:
+            self.tag_prompts = bool(on)
             self._save()
 
     def set_update_check(self, on):
@@ -435,8 +448,8 @@ def device(method, path, body=None, timeout=30, url=None, key=None):
             raw = r.read()
             try:
                 return r.status, json.loads(raw or b"{}")
-            except ValueError:  # a 200 that isn't JSON (a login page, a proxy): an error, not a crash
-                return 502, {"error": {"message": raw.decode("utf-8", "replace")[:500]}}
+            except ValueError:  # a 200 that isn't JSON (a login page, a router): the wrong address, not a locked Tiiny
+                return 502, {"error": {"message": "Device unreachable: this address answered, but not like a Tiiny (" + raw.decode("utf-8", "replace")[:500] + ")"}}
     except urllib.error.HTTPError as e:
         raw = e.read()
         try:
@@ -490,7 +503,11 @@ def catalog():
         return 502, {"error": {"message": LOCKED, "type": "device_locked"}}  # it answers, but its services aren't up
     if code != 200:
         return code, inst
-    _, run = device("GET", "/api/v1/models/running", timeout=15)
+    run_code, run = device("GET", "/api/v1/models/running", timeout=15)
+    if run_code != 200:  # without the running list every model would read "stopped"
+        if run_code == 502 and not str((run.get("error") or {}).get("message", "")).startswith("Device unreachable"):
+            return 502, {"error": {"message": LOCKED, "type": "device_locked"}}
+        return run_code, run
     running = {r["model_id"]: r for r in (run.get("instances") or {}).get("running", [])}
     pending = {r.get("model_id") for r in (run.get("instances") or {}).get("pending", [])} | set(run.get("pending") or [])
     keep = ("id", "display_name", "params", "type", "input", "output", "supported", "desc",
@@ -1275,7 +1292,7 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_json(200, {"ok": True})
         if self.path == "/api/settings/test":
             return self.test_settings()
-        m = re.fullmatch(r"/api/settings/(delete|move|activate|auto|swap|updates|check)", self.path)
+        m = re.fullmatch(r"/api/settings/(delete|move|activate|auto|swap|updates|tags|check)", self.path)
         if m:
             return self.device_action(m.group(1))
         if self.path == "/api/model/launch":
@@ -1377,6 +1394,8 @@ class Handler(BaseHTTPRequestHandler):
             SETTINGS.set_update_check(req.get("update_check"))
             with UPDATE_LOCK:
                 UPDATE["answer"] = None  # a fresh answer the next time it's on
+        elif action == "tags":
+            SETTINGS.set_tag_prompts(req.get("tag_prompts", True))
         elif action == "check":
             SETTINGS.check()
         self.send_json(200, SETTINGS.public())
@@ -1405,6 +1424,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_json(200, {"ok": False, "message": ("The device rejected the API key. Copy the API key (not the device ID) from TiinyOS: avatar → Settings → API Key." if key else "The device needs an API key.")})
         if STUDIO_DOCKER and (urlparse(url).hostname or "").startswith("172.17."):
             return self.send_json(200, {"ok": False, "message": DOCKER_USB})
+        if code == 502 and not str((res.get("error") or {}).get("message", "")).startswith("Device unreachable"):
+            return self.send_json(200, {"ok": False, "message": LOCKED})  # the device's own 502: locked after a restart
         msg = (res.get("error") or {}).get("message") if isinstance(res.get("error"), dict) else res.get("error")
         return self.send_json(200, {"ok": False, "message": msg or f"Unexpected response (HTTP {code})."})
 
@@ -1415,7 +1436,7 @@ class Handler(BaseHTTPRequestHandler):
             items = load_history()
             for e in items:
                 if e["id"] in ids:
-                    sessions.append((e.get("device") or {}).get("music_session"))
+                    sessions.append(((e.get("device") or {}).get("music_session"), (e.get("device") or {}).get("device_id")))
                     for f in e.get("outputs", []) + e.get("sources", []) + e.get("downloads", []):
                         shred(IMAGES / f)
                     JOBS.pop(e["id"], None)
@@ -1478,7 +1499,7 @@ class Handler(BaseHTTPRequestHandler):
             for p in files:
                 shred(p)
             entries = len(load_history())
-            sessions = [(e.get("device") or {}).get("music_session") for e in load_history()]
+            sessions = [((e.get("device") or {}).get("music_session"), (e.get("device") or {}).get("device_id")) for e in load_history()]
             voices = len(load_voices())
             chats = [p for p in CHATS.glob("*.json")]
             for p in chats:

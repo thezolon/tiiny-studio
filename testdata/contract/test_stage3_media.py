@@ -23,7 +23,7 @@ class Media(ContractCase):
         return scrub(calls)
 
     def test_image_create_two(self):
-        py, rs = self.same_job({"kind": "image", "model": "Qwen/Qwen-Image-2.1", "prompt": "RUST TEST duck", "n": 2, "seed": 7, "size": "512x512"})
+        py, rs = self.same_job({"kind": "image", "model": "Qwen/Qwen-Image-2.1", "load": "Qwen/Qwen-Image-2.1", "prompt": "RUST TEST duck", "n": 2, "seed": 7, "size": "512x512"})
         self.assertEqual(py["status"], "done")
         self.files_equal(py, rs)
         self.same(self.get("/api/history"), IGNORE)
@@ -32,6 +32,8 @@ class Media(ContractCase):
         # the first two requests fail like a freshly loaded Qwen-Image; both servers retry and succeed
         def run(base):
             request(self.h.fake_url, "POST", "/__reset")
+            self.load_on_fake("Qwen/Qwen-Image-2.1")  # the device answers 404 for a model that isn't loaded
+            request(self.h.fake_url, "POST", "/__reset_log")
             request(self.h.fake_url, "POST", "/__flags", {"image_warmup": 2})
             job, calls = self.finish(base, request(base, "POST", "/api/jobs", {"kind": "image", "model": "Qwen/Qwen-Image-2.1", "prompt": "RUST TEST warm"}).json)
             return job["status"], [p for _, p, _ in calls if p != "/api/v1/sys/status"]
@@ -43,6 +45,8 @@ class Media(ContractCase):
         # Cancel while the device is still working: the job shows "stopping", then ends cancelled and nothing is saved.
         def run(base):
             request(self.h.fake_url, "POST", "/__reset")
+            self.load_on_fake("Qwen/Qwen-Image-2.1")
+            request(self.h.fake_url, "POST", "/__reset_log")
             request(self.h.fake_url, "POST", "/__flags", {"delay": {"/v1/images/generations": 1.5}})
             job = request(base, "POST", "/api/jobs", {"kind": "image", "model": "Qwen/Qwen-Image-2.1", "prompt": "RUST TEST cancel"}).json
             self.wait_sent("POST", "/v1/images/generations")  # the device is working on it
@@ -59,17 +63,17 @@ class Media(ContractCase):
                               [("POST", f"/api/v1/models/{q}/stop"), ("POST", f"/api/v1/models/{q}/launch")]))
 
     def test_image_edit(self):
-        py, rs = self.same_job({"kind": "image", "model": "Qwen/Qwen-Image-2.1", "prompt": "RUST TEST hat", "images": [PNG], "steps": ""})
+        py, rs = self.same_job({"kind": "image", "model": "Qwen/Qwen-Image-2.1", "prompt": "RUST TEST hat", "images": [PNG], "steps": "", "load": "Qwen/Qwen-Image-2.1"})
         self.assertEqual(py["entry"]["mode"], "edit")
         self.files_equal(py, rs, "sources")
 
     def test_image_from_references(self):
         py, rs = self.same_job({"kind": "image", "model": "Qwen/Qwen-Image-2.1", "prompt": "RUST TEST image 1 in a cafe",
-                                "images": [PNG, PNG], "mode": "refs", "size": "1024x576"})
+                                "images": [PNG, PNG], "mode": "refs", "size": "1024x576", "load": "Qwen/Qwen-Image-2.1"})
         self.assertEqual(py["entry"]["mode"], "refs")
         self.assertEqual(py["entry"]["params"]["size"], "1024x576")
         self.files_equal(py, rs, "sources")
-        py, _ = self.same_job({"kind": "image", "model": "Qwen/Qwen-Image-2.1", "prompt": "RUST TEST fox", "images": [], "mode": "refs"})
+        py, _ = self.same_job({"kind": "image", "model": "Qwen/Qwen-Image-2.1", "prompt": "RUST TEST fox", "images": [], "mode": "refs", "load": "Qwen/Qwen-Image-2.1"})
         self.assertEqual(py["entry"]["mode"], "create")  # no pictures: a plain create
 
     def test_ocr(self):
@@ -79,7 +83,7 @@ class Media(ContractCase):
         self.same_job({"kind": "ocr", "model": "Fake/Not-Loaded", "image": PNG})
 
     def test_disk_space(self):
-        job = {"kind": "image", "model": "Qwen/Qwen-Image-2.1", "prompt": "RUST TEST duck", "size": "512x512"}
+        job = {"kind": "image", "model": "Qwen/Qwen-Image-2.1", "load": "Qwen/Qwen-Image-2.1", "prompt": "RUST TEST duck", "size": "512x512"}
         py, _ = self.same_job({**job, "flags": {"disk_free_gb": 1.5}})
         self.assertEqual(py["status"], "error")
         self.assertEqual(py["error"], "The Tiiny is almost out of space (1.5 GB free). "

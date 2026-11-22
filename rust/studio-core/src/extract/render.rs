@@ -121,7 +121,7 @@ pub fn render(blocks: &[Block]) -> (String, String) {
                 md.push(format!(
                     "{}{} {}",
                     nl(&md),
-                    "#".repeat((*level).max(0) as usize),
+                    "#".repeat((*level).clamp(0, 6) as usize),
                     md_escape(&t.replace('\n', " "))
                 ));
             }
@@ -130,6 +130,7 @@ pub fn render(blocks: &[Block]) -> (String, String) {
                 md.push(format!("{}{}", nl(&md), md_lines(t)));
             }
             Block::Li(depth, ordered, t) => {
+                let depth = &(*depth).clamp(0, super::MAX_LIST_DEPTH);
                 counters.retain(|d, _| d <= depth);
                 let n = counters.entry(*depth).or_insert(0);
                 *n += 1;

@@ -73,6 +73,23 @@ fn decode_byte(codepage: &str, b: u8) -> char {
     cp1252(b)
 }
 
+/// Characters RTF writes as control words (Word does so for every typed apostrophe and dash).
+fn symbol(word: &str) -> Option<char> {
+    Some(match word {
+        "lquote" => '\u{2018}',
+        "rquote" => '\u{2019}',
+        "ldblquote" => '\u{201c}',
+        "rdblquote" => '\u{201d}',
+        "endash" => '\u{2013}',
+        "emdash" => '\u{2014}',
+        "bullet" => '\u{2022}',
+        "emspace" | "enspace" | "qmspace" => ' ',
+        "zwj" => '\u{200d}',
+        "zwnj" => '\u{200c}',
+        _ => return None,
+    })
+}
+
 const DESTINATIONS: [&str; 14] = [
     "fonttbl",
     "colortbl",
@@ -138,6 +155,8 @@ pub fn rtf_text(raw: &[u8]) -> String {
                     out.push('\n');
                 } else if matches!(word.as_str(), "tab" | "cell") {
                     out.push('\t');
+                } else if let Some(c) = symbol(&word) {
+                    out.push(c);
                 } else if word == "u" && arg.is_some() {
                     out.unit(num().rem_euclid(65536) as u16);
                     pending_skip = uc;

@@ -28,9 +28,20 @@ pub async fn call(
         return (503, json!({"error": {"message": NOT_CONFIGURED}}));
     }
     let method = reqwest::Method::from_bytes(method.as_bytes()).unwrap_or(reqwest::Method::GET);
+    // built from the parsed address (not by joining strings), so a saved address that the client would read
+    // differently from this code (a backslash, a user name) is never sent a key
+    let endpoint = match crate::settings::device_endpoint(url, path) {
+        Ok(u) => u,
+        Err(e) => {
+            return (
+                502,
+                json!({"error": {"message": format!("Device unreachable: {e}")}}),
+            )
+        }
+    };
     let mut req = state
         .http
-        .request(method, format!("{url}{path}"))
+        .request(method, endpoint)
         .bearer_auth(key)
         .timeout(Duration::from_secs(timeout));
     if let Some(b) = body {
@@ -39,19 +50,34 @@ pub async fn call(
     match req.send().await {
         Ok(res) => {
             let code = res.status().as_u16();
-            let raw = res.bytes().await.unwrap_or_default();
+            // a connection that drops (or the timeout) while the body arrives is not an empty success
+            let raw = match res.bytes().await {
+                Ok(b) => b,
+                Err(e) => {
+                    return (
+                        502,
+                        json!({"error": {"message": format!("Device unreachable: {e}")}}),
+                    )
+                }
+            };
             if raw.is_empty() {
                 return (code, json!({}));
             }
             match serde_json::from_slice::<Value>(&raw) {
                 Ok(v) => (code, v),
                 Err(_) => {
-                    // an error answer's own text; a 200 that isn't JSON (a login page, a proxy) is an error too
                     let text: String = String::from_utf8_lossy(&raw).chars().take(500).collect();
-                    (
-                        if code >= 400 { code } else { 502 },
-                        json!({"error": {"message": text}}),
-                    )
+                    if code >= 400 {
+                        // an error answer's own text
+                        (code, json!({"error": {"message": text}}))
+                    } else {
+                        // a 200 that isn't JSON (a router, a portal, a NAS) is the wrong address, not a locked
+                        // Tiiny: it carries the "Device unreachable" words callers treat as "no device answer"
+                        (
+                            502,
+                            json!({"error": {"message": format!("Device unreachable: this address answered, but not like a Tiiny ({text})")}}),
+                        )
+                    }
                 }
             }
         }
@@ -60,6 +86,20 @@ pub async fn call(
             json!({"error": {"message": format!("Device unreachable: {e}")}}),
         ),
     }
+}
+
+/// A 502 the device itself sent (its web server is up, its services aren't), as opposed to our own "Device
+/// unreachable" 502 for a connection that failed.
+pub(crate) fn is_locked(code: u16, body: &Value) -> bool {
+    code == 502
+        && !body
+            .pointer("/error/message")
+            .and_then(Value::as_str)
+            .is_some_and(|m| m.starts_with("Device unreachable"))
+}
+
+pub(crate) fn locked_answer() -> Value {
+    json!({"error": {"message": LOCKED, "type": "device_locked"}})
 }
 
 /// urllib.parse.quote(s, safe=""): everything but letters, digits and _.-~ is %-encoded (per UTF-8 byte).
@@ -109,21 +149,22 @@ pub async fn catalog(state: &AppState) -> (u16, Value) {
         None,
     )
     .await;
-    let unreachable = inst
-        .pointer("/error/message")
-        .and_then(Value::as_str)
-        .is_some_and(|m| m.starts_with("Device unreachable"));
-    if code == 502 && !unreachable {
+    if is_locked(code, &inst) {
         // it answers, but its services aren't up
-        return (
-            502,
-            json!({"error": {"message": LOCKED, "type": "device_locked"}}),
-        );
+        return (502, locked_answer());
     }
     if code != 200 {
         return (code, inst);
     }
-    let (_, run) = call(state, "GET", "/api/v1/models/running", None, 15, None).await;
+    let (run_code, run) = call(state, "GET", "/api/v1/models/running", None, 15, None).await;
+    if run_code != 200 {
+        // without the running list every model would read "stopped"
+        return if is_locked(run_code, &run) {
+            (502, locked_answer())
+        } else {
+            (run_code, run)
+        };
+    }
     let instances = run.get("instances").cloned().unwrap_or(json!({}));
     let list = |k: &str| {
         instances
@@ -400,7 +441,7 @@ pub async fn stats(state: &AppState) -> Value {
 
 #[cfg(test)]
 mod tests {
-    use super::quote;
+    use super::*;
 
     #[test]
     fn quoting() {
@@ -409,5 +450,99 @@ mod tests {
         assert_eq!(quote("a b/c"), "a%20b%2Fc");
         assert_eq!(quote("é日"), "%C3%A9%E6%97%A5");
         assert_eq!(quote(""), "");
+    }
+
+    /// A one-shot HTTP server on 127.0.0.1 that answers every request with these raw bytes, then closes.
+    async fn serve_raw(answer: &'static [u8]) -> String {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = l.local_addr().unwrap();
+        tokio::spawn(async move {
+            while let Ok((mut c, _)) = l.accept().await {
+                tokio::spawn(async move {
+                    let mut buf = [0u8; 2048];
+                    let _ = c.read(&mut buf).await;
+                    let _ = c.write_all(answer).await;
+                });
+            }
+        });
+        format!("http://{addr}")
+    }
+
+    fn state() -> AppState {
+        AppState::new(crate::Config {
+            port: 0,
+            host: "127.0.0.1".into(),
+            password: String::new(),
+            lan_access: false,
+            app: false,
+            data_dir: std::env::temp_dir()
+                .join(format!("studio-device-{}", uuid::Uuid::new_v4().simple())),
+        })
+    }
+
+    #[tokio::test]
+    async fn a_broken_or_foreign_answer_is_not_a_success_or_a_lock() {
+        let s = state();
+        // the body stops short of its Content-Length: not an empty 200
+        let cut =
+            serve_raw(b"HTTP/1.1 200 OK\r\ncontent-length: 100\r\nconnection: close\r\n\r\n{\"a\"")
+                .await;
+        let (code, body) = call(&s, "GET", "/x", None, 5, Some((&cut, "k"))).await;
+        assert_eq!(code, 502);
+        assert!(!is_locked(code, &body), "{body}");
+        // a router's web page answering 200: the wrong address, not a locked Tiiny
+        let page =
+            serve_raw(b"HTTP/1.1 200 OK\r\ncontent-length: 6\r\nconnection: close\r\n\r\n<html>")
+                .await;
+        let (code, body) = call(&s, "GET", "/x", None, 5, Some((&page, "k"))).await;
+        assert_eq!(code, 502);
+        assert!(!is_locked(code, &body), "{body}");
+        // the device's own 502 (its services are down) is the locked case
+        let locked = serve_raw(
+            b"HTTP/1.1 502 Bad Gateway\r\ncontent-length: 4\r\nconnection: close\r\n\r\nnope",
+        )
+        .await;
+        let (code, body) = call(&s, "GET", "/x", None, 5, Some((&locked, "k"))).await;
+        assert!(is_locked(code, &body), "{body}");
+        // an address the client would read as another host never gets a request (or the key)
+        let (code, body) = call(
+            &s,
+            "GET",
+            "/x",
+            None,
+            5,
+            Some((r"http://127.0.0.1:9\@10.0.0.1", "k")),
+        )
+        .await;
+        assert_eq!(code, 502);
+        assert!(body.to_string().contains("usable device address"), "{body}");
+    }
+
+    #[tokio::test]
+    async fn a_failed_running_call_fails_the_catalog() {
+        let s = state();
+        // /api/v1/models/ answers with an empty list, everything else (the running list) fails
+        let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", l.local_addr().unwrap());
+        tokio::spawn(async move {
+            use tokio::io::{AsyncReadExt, AsyncWriteExt};
+            while let Ok((mut c, _)) = l.accept().await {
+                tokio::spawn(async move {
+                    let mut buf = [0u8; 2048];
+                    let n = c.read(&mut buf).await.unwrap_or(0);
+                    let head = String::from_utf8_lossy(&buf[..n]).to_string();
+                    let answer: &[u8] = if head.contains("/running") {
+                        b"HTTP/1.1 500 Oops\r\ncontent-length: 2\r\nconnection: close\r\n\r\n{}"
+                    } else {
+                        b"HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: 11\r\nconnection: close\r\n\r\n{\"data\":[]}\n"
+                    };
+                    let _ = c.write_all(answer).await;
+                });
+            }
+        });
+        s.settings.upsert(None, "t", &url, "key-aaaa-1111").unwrap();
+        let (code, _) = catalog(&s).await;
+        assert_eq!(code, 500);
     }
 }

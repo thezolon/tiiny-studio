@@ -10,11 +10,12 @@ use serde_json::{json, Map, Value};
 use super::{decode_uri, ensure_running, err, http, http_bytes, save};
 use crate::jobs::{Ctx, JobError, JobResult};
 
-/// The request fields for the first and last frame.
-const FRAME_FIELDS: [&str; 2] = ["image", "last_image"]; // first frame tested on 0.1.38; the last-frame name is a guess
+/// The longest clip the video model renders (MiniMax-H3-Turbo, TiinyOS 0.1.38: 8 s and longer fail at once with
+/// "no exported bucket fits a request", though the submit accepts them; docs/DEVICE-API.md).
+pub const MAX_SECONDS: i64 = 7;
 
-/// Polls in a row without an answer (~5 minutes) before a video job gives up (media.py VIDEO_LOST_POLLS).
-const LOST_POLLS: u32 = 100;
+/// How long a video job rides out a dead link (polls with no answer) before it gives up.
+const LOST_SECS: u64 = 300;
 
 /// The NPU's error when the video model doesn't fit next to the other loaded models, in plain words; the device's own
 /// text stays at the end for bug reports (#90, media.py video_error).
@@ -47,11 +48,14 @@ pub async fn run(ctx: Ctx) -> JobResult {
         ));
     }
     let model = ctx.model.clone();
+    let secs = int_of(req, "seconds").unwrap_or(2);
+    if !(1..=MAX_SECONDS).contains(&secs) {
+        return Err(JobError(format!(
+            "Videos can be 1 to {MAX_SECONDS} seconds long: the Tiiny's video model can't render {secs} s."
+        )));
+    }
     ensure_running(ctx, &model).await?;
     let url = format!("{}/v1/videos", ctx.target.url);
-    let secs = int_of(req, "seconds")
-        .filter(|x| (1..=20).contains(x))
-        .unwrap_or(2);
     let size = Some(s("size"))
         .filter(|x| !x.is_empty())
         .unwrap_or("832x480")
@@ -75,14 +79,16 @@ pub async fn run(ctx: Ctx) -> JobResult {
     }
     body.entry("steps").or_insert(json!(4)); // the device's own default (7) makes a 2 s clip take ~12 minutes instead of ~7
     let mut sources = vec![];
-    for (i, k) in ["image", "last_image"].iter().enumerate() {
-        if s(k).is_empty() {
-            continue;
-        }
-        let (ctype, data) = decode_uri(s(k))?;
-        sources.push(save(ctx, &format!("{}-frame{i}.png", ctx.id), &data)?);
+    // the start frame; the device ignores any end frame (0.1.38), so none is sent
+    if !s("image").is_empty() {
+        let (ctype, data) = decode_uri(s("image"))?;
+        sources.push(save(
+            ctx,
+            &format!("{}-frame0.{}", ctx.id, super::image::sniff(&data).0),
+            &data,
+        )?);
         body.insert(
-            FRAME_FIELDS[i].into(),
+            "image".into(),
             json!(format!(
                 "data:{ctype};base64,{}",
                 base64::engine::general_purpose::STANDARD.encode(&data)
@@ -99,8 +105,13 @@ pub async fn run(ctx: Ctx) -> JobResult {
         .and_then(Value::as_str)
         .unwrap_or("")
         .to_string();
+    if vid.is_empty() {
+        return Err(JobError(
+            "The Tiiny accepted the video but gave no id for it, so it can't be followed.".into(),
+        ));
+    }
     ctx.set_remote_task(Some(format!("DELETE {url}/{vid}"))); // deleting a clip stops its render (there's no /cancel)
-    let mut lost = 0; // polls in a row with no answer: a render takes many minutes, so ride out a dropped link
+    let mut lost_since: Option<std::time::Instant> = None; // no answer since: a render takes many minutes, so ride out a dropped link
     let (v, st) = loop {
         tokio::time::sleep(Duration::from_secs(3)).await;
         let (code, v) = http(ctx, "GET", &format!("{url}/{vid}"), None, 30, true)
@@ -108,6 +119,13 @@ pub async fn run(ctx: Ctx) -> JobResult {
             .unwrap_or((0, json!({})));
         if ctx.cancelled() {
             return Err(JobError("Cancelled".into()));
+        }
+        if matches!(code, 401 | 403 | 404) {
+            // the clip is gone (the Tiiny restarted, or it expired) or the key was refused: not "busy"
+            return Err(JobError(format!(
+                "The Tiiny no longer knows this video ({}). If it finished, it may be kept on the device.",
+                err(&v)
+            )));
         }
         let st = if code < 500 {
             v.get("status")
@@ -120,11 +138,15 @@ pub async fn run(ctx: Ctx) -> JobResult {
         if ["completed", "failed", "cancelled"].contains(&st.as_str()) {
             break (v, st);
         }
-        lost = if st.is_empty() { lost + 1 } else { 0 };
-        if lost >= LOST_POLLS {
+        lost_since = if st.is_empty() {
+            Some(lost_since.unwrap_or_else(std::time::Instant::now))
+        } else {
+            None
+        };
+        if lost_since.is_some_and(|t| t.elapsed().as_secs() >= LOST_SECS) {
             return Err(JobError("Lost the Tiiny while it rendered this video. If it finished, it's kept on the device for an hour.".into()));
         }
-        if lost > 0 {
+        if lost_since.is_some() {
             ctx.update(json!({"message": "No answer from the Tiiny yet (it's usually just busy). Still waiting…"}));
             continue;
         }

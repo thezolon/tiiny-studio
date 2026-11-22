@@ -73,6 +73,24 @@ EXTRA = {
     "tabs.tsv": b"a\tb\n1\t2\n",
     "pipes.csv": b"a|b|c\n1|2|3\n4|5|6\n",
     "single.csv": b"just\none\ncolumn\n",
+    "nested-table.html": b"<table><tr><td>ONE</td><td>TWO<table><tr><td>inner</td></tr></table>AFTER</td></tr><tr><td><p>A</p><p>B</p></td></tr></table>",
+    "no-head-end.html": b"<html><head><title>T</title><meta charset=utf-8><body><h1>Hello</h1><p>kept</p></body></html>",
+    "quotes.rtf": rb"{\rtf1\ansi It\rquote s a \ldblquote q\rdblquote  \endash  x.\par}",
+    "cr-only.csv": b"a,b\rc,d\r",
+    "stray-quote.csv": b'a,b\n"stray,quote\nmore\n',
+    "latin1-even.txt": b"Caf\xe9 menu: cr\xe8me br\xfbl\xe9e!",
+    "long.csv": b"a,b\n" * 5007,
+    "cut-repeat.ods": zipped({"content.xml": '<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0"><office:body><office:spreadsheet><table:table table:name="S"><table:table-row><table:table-cell table:number-columns-repeated="9999"><text:p>a</text:p></table:table-cell></table:table-row></table:table></office:spreadsheet></office:body></office:document-content>'}),
+    "order.pptx": zipped({
+        "ppt/presentation.xml": '<p:presentation xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><p:sldIdLst><p:sldId id="1" r:id="rId2"/><p:sldId id="2" r:id="rId1"/></p:sldIdLst></p:presentation>',
+        "ppt/_rels/presentation.xml.rels": '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Target="slides/slide1.xml"/><Relationship Id="rId2" Target="slides/slide2.xml"/></Relationships>',
+        "ppt/slides/slide1.xml": '<p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><p:cSld><p:spTree><p:sp><p:txBody><a:p><a:r><a:t>FIRSTFILE</a:t></a:r></a:p></p:txBody></p:sp></p:spTree></p:cSld></p:sld>',
+        "ppt/slides/slide2.xml": '<p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><p:cSld><p:spTree><p:sp><p:txBody><a:p><a:r><a:t>SECONDFILE</a:t></a:r></a:p></p:txBody></p:sp></p:spTree></p:cSld></p:sld>'}),
+    "pct.epub": zipped({
+        "META-INF/container.xml": '<container><rootfiles><rootfile full-path="OEBPS/content.opf"/></rootfiles></container>',
+        "OEBPS/content.opf": '<package xmlns="http://www.idpf.org/2007/opf"><manifest><item id="c1" href="My%20Chapter.xhtml#top"/><item id="c2" href="plain.xhtml"/></manifest><spine><itemref idref="c1"/><itemref idref="c2"/></spine></package>',
+        "OEBPS/My Chapter.xhtml": "<html><body><p>PERCENTCHAPTER</p></body></html>",
+        "OEBPS/plain.xhtml": "<html><body><p>PLAINCHAPTER</p></body></html>"}),
     "messy.html": (b"<!DOCTYPE html><html><head><title>T</title><style>p{color:red}</style></head><body>"
                    b"<h1>Head &amp; <em>tail</em></h1><p>Para one<br>line two &copy; &#x41;&#66; &bogus; &lt;b&gt;</p>"
                    b"<div>div text</div><ul><li>a<ul><li>nested</li></ul></li><li>b</li></ul>"

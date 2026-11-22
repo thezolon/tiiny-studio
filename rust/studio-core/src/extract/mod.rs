@@ -15,11 +15,13 @@ mod odf;
 mod ooxml;
 mod render;
 mod rtf;
+mod sax;
 mod text;
 mod xml;
 
 use std::collections::HashMap;
 use std::io::{Cursor, Read};
+use std::time::{Duration, Instant};
 
 use base64::Engine;
 use serde_json::{json, Value};
@@ -32,6 +34,24 @@ const MAX_TOTAL: u64 = 256 << 20;
 const MAX_IMAGES: usize = 50;
 const MAX_ROWS: usize = 5000; // per sheet or CSV
 const MIN_IMAGE: u64 = 6 << 10; // smaller pictures are icons, bullets and logos
+/// Cells kept per sheet (a sheet is cut off at MAX_ROWS rows or this many cells, whichever comes first).
+const MAX_CELLS: usize = 1_000_000;
+/// Columns a spreadsheet cell reference may name (Excel's own limit is 16,384).
+const MAX_COLS: usize = 16_384;
+/// Deepest list nesting and heading level that is shown; anything a file claims beyond that is clamped.
+const MAX_LIST_DEPTH: i64 = 16;
+/// Text taken from one document, in bytes, before the reading stops with an error.
+const MAX_TEXT: usize = 128 << 20;
+/// How long one document may take; the readers check it as they go, and `extract_isolated` also stops waiting.
+const TIME_BUDGET: Duration = Duration::from_secs(45);
+/// Stack of the extraction thread; the readers recurse one level per nested element (at most xml::MAX_DEPTH, a few KB of stack each in a debug build).
+const STACK_SIZE: usize = 64 << 20;
+/// The visible note for rows a limit left out of a table.
+pub(crate) fn rows_note(n: usize) -> String {
+    format!("[… {n} more rows not shown]")
+}
+const TOO_MUCH: &str = "This document has more text than the studio can read.";
+const TOO_SLOW: &str = "Reading this document is taking too long, so it was stopped.";
 const IMAGE_TYPES: [(&str, &str); 8] = [
     ("png", "image/png"),
     ("jpg", "image/jpeg"),
@@ -107,6 +127,11 @@ pub(crate) struct Doc<'a> {
     blocks: Vec<Block>,
     images: usize,
     total: u64,
+    /// text collected so far (bytes), against MAX_TEXT
+    chars: usize,
+    deadline: Instant,
+    /// set once the text or time budget is spent: further blocks are dropped and the reading fails at the end
+    over: Option<&'static str>,
 }
 
 impl<'a> Doc<'a> {
@@ -117,6 +142,20 @@ impl<'a> Doc<'a> {
             blocks: vec![],
             images: 0,
             total: 0,
+            chars: 0,
+            deadline: Instant::now() + TIME_BUDGET,
+            over: None,
+        }
+    }
+
+    /// Fails once the text or time budget is spent, so a long loop can stop early.
+    pub fn check(&mut self) -> R<()> {
+        if self.over.is_none() && Instant::now() > self.deadline {
+            self.over = Some(TOO_SLOW);
+        }
+        match self.over {
+            Some(m) => Err(Fail::Extract(m.into())),
+            None => Ok(()),
         }
     }
 
@@ -146,20 +185,25 @@ impl<'a> Doc<'a> {
     }
 
     pub fn read(&mut self, name: &str) -> R<Vec<u8>> {
+        let too_large = || Fail::Extract("The document is too large to read.".into());
         let size = self.size(name)?;
-        if size > MAX_MEMBER || self.total + size > MAX_TOTAL {
-            return Err(Fail::Extract("The document is too large to read.".into()));
+        let limit = MAX_MEMBER.min(MAX_TOTAL.saturating_sub(self.total));
+        if size > limit {
+            return Err(too_large());
         }
-        self.total += size;
         let i = self.zip().index[name];
         let z = self.zip.as_mut().expect("zip document");
         let mut f = z.ar.by_index(i).map_err(|_| Fail::Other("RuntimeError"))?;
         let mut buf = Vec::new();
+        // the limits count the bytes that are really read: the size in the zip directory is only a claim
         f.by_ref()
-            .take(MAX_MEMBER + 1)
+            .take(limit + 1)
             .read_to_end(&mut buf)
             .map_err(|_| Fail::Other("BadZipFile"))?;
-        buf.truncate(MAX_MEMBER as usize);
+        if buf.len() as u64 > limit {
+            return Err(too_large());
+        }
+        self.total += buf.len() as u64;
         Ok(buf)
     }
 
@@ -167,7 +211,24 @@ impl<'a> Doc<'a> {
         xml::parse(&self.read(name)?).map_err(|_| Fail::Parse)
     }
 
-    pub fn add(&mut self, block: Block) {
+    pub fn add(&mut self, mut block: Block) {
+        let _ = self.check();
+        let len = match &block {
+            Block::Table(rows) => rows.iter().flatten().map(String::len).sum(),
+            Block::H(_, t) | Block::P(t) | Block::Li(_, _, t) | Block::Pre(_, t) => t.len(),
+        };
+        self.chars = self.chars.saturating_add(len);
+        if self.chars > MAX_TEXT {
+            self.over = Some(TOO_MUCH);
+        }
+        if self.over.is_some() {
+            return;
+        }
+        match &mut block {
+            Block::H(l, _) => *l = (*l).clamp(0, 6),
+            Block::Li(d, _, _) => *d = (*d).clamp(0, MAX_LIST_DEPTH),
+            _ => {}
+        }
         let keep = match &block {
             Block::Table(_) => true,
             Block::H(_, t) | Block::P(t) | Block::Li(_, _, t) | Block::Pre(_, t) => {
@@ -245,6 +306,39 @@ pub fn extract(filename: &str, data: &[u8]) -> Result<Value, ExtractError> {
     Ok(Value::Array(parts))
 }
 
+/// `extract` for the callers that serve requests: runs it on its own thread with a big stack (so a
+/// pathological file can't overflow a worker's), turns a panic into an error and stops waiting after a
+/// while. The readers also check the time themselves, so the thread ends soon after.
+pub async fn extract_isolated<D>(filename: String, data: D) -> Result<Value, ExtractError>
+where
+    D: AsRef<[u8]> + Send + 'static,
+{
+    const FAILED: &str = "Couldn't read this file (the reader stopped unexpectedly).";
+    let waited = tokio::task::spawn_blocking(move || {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let spawned = std::thread::Builder::new()
+            .name("extract".into())
+            .stack_size(STACK_SIZE)
+            .spawn(move || {
+                let done = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    extract(&filename, data.as_ref())
+                }));
+                let _ = tx.send(done);
+            });
+        if spawned.is_err() {
+            return Err(ExtractError(FAILED.into()));
+        }
+        match rx.recv_timeout(TIME_BUDGET + Duration::from_secs(15)) {
+            Ok(Ok(r)) => r,
+            Ok(Err(_)) => Err(ExtractError(FAILED.into())),
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => Err(ExtractError(TOO_SLOW.into())),
+            Err(_) => Err(ExtractError(FAILED.into())),
+        }
+    })
+    .await;
+    waited.unwrap_or_else(|_| Err(ExtractError(FAILED.into())))
+}
+
 /// `<!doctype html` or `<html` at the start (after whitespace), any case.
 fn looks_like_html(data: &[u8]) -> bool {
     let head = &data[..data.len().min(200)];
@@ -316,6 +410,7 @@ fn read_parts(name: &str, data: &[u8]) -> Result<Vec<Value>, ExtractError> {
             Kind::Odf => odf::odf(&mut doc),
             Kind::Epub => epub::epub(&mut doc),
         }?;
+        doc.check()?;
         return Ok(doc.parts);
     }
     let mut doc = Doc::new(None);
@@ -342,5 +437,9 @@ fn read_parts(name: &str, data: &[u8]) -> Result<Vec<Value>, ExtractError> {
             "The studio can't read this kind of file.".into(),
         ));
     }
+    doc.check()?;
     Ok(doc.parts)
 }
+
+#[cfg(test)]
+mod tests;

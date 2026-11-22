@@ -46,13 +46,30 @@ fn short(model: &str) -> &str {
 }
 
 // ---------- model juggling: chat tools and helpers load what they need, then put the user's models back ----------
+#[cfg(not(test))]
 const LOAD_TIMEOUT: Duration = Duration::from_secs(420); // the biggest models take ~2 minutes to load
+#[cfg(test)]
+const LOAD_TIMEOUT: Duration = Duration::from_millis(300);
+#[cfg(not(test))]
+const LOAD_POLL: Duration = Duration::from_secs(3);
+#[cfg(test)]
+const LOAD_POLL: Duration = Duration::from_millis(20);
+const LAUNCH_RETRIES: usize = 2;
+#[cfg(not(test))]
+const LAUNCH_RETRY_WAIT: Duration = Duration::from_secs(4);
+#[cfg(test)]
+const LAUNCH_RETRY_WAIT: Duration = Duration::from_millis(20);
 
 pub async fn running_ids(ctx: &Ctx) -> Vec<String> {
     let (code, run) = ctx.call("GET", "/api/v1/models/running", None, 15).await;
     if code != 200 {
         return vec![];
     }
+    running_of(&run)
+}
+
+/// The model ids a /running answer lists as running.
+fn running_of(run: &Value) -> Vec<String> {
     run.pointer("/instances/running")
         .and_then(Value::as_array)
         .into_iter()
@@ -66,26 +83,115 @@ pub async fn running_ids(ctx: &Ctx) -> Vec<String> {
         .collect()
 }
 
+/// The ids listed in a /running answer under `instances.pending` (or `pending`), None when the device lists none.
+fn pending_ids(run: &Value) -> Option<Vec<String>> {
+    let list = run
+        .pointer("/instances/pending")
+        .or_else(|| run.get("pending"))
+        .and_then(Value::as_array)?;
+    Some(
+        list.iter()
+            .filter_map(|p| {
+                p.as_str()
+                    .or_else(|| p.get("model_id").and_then(Value::as_str))
+            })
+            .map(String::from)
+            .collect(),
+    )
+}
+
 async fn wait_loaded(ctx: &Ctx, mid: &str) -> Result<(), JobError> {
     let t0 = Instant::now();
+    let (mut seen_loading, mut device_lists_loading) = (false, false);
     while t0.elapsed() < LOAD_TIMEOUT {
         if ctx.cancelled() {
             return Err(JobError("Cancelled".into()));
         }
-        if running_ids(ctx).await.iter().any(|m| m == mid) {
-            return Ok(());
+        let (code, run) = ctx.call("GET", "/api/v1/models/running", None, 15).await;
+        if code == 200 {
+            if running_of(&run).iter().any(|m| m == mid) {
+                return Ok(());
+            }
+            if let Some(p) = pending_ids(&run) {
+                device_lists_loading = true;
+                seen_loading |= p.iter().any(|m| m == mid);
+            }
         }
-        tokio::time::sleep(Duration::from_secs(3)).await;
+        tokio::time::sleep(LOAD_POLL).await;
     }
-    Err(JobError(format!("{} didn't finish loading", short(mid))))
+    Err(JobError(if device_lists_loading && !seen_loading {
+        format!(
+            "{} never started loading: the Tiiny accepted the request but didn't list the model as loading. Try loading it from the Models panel.",
+            short(mid)
+        )
+    } else {
+        format!("{} didn't finish loading", short(mid))
+    }))
 }
 
-/// Load target, unloading whatever the device says must go. Returns the models it unloaded.
-pub async fn make_room(ctx: &Ctx, target: &str) -> Result<Vec<String>, JobError> {
-    if running_ids(ctx).await.iter().any(|m| m == target) {
-        return Ok(vec![]);
+/// POST launch for `model` on `to`. A 409 `cleanup_failed` (an earlier stop didn't finish cleaning up; the device says
+/// it must be retried, and the second launch worked in the one case on record) is tried again, twice, after a short wait.
+pub(crate) async fn launch_on(
+    state: &crate::AppState,
+    to: (&str, &str),
+    model: &str,
+    cancelled: impl Fn() -> bool,
+) -> (u16, Value) {
+    let path = format!("/api/v1/models/{}/launch", quote(model));
+    let mut retries = 0;
+    loop {
+        let (code, res) = crate::device::call(
+            state,
+            "POST",
+            &path,
+            Some(json!({"model_id": model})),
+            120,
+            Some(to),
+        )
+        .await;
+        let text = res.to_string().to_lowercase();
+        let retryable =
+            code == 409 && (text.contains("cleanup_failed") || text.contains("must be retried"));
+        if !retryable || retries >= LAUNCH_RETRIES || cancelled() {
+            return (code, res);
+        }
+        retries += 1;
+        tokio::time::sleep(LAUNCH_RETRY_WAIT).await;
     }
+}
+
+async fn launch(ctx: &Ctx, model: &str) -> (u16, Value) {
+    let to = (ctx.target.url.as_str(), ctx.target.key.as_str());
+    launch_on(&ctx.state, to, model, || ctx.cancelled()).await
+}
+
+/// Load target, unloading whatever the device says must go. Returns the models it unloaded. When the load then fails
+/// or is stopped, the models it unloaded are loaded back (best effort) before the error comes back.
+pub async fn make_room(ctx: &Ctx, target: &str) -> Result<Vec<String>, JobError> {
     let mut unloaded = vec![];
+    match make_room_into(ctx, target, &mut unloaded).await {
+        Ok(()) => Ok(unloaded),
+        Err(e) if unloaded.is_empty() => Err(e),
+        Err(e) => {
+            let back = put_back(ctx, target, &unloaded).await;
+            Err(match back {
+                // a stopped job's own "Cancelled" cut the wait short; the launches were sent
+                _ if ctx.cancelled() => e,
+                Ok(()) => e,
+                Err(b) => JobError(format!("{e} ({b})")),
+            })
+        }
+    }
+}
+
+async fn make_room_into(
+    ctx: &Ctx,
+    target: &str,
+    unloaded: &mut Vec<String>,
+) -> Result<(), JobError> {
+    if running_ids(ctx).await.iter().any(|m| m == target) {
+        return Ok(());
+    }
     for _ in 0..4 {
         // one unload may not be enough
         let (code, plan) = ctx
@@ -128,19 +234,11 @@ pub async fn make_room(ctx: &Ctx, target: &str) -> Result<Vec<String>, JobError>
         }
     }
     ctx.update(json!({"message": format!("Loading {}", short(target))}));
-    let (code, res) = ctx
-        .call(
-            "POST",
-            &format!("/api/v1/models/{}/launch", quote(target)),
-            Some(json!({"model_id": target})),
-            120,
-        )
-        .await;
+    let (code, res) = launch(ctx, target).await;
     if code != 200 {
         return Err(JobError(err(&res)));
     }
-    wait_loaded(ctx, target).await?;
-    Ok(unloaded)
+    wait_loaded(ctx, target).await
 }
 
 /// After a tool or helper: if other models had to make room, unload target and load them back.
@@ -156,23 +254,17 @@ pub async fn put_back(ctx: &Ctx, target: &str, unloaded: &[String]) -> Result<()
         120,
     )
     .await;
+    let mut failed = vec![];
     for mid in unloaded {
         ctx.update(json!({"message": format!("Loading {} back", short(mid))}));
-        let (code, res) = ctx
-            .call(
-                "POST",
-                &format!("/api/v1/models/{}/launch", quote(mid)),
-                Some(json!({"model_id": mid})),
-                120,
-            )
-            .await;
+        let (code, res) = launch(ctx, mid).await;
         if code != 200 {
-            return Err(JobError(format!(
-                "Couldn't load {} back: {}",
-                short(mid),
-                err(&res)
-            )));
+            failed.push(format!("Couldn't load {} back: {}", short(mid), err(&res)));
         }
+    }
+    if !failed.is_empty() {
+        // the others were still tried (one refusal doesn't strand the rest)
+        return Err(JobError(failed.join("; ")));
     }
     for mid in unloaded {
         wait_loaded(ctx, mid).await?;
@@ -544,6 +636,171 @@ mod tests {
                 && !msg.contains("os error"),
             "{msg}"
         );
+    }
+
+    /// A device with a loaded chat model that has to make room for an image model.
+    #[derive(Default)]
+    struct Dev {
+        running: std::sync::Mutex<Vec<String>>,
+        pending: std::sync::Mutex<Vec<String>>,
+        log: std::sync::Mutex<Vec<String>>,
+        /// launches of "org/img" answered 409 cleanup_failed before one works
+        cleanup_failures: std::sync::atomic::AtomicUsize,
+        /// launches of "org/img" answered 500
+        refuse_img: std::sync::atomic::AtomicBool,
+        /// a launch that is accepted but never shows up
+        never_starts: std::sync::atomic::AtomicBool,
+    }
+
+    async fn dev_answer(
+        axum::extract::State(d): axum::extract::State<std::sync::Arc<Dev>>,
+        req: axum::extract::Request,
+    ) -> axum::response::Response {
+        use axum::response::IntoResponse;
+        use std::sync::atomic::Ordering::SeqCst;
+        let (m, p) = (req.method().to_string(), req.uri().path().to_string());
+        d.log.lock().unwrap().push(format!("{m} {p}"));
+        let j = |c: u16, v: Value| {
+            (axum::http::StatusCode::from_u16(c).unwrap(), axum::Json(v)).into_response()
+        };
+        let model = |p: &str| {
+            let rest = p.strip_prefix("/api/v1/models/").unwrap_or("");
+            let id = rest.rsplit_once('/').map(|x| x.0).unwrap_or(rest);
+            id.replace("%2F", "/")
+        };
+        match (m.as_str(), p.as_str()) {
+            ("GET", "/api/v1/models/running") => {
+                let run: Vec<Value> = d
+                    .running
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .map(|m| json!({"model_id": m}))
+                    .collect();
+                let pend: Vec<Value> = d
+                    .pending
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .map(|m| json!({"model_id": m}))
+                    .collect();
+                j(200, json!({"instances": {"running": run, "pending": pend}}))
+            }
+            ("GET", p) if p.ends_with("/unload_candidate") => {
+                let victims = d.running.lock().unwrap().clone();
+                j(
+                    200,
+                    json!({"unload_required": !victims.is_empty(), "model_id": victims}),
+                )
+            }
+            ("POST", p) if p.ends_with("/stop") => {
+                let id = model(p);
+                d.running.lock().unwrap().retain(|m| *m != id);
+                j(200, json!({"status": "ok"}))
+            }
+            ("POST", p) if p.ends_with("/launch") => {
+                let id = model(p);
+                if id == "org/img" {
+                    if d.refuse_img.load(SeqCst) {
+                        return j(500, json!({"error": {"message": "no room"}}));
+                    }
+                    if d.cleanup_failures.load(SeqCst) > 0 {
+                        d.cleanup_failures.fetch_sub(1, SeqCst);
+                        return j(
+                            409,
+                            json!({"error": {"code": "cleanup_failed", "message": "runtime cleanup failed and must be retried"}}),
+                        );
+                    }
+                    if d.never_starts.load(SeqCst) {
+                        return j(200, json!({"status": "ok"}));
+                    }
+                }
+                d.running.lock().unwrap().push(id);
+                j(200, json!({"status": "ok"}))
+            }
+            _ => j(404, json!({"detail": "Not Found"})),
+        }
+    }
+
+    async fn device(running: &[&str]) -> (std::sync::Arc<Dev>, crate::AppState, crate::jobs::Ctx) {
+        let d = std::sync::Arc::new(Dev::default());
+        *d.running.lock().unwrap() = running.iter().map(|m| m.to_string()).collect();
+        let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", l.local_addr().unwrap());
+        let app = axum::Router::new()
+            .fallback(dev_answer)
+            .with_state(d.clone());
+        tokio::spawn(async move { axum::serve(l, app).await.unwrap() });
+        let state = crate::AppState::new(crate::Config {
+            port: 0,
+            host: "127.0.0.1".into(),
+            password: String::new(),
+            lan_access: false,
+            app: false,
+            data_dir: std::env::temp_dir()
+                .join(format!("studio-room-{}", uuid::Uuid::new_v4().simple())),
+        });
+        let mut ctx = state.jobs.test_ctx(&state);
+        ctx.target.url = url;
+        ctx.target.key = "k".into();
+        (d, state, ctx)
+    }
+
+    #[tokio::test]
+    async fn a_refused_swap_loads_the_users_model_back() {
+        let (d, _state, ctx) = device(&["org/chat"]).await;
+        d.refuse_img
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        let e = make_room(&ctx, "org/img").await.unwrap_err();
+        assert_eq!(e.0, "no room"); // the load that failed is what the user hears about
+        assert_eq!(*d.running.lock().unwrap(), vec!["org/chat".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn a_stopped_swap_loads_the_users_model_back() {
+        let (d, _state, ctx) = device(&["org/chat"]).await;
+        d.never_starts
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        ctx.cancel.store(true, std::sync::atomic::Ordering::SeqCst); // Stop while "Loading org/img"
+        let e = make_room(&ctx, "org/img").await.unwrap_err();
+        assert_eq!(e.0, "Cancelled");
+        assert_eq!(*d.running.lock().unwrap(), vec!["org/chat".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn a_launch_refused_with_cleanup_failed_is_tried_again() {
+        let (d, _state, ctx) = device(&["org/chat"]).await;
+        d.cleanup_failures
+            .store(2, std::sync::atomic::Ordering::SeqCst);
+        let unloaded = make_room(&ctx, "org/img").await.unwrap();
+        assert_eq!(unloaded, vec!["org/chat".to_string()]);
+        let launches = d
+            .log
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|l| l.ends_with("org%2Fimg/launch"))
+            .count();
+        assert_eq!(launches, 3);
+        // a third refusal in a row is the answer
+        let (d, _state, ctx) = device(&["org/chat"]).await;
+        d.cleanup_failures
+            .store(5, std::sync::atomic::Ordering::SeqCst);
+        let e = make_room(&ctx, "org/img").await.unwrap_err();
+        assert!(e.0.contains("must be retried"), "{e}");
+    }
+
+    #[tokio::test]
+    async fn a_load_that_never_starts_says_so() {
+        let (d, _state, ctx) = device(&[]).await;
+        d.never_starts
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        let e = make_room(&ctx, "org/img").await.unwrap_err();
+        assert!(e.0.contains("never started loading"), "{e}");
+        // a model the device did list as loading is just slow
+        d.pending.lock().unwrap().push("org/img".into());
+        let e = wait_loaded(&ctx, "org/img").await.unwrap_err();
+        assert_eq!(e.0, "img didn't finish loading");
     }
 
     #[test]

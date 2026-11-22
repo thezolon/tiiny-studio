@@ -14,8 +14,8 @@ use super::{
 use crate::device::truthy;
 use crate::jobs::{Ctx, JobError, JobResult};
 
-/// Polls in a row without an answer (~5 minutes at 2 s) before a 3D stage gives up (media.py MESH_LOST_POLLS).
-const LOST_POLLS: u32 = 150;
+/// How long a 3D stage rides out a dead link (polls with no answer) before it gives up.
+const LOST_SECS: u64 = 300;
 
 /// What each 3D stage takes when the model doesn't say (Hunyuan3D-2.1's /v1/3d/capabilities, TiinyOS 0.1.37). Each
 /// model lists its own; TRELLIS.2 chains "shape_artifact" and "geometry_artifact" instead of "mesh".
@@ -88,6 +88,9 @@ fn str_of<'a>(v: &'a Value, k: &str) -> Option<&'a str> {
 const CUTOUT_PROMPT: &str = "Extract the main subject from this photo onto a transparent background. Keep the subject exactly the same: \
 shape, colours, details. Remove everything else. The image has an alpha channel and a transparent background.";
 
+/// The most pixels `prep_for_3d` works on (a 6000 x 6000 picture is a 144 MB RGBA buffer); a bigger picture is left as it is.
+const MAX_PREP_PIXELS: u64 = 36_000_000;
+
 /// The picture a 3D model gets. The models take every pixel that isn't fully transparent as part of the subject, and a
 /// cut-out (the studio's own or one made elsewhere) leaves faint noise over the background, so the model came out as a
 /// flat card or with a big floor (reported on the Tiiny Discord). So: every nearly see-through pixel
@@ -106,6 +109,9 @@ pub fn prep_for_3d(data: &[u8]) -> Vec<u8> {
     {
         return data.to_vec();
     }
+    if u64::from(w) * u64::from(h) > MAX_PREP_PIXELS {
+        return data.to_vec(); // too big to hold in memory several times over: the device gets it as it is
+    }
     let mut px = vec![0; reader.output_buffer_size()];
     if reader.next_frame(&mut px).is_err() {
         return data.to_vec();
@@ -120,13 +126,16 @@ pub fn prep_for_3d(data: &[u8]) -> Vec<u8> {
     if !clear {
         return data.to_vec(); // opaque: nothing to clean or crop
     }
-    let (w, h, px) = centre_subject(w, h, &px);
+    let (w, h, cropped) = centre_subject(w, h, &px);
+    drop(px); // one big copy at a time
+    let px = cropped;
     let stride = w as usize * 4;
     let mut rows = Vec::with_capacity(px.len() + h as usize);
     for line in px.chunks_exact(stride) {
         rows.push(0);
         rows.extend_from_slice(line);
     }
+    drop(px);
     let mut z = vec![0x78, 0x01];
     for (i, block) in rows.chunks(65535).enumerate() {
         z.push(u8::from((i + 1) * 65535 >= rows.len()));
@@ -140,6 +149,7 @@ pub fn prep_for_3d(data: &[u8]) -> Vec<u8> {
         b = (b + a) % 65521;
     }
     z.extend_from_slice(&((b << 16) | a).to_be_bytes());
+    drop(rows);
     let chunk = |out: &mut Vec<u8>, kind: &[u8], body: &[u8]| {
         out.extend_from_slice(&(body.len() as u32).to_be_bytes());
         out.extend_from_slice(kind);
@@ -296,12 +306,17 @@ pub async fn run(ctx: Ctx) -> JobResult {
     })
     .collect();
     let mut have = Have::default();
+    let (ext, mime) = super::image::sniff(&image);
     have.set(
         "image",
-        ("input.png".into(), image.clone(), "image/png".into()),
+        (format!("input.{ext}"), image.clone(), mime.into()),
     );
     let mut stage_log = vec![];
-    let src = save(&ctx, &format!("{}-src.png", ctx.id), &original)?;
+    let src = save(
+        &ctx,
+        &format!("{}-src.{}", ctx.id, super::image::sniff(&original).0),
+        &original,
+    )?;
 
     let last = plan.last().copied();
     for stage in plan {
@@ -392,7 +407,7 @@ pub async fn run(ctx: Ctx) -> JobResult {
             other => other.to_string(),
         };
         ctx.set_remote_task(Some(format!("{url}/tasks/{tid}/cancel{mq}")));
-        let mut silent = 0; // polls in a row without a status: the task is gone, or the link is down (a stage can take many minutes)
+        let mut silent_since: Option<std::time::Instant> = None; // no status since: the link is down or the device stopped reporting (a stage can take many minutes)
         let d = loop {
             tokio::time::sleep(Duration::from_secs(2)).await;
             let (code, st) = http(
@@ -410,14 +425,21 @@ pub async fn run(ctx: Ctx) -> JobResult {
                 if ctx.cancelled() {
                     return Err(JobError("Cancelled".into()));
                 }
-                silent += 1;
-                if silent >= LOST_POLLS {
+                let since = *silent_since.get_or_insert_with(std::time::Instant::now);
+                if since.elapsed().as_secs() >= LOST_SECS {
                     return Err(JobError(format!(
                         "{stage}: lost the Tiiny while it worked on this task"
                     )));
                 }
                 ctx.update(json!({"message": "No answer from the Tiiny yet (it's usually just busy). Still waiting…"}));
                 continue;
+            }
+            if matches!(code, 401 | 403 | 404) {
+                // the task is gone (the Tiiny restarted, or it expired) or the key was refused: not "busy"
+                return Err(JobError(format!(
+                    "{stage}: the Tiiny no longer knows this task ({})",
+                    err(&st)
+                )));
             }
             let d = st
                 .get("data")
@@ -446,12 +468,12 @@ pub async fn run(ctx: Ctx) -> JobResult {
             if ctx.cancelled() {
                 return Err(JobError("Cancelled".into()));
             }
-            silent = if d.get("status").is_some_and(truthy) {
-                0
+            silent_since = if d.get("status").is_some_and(truthy) {
+                None
             } else {
-                silent + 1
+                Some(silent_since.unwrap_or_else(std::time::Instant::now))
             };
-            if silent >= LOST_POLLS {
+            if silent_since.is_some_and(|t| t.elapsed().as_secs() >= LOST_SECS) {
                 return Err(JobError(format!(
                     "{stage}: the device stopped reporting on this task"
                 )));
@@ -618,6 +640,29 @@ mod tests {
         let mut px = vec![0; r.output_buffer_size()];
         r.next_frame(&mut px).unwrap();
         (r.info().width, r.info().height, px)
+    }
+
+    #[test]
+    fn a_huge_picture_is_left_alone_instead_of_decoded() {
+        // a PNG header that claims 12000 x 12000 RGBA (what a small "bomb" file looks like), a stub of a data chunk
+        let chunk = |out: &mut Vec<u8>, kind: &[u8], body: &[u8]| {
+            out.extend_from_slice(&(body.len() as u32).to_be_bytes());
+            out.extend_from_slice(kind);
+            out.extend_from_slice(body);
+            let mut crc = crc32fast::Hasher::new();
+            crc.update(kind);
+            crc.update(body);
+            out.extend_from_slice(&crc.finalize().to_be_bytes());
+        };
+        let mut bomb = b"\x89PNG\r\n\x1a\n".to_vec();
+        let mut ihdr = vec![];
+        ihdr.extend_from_slice(&12000u32.to_be_bytes());
+        ihdr.extend_from_slice(&12000u32.to_be_bytes());
+        ihdr.extend_from_slice(&[8, 6, 0, 0, 0]);
+        chunk(&mut bomb, b"IHDR", &ihdr);
+        chunk(&mut bomb, b"IDAT", &[0x78, 0x01]);
+        chunk(&mut bomb, b"IEND", b"");
+        assert_eq!(prep_for_3d(&bomb), bomb);
     }
 
     #[test]

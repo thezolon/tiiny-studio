@@ -73,7 +73,7 @@ desktop app connects, so open TiinyOS once after starting the Tiiny, or turn on 
 
 **Model downloads fail, or no updates ever show.** The Tiiny downloads models from the internet itself, over its own
 Wi-Fi, even when the studio reaches it by USB. Check that the Tiiny is on a network with internet (the TiinyOS app
-shows it). While it has no internet the Tiiny reports no updates at all, so "No model updates waiting" can just mean
+shows it). While it has no internet the Tiiny reports no updates at all, so "No updates found" can just mean
 it's offline. A big model on a phone hotspot uses that much of your data.
 
 | Test connection says | What to do |

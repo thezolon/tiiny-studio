@@ -8,12 +8,13 @@ async function loadSettings() {
   try { SET.info = await api("/api/settings"); } catch { SET.info = null; }
   if (SET.info?.version) $("#settingsBtn").title = `Settings · Tiiny Studio ${SET.info.version}`;  // the version, one hover away (#95)
   renderDeviceLabel();
+  for (const w of SET.info?.data_warnings || []) toast(w, "err");  // a saved file couldn't be read and was kept aside
   if (SET.info && !SET.info.configured) openSettings(true);
   return SET.info;
 }
 function renderDeviceLabel() {
   const i = SET.info;
-  $("#deviceHost").textContent = i?.host ? `Tiiny · ${i.name || i.host}` : "not connected";
+  $("#deviceHost").textContent = i?.host ? (/^tiiny\b/i.test(i.name || "") ? i.name : `Tiiny · ${i.name || i.host}`) : "not connected";  // the default name already says Tiiny
   $("#deviceHost").title = i?.host ? `${i.url}${i.auto && i.devices?.length > 1 ? " · auto-switch on" : ""}` : "";
 }
 /** Called from the model poll with the device the server is using; tells the user about switches. */
@@ -91,13 +92,15 @@ function deviceList() {
   const act = async (path, body) => { try { SET.info = await api("/api/settings/" + path, { method: "POST", body: JSON.stringify(body) }); renderDeviceLabel(); refreshSettings(); if (path === "activate") loadModels(true); } catch (e) { toast(e.message, "err"); } };
   const rows = (i.devices || []).map((d, n) => {
     const st = d.status;
-    const dot = el("span", { class: "dev-dot " + (st ? (st.ok ? "ok" : "bad") : ""), title: st ? (st.ok ? `answering · ${st.ms} ms` : "not answering") : "not checked yet" });
+    const lockedNow = d.id === i.active && S.locked && !!st?.ok;  // it answers, but is locked after a restart: not green
+    const dot = el("span", { class: "dev-dot " + (lockedNow ? "warn" : st ? (st.ok ? "ok" : "bad") : ""), title: lockedNow ? "answering, but locked: open the TiinyOS app once" : st ? (st.ok ? `answering · ${st.ms} ms` : "not answering") : "not checked yet" });
     const active = d.id === i.active;
     return el("div", { class: "dev-row" + (active ? " active" : "") },
       dot,
       el("div", { class: "grow" },
         el("div", { class: "dev-name" }, d.name, n === 0 && i.devices.length > 1 ? el("span", { class: "dev-tag" }, "preferred") : null, active ? el("span", { class: "dev-tag on" }, "in use") : null),
-        el("small", {}, `${d.host}${d.key_set ? ` · key ${d.key_hint}` : " · no key"}${st?.ok ? ` · ${st.ms} ms` : st ? " · not answering" : ""}`),
+        el("small", {}, `${d.host}${d.key_set ? ` · key ${d.key_hint}` : " · no key"}${lockedNow ? " · locked: open the TiinyOS app once" : st?.ok ? ` · ${st.ms} ms` : st ? " · not answering" : ""}`),
+        d.usable === false ? el("small", { class: "dev-warn" }, "This address can't be used (it has a backslash, a user name or an unknown scheme): edit it to fix.") : null,
         i.docker && d.host.startsWith("172.17.") && !st?.ok ? el("small", { class: "dev-warn" }, "A USB address in Docker's own network: the studio in Docker can't reach it. Use the Tiiny's Wi-Fi address, the desktop app, or ",
           el("a", { href: "/docs/CONNECTING.md", target: "_blank", rel: "noopener" }, "move Docker's network"), ".") : null),
       n > 0 ? el("button", { class: "icon-btn sm", type: "button", title: "Move up (higher priority)", "aria-label": `Move ${d.name} up`, onclick: () => act("move", { id: d.id, dir: -1 }) }, "↑") : null,
@@ -135,6 +138,20 @@ function swapSettings() {
     el("label", { class: "field" }, el("div", { class: "label" }, "Helpers use", el("span", { class: "hint" }, "a text model")), pick));
 }
 
+/** "Write prompts into files" (#58): on keeps today's behaviour; off leaves the prompt and spoken text out of the files
+    the studio saves (model and settings such as seed stay). */
+function tagSettings() {
+  const on = SET.info?.tag_prompts !== false;
+  const set = async (v) => {
+    try { SET.info = await api("/api/settings/tags", { method: "POST", body: JSON.stringify({ tag_prompts: v }) }); refreshSettings(); }
+    catch (e) { toast(e.message, "err"); refreshSettings(); }
+  };
+  return el("div", { class: "set-network set-swap" },
+    el("b", {}, "Write prompts into files"),
+    el("p", {}, "New pictures, songs and videos carry their prompt (or the text that was spoken), model and seed inside the file, so they show in the file manager and travel with it. Off: the prompt and spoken text are left out, so sharing a file doesn't share its prompt (the model and settings such as the seed are still written). Files already made aren't changed."),
+    el("label", { class: "auto" }, el("input", { type: "checkbox", checked: on, onchange: (e) => set(e.target.checked) }), "Write prompts into files"));
+}
+
 /** Agents (MCP): the studio's own MCP server, off by default, with a token of its own (not the studio password).
     The Python server has no MCP, so its settings carry no "mcp" and the section is left out. */
 function mcpSettings() {
@@ -153,7 +170,9 @@ function mcpSettings() {
     el("b", {}, "Agents (MCP)"),
     el("p", {}, "Off by default. When on, agents such as Claude, Cline or Hermes can make images, voice, music, 3D and video through the studio, using its queue and models. An agent sees only what it makes itself, not your gallery or chats."),
     el("label", { class: "auto" }, el("input", { type: "checkbox", checked: !!m.on, onchange: (e) => set({ on: e.target.checked }) }), "Let agents use the studio (MCP)"),
-    m.on ? [row("mcpUrl", "Endpoint", url), row("mcpToken", "Token", m.token || ""),
+    // the token isn't in every settings answer; "Show token" asks for it (an empty POST answers with it)
+    m.on ? [row("mcpUrl", "Endpoint", url),
+      m.token ? row("mcpToken", "Token", m.token) : el("button", { class: "btn-sm", type: "button", onclick: () => set({}) }, "Show token"),
       el("button", { class: "btn-sm", type: "button", onclick: () => { if (confirm("Make a new token? Agents using the old one are locked out until you give them the new one.")) set({ new_token: true }); } }, "New token")] : null);
 }
 
@@ -166,6 +185,7 @@ function settingsBody(firstRun) {
     i.configured ? swapSettings() : null,
     i.mcp ? mcpSettings() : null,
     updateSettings(),
+    tagSettings(),
     el("div", { class: "set-privacy" },
       el("div", {}, el("b", {}, "Privacy"),
         el("p", {}, "What you make is saved only on this computer, in the studio's data folder, and the studio sends it nowhere but your Tiiny. Deleting a result removes it and its prompt, sources and cached copies. To clear it all at once:"),
@@ -182,9 +202,14 @@ function settingsBody(firstRun) {
       el("p", {}, i.lan_access
         ? (i.password ? "Other devices on your network can open the studio with the password." : "Other devices on your network can open the studio — and no password is set. Add STUDIO_PASSWORD to .env, or remove STUDIO_BIND to go back to this-computer-only.")
         : "Nobody else on your network can open it. To allow phones or other computers, set STUDIO_BIND=0.0.0.0 (and a STUDIO_PASSWORD) in .env and restart.")),
+    el("div", { class: "set-network" }, el("b", {}, "Appearance"),
+      el("label", { class: "field" }, el("div", { class: "label" }, "Theme", el("span", { class: "hint" }, "System follows your computer")),
+        el("select", { class: "input", onchange: (e) => { store.set("theme", e.target.value); applyTheme(e.target.value); } },
+          ...[["system", "System"], ["light", "Light"], ["dark", "Dark"]].map(([v, t]) => el("option", { value: v, selected: store.get("theme", "system") === v }, t))))),
     el("div", { class: "row set-actions" },
       el("a", { class: "set-credit", href: "https://github.com/thezolon", target: "_blank", rel: "noopener" }, `Tiiny Studio ${SET.info?.version || ""} · by Zolon Farsane`.replace("  ", " ")),
       el("span", { class: "spacer" }),
+      el("button", { class: "btn-sm ghost", type: "button", title: "Shortcuts: press ? anywhere", onclick: openKeys }, "Keyboard shortcuts"),
       el("button", { class: "btn-sm accent", type: "button", onclick: closeSettings }, "Done")),
   ];
 }

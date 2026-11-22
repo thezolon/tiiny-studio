@@ -17,7 +17,7 @@ fn text<'a>(req: &'a Value, k: &str) -> &'a str {
 
 fn upstream_failed(model: &str) -> String {
     format!(
-        "{} failed on the device (\"The upstream TTS model failed\"). Some voice models and modes don't work through TiinyOS's gateway yet (on 0.1.38: Supertonic-3 over USB, and cloning with MOSS-TTS-Nano). Try another voice model.",
+        "{} failed on the device (\"The upstream TTS model failed\"). Some voice models and modes don't work through TiinyOS's gateway yet (cloning with MOSS-TTS-Nano; Supertonic-3 failed this way on 0.1.38 and works from 0.1.39). Try another voice model.",
         model.rsplit('/').next().unwrap_or(model)
     )
 }
@@ -41,12 +41,7 @@ pub async fn run(ctx: Ctx) -> JobResult {
         body.insert("voice".into(), json!(speaker));
     } else if !design.is_empty() {
         body.insert("instruct".into(), json!(design));
-    } else {
-        if !req.get("ref_audio").is_some_and(crate::device::truthy) {
-            return Err(JobError(
-                "This model only speaks in a cloned voice: add a reference clip".into(),
-            ));
-        }
+    } else if req.get("ref_audio").is_some_and(crate::device::truthy) {
         if strip(text(req, "ref_text")).is_empty() {
             return Err(JobError("Add what's said in the reference clip (its transcript) \u{2014} voice cloning needs both".into()));
         }
@@ -57,6 +52,9 @@ pub async fn run(ctx: Ctx) -> JobResult {
         );
         reference = Some(r);
     }
+    // no voice at all: the model speaks in its default one (7 of 9 voice models on 0.1.39); a clone-only or
+    // voice-design model says so itself, and the hint below is added to its answer
+    let no_voice = speaker.is_empty() && design.is_empty() && reference.is_none();
     let keys: &[&str] = if reference.is_some() {
         &["ref_text", "language", "instruct"]
     } else {
@@ -126,7 +124,11 @@ pub async fn run(ctx: Ctx) -> JobResult {
             Err(v) => err(&v),
         };
         if !why.contains("upstream TTS model failed") && direct.is_none() {
-            return Err(JobError(why));
+            return Err(JobError(if no_voice {
+                format!("{why} (No voice was chosen. If this model has no default voice, give it a speaker, a voice description or a reference clip.)")
+            } else {
+                why
+            }));
         }
         // The gateway sends some containers the store id, which they don't know (Supertonic-3, 0.1.38): ask the
         // model's own port under its own name, where the link allows it.

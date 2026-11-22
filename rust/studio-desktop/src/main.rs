@@ -12,6 +12,36 @@ use tauri_plugin_autostart::ManagerExt;
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 use tauri_plugin_opener::OpenerExt;
 
+/// STUDIO_PASSWORD as the app's server sees it; the app's own calls to that server send it (no loopback exemption
+/// on the server: a proxy in front of it is loopback too).
+static PASSWORD: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
+/// `Authorization` header value for the studio's HTTP basic auth (any username), if a password is set.
+fn basic_auth(password: &str) -> Option<String> {
+    use base64::Engine;
+    (!password.is_empty()).then(|| {
+        format!(
+            "Basic {}",
+            base64::engine::general_purpose::STANDARD.encode(format!("tiiny:{password}"))
+        )
+    })
+}
+
+/// HTTP client for the app's own calls to its server, with the password when one is set.
+fn own_client() -> reqwest::Client {
+    let mut headers = reqwest::header::HeaderMap::new();
+    if let Some(mut v) = basic_auth(PASSWORD.get().map_or("", String::as_str))
+        .and_then(|v| reqwest::header::HeaderValue::from_str(&v).ok())
+    {
+        v.set_sensitive(true);
+        headers.insert(reqwest::header::AUTHORIZATION, v);
+    }
+    reqwest::Client::builder()
+        .default_headers(headers)
+        .build()
+        .unwrap_or_default()
+}
+
 fn show_main(app: &AppHandle) {
     if let Some(w) = app.get_webview_window("main") {
         let _ = w.unminimize();
@@ -33,7 +63,7 @@ fn power_off(app: &AppHandle, port: u16) {
                 return;
             }
             tauri::async_runtime::spawn(async move {
-                let res = reqwest::Client::new().post(format!("http://127.0.0.1:{port}/api/device/shutdown")).send().await;
+                let res = own_client().post(format!("http://127.0.0.1:{port}/api/device/shutdown")).send().await;
                 let msg = match res {
                     Ok(r) if r.status().is_success() => {
                         if device_goes_off(port).await {
@@ -56,7 +86,7 @@ fn power_off(app: &AppHandle, port: u16) {
 /// The device answers "ok" even when its shutdown fails (TiinyOS 0.1.36), so check it actually went away:
 /// true once it stops answering, false if it's still up after a minute.
 async fn device_goes_off(port: u16) -> bool {
-    let http = reqwest::Client::new();
+    let http = own_client();
     let until = std::time::Instant::now() + std::time::Duration::from_secs(60);
     while std::time::Instant::now() < until {
         tokio::time::sleep(std::time::Duration::from_secs(5)).await;
@@ -89,14 +119,54 @@ fn unique_path(dir: &std::path::Path, name: &str) -> std::path::PathBuf {
         .unwrap_or(first)
 }
 
+/// The app's fixed port (Docker keeps 7860): an agent's MCP address and the page's saved preferences (per origin)
+/// stay the same from one start to the next.
+const APP_PORT: u16 = 7861;
+
+/// 127.0.0.1:7861, or a random free port when something else has it (logged).
+fn bind_local() -> std::net::TcpListener {
+    bind_preferred(APP_PORT)
+}
+
+fn bind_preferred(preferred: u16) -> std::net::TcpListener {
+    match std::net::TcpListener::bind(("127.0.0.1", preferred)) {
+        Ok(l) => l,
+        Err(e) => {
+            let l = std::net::TcpListener::bind("127.0.0.1:0").expect("no free local port");
+            eprintln!(
+                "port {preferred} is taken ({e}); using {} instead, so the MCP address and saved page preferences differ this time",
+                l.local_addr().map(|a| a.port()).unwrap_or(0)
+            );
+            l
+        }
+    }
+}
+
+/// Only web links go to the system browser; anything else (file:, ms-settings:, custom schemes…) is ignored.
+fn is_web_url(url: &tauri::Url) -> bool {
+    matches!(url.scheme(), "http" | "https")
+}
+
+/// The studio's own pages (and blob: downloads it makes) may load in the window; everything else may not.
+fn is_studio_url(url: &tauri::Url, port: u16) -> bool {
+    let origin = format!("http://127.0.0.1:{port}");
+    let s = url.as_str();
+    (url.scheme() == "http"
+        && url.host_str() == Some("127.0.0.1")
+        && url.port_or_known_default() == Some(port))
+        || s.starts_with(&format!("blob:{origin}/"))
+        || s == "about:blank"
+}
+
 fn main() {
     // Bind before the window exists so the port is known; only this computer can reach it.
-    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("no free local port");
+    let listener = bind_local();
     listener.set_nonblocking(true).expect("listener setup");
     let port = listener.local_addr().expect("listener address").port();
 
     let mut config = Config::from_env(user_data_dir());
     config.host = "127.0.0.1".into();
+    let _ = PASSWORD.set(config.password.clone());
     config.port = port;
     config.lan_access = false; // LAN sharing is opt-in (Stage 7)
     config.app = true;
@@ -126,11 +196,26 @@ fn main() {
                 .parse()
                 .expect("local url");
             let handle = app.handle().clone();
+            let nav_handle = app.handle().clone();
             WebviewWindowBuilder::new(app, "main", WebviewUrl::External(url))
-                // links that open a new window (the guide, the credit link) go to the system browser instead
+                // links that open a new window (the guide, the credit link) go to the system browser instead;
+                // only http(s) ones, any other scheme is dropped
                 .on_new_window(move |url, _features| {
-                    let _ = handle.opener().open_url(url.as_str(), None::<&str>);
+                    if is_web_url(&url) {
+                        let _ = handle.opener().open_url(url.as_str(), None::<&str>);
+                    }
                     tauri::webview::NewWindowResponse::Deny
+                })
+                // the window never leaves the studio's own address: a web link that would is opened in the
+                // system browser instead, anything else is refused
+                .on_navigation(move |url| {
+                    if is_studio_url(url, port) {
+                        return true;
+                    }
+                    if is_web_url(url) {
+                        let _ = nav_handle.opener().open_url(url.as_str(), None::<&str>);
+                    }
+                    false
                 })
                 // the page's Download/Export/Save buttons are <a download> links (files and blob: data); a webview
                 // drops them unless the app says where they go: the Downloads folder, never overwriting
@@ -255,7 +340,7 @@ fn keep_awake(port: u16) {
     else {
         return;
     };
-    let http = reqwest::Client::new();
+    let http = own_client();
     let mut awake = Awake::default();
     loop {
         let busy = rt.block_on(async {
@@ -334,17 +419,23 @@ impl Awake {
     }
 }
 
-/// Cancel the studio's running jobs through its own API and wait (at most 20 s) until they've ended.
+/// Cancel the studio's queued and running jobs through its own API and wait (at most 20 s) until they've ended. Queued
+/// jobs go first: once the running one lets go of the device, the next queued job would otherwise start just before exit.
 async fn stop_running_jobs(port: u16) {
     let base = format!("http://127.0.0.1:{port}");
-    let http = reqwest::Client::new();
+    let http = own_client();
     let running = |jobs: &serde_json::Value| -> Vec<String> {
-        jobs.as_array()
-            .into_iter()
-            .flatten()
-            .filter(|j| j["status"] == "running")
-            .filter_map(|j| j["id"].as_str().map(String::from))
-            .collect()
+        let with = |status: &str| -> Vec<String> {
+            jobs.as_array()
+                .into_iter()
+                .flatten()
+                .filter(|j| j["status"] == status)
+                .filter_map(|j| j["id"].as_str().map(String::from))
+                .collect()
+        };
+        let mut ids = with("queued");
+        ids.extend(with("running"));
+        ids
     };
     let list = || async {
         http.get(format!("{base}/api/jobs"))
@@ -373,5 +464,57 @@ async fn stop_running_jobs(port: u16) {
         if list().await.map(|j| running(&j).is_empty()).unwrap_or(true) {
             break;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn u(s: &str) -> tauri::Url {
+        s.parse().unwrap()
+    }
+
+    #[test]
+    fn own_calls_carry_the_password() {
+        assert_eq!(basic_auth(""), None);
+        // "tiiny:pw" in base64; the server ignores the user name
+        assert_eq!(basic_auth("pw").as_deref(), Some("Basic dGlpbnk6cHc="));
+    }
+
+    #[test]
+    fn only_web_links_open_externally() {
+        assert!(is_web_url(&u("https://github.com/thezolon")));
+        assert!(is_web_url(&u("http://example.com/")));
+        assert!(!is_web_url(&u("file:///tmp/x")));
+        assert!(!is_web_url(&u("ms-settings:privacy")));
+        assert!(!is_web_url(&u("javascript:alert(1)")));
+    }
+
+    #[test]
+    fn the_window_stays_on_the_studio_origin() {
+        assert!(is_studio_url(&u("http://127.0.0.1:7861/"), 7861));
+        assert!(is_studio_url(
+            &u("http://127.0.0.1:7861/static/x.js?a=1"),
+            7861
+        ));
+        assert!(is_studio_url(
+            &u("blob:http://127.0.0.1:7861/abc-123"),
+            7861
+        ));
+        assert!(!is_studio_url(&u("http://127.0.0.1:7862/"), 7861));
+        assert!(!is_studio_url(&u("http://localhost:7861/"), 7861));
+        assert!(!is_studio_url(&u("https://127.0.0.1:7861/"), 7861));
+        assert!(!is_studio_url(&u("https://example.com/"), 7861));
+        assert!(!is_studio_url(&u("file:///tmp/x"), 7861));
+    }
+
+    #[test]
+    fn a_taken_port_falls_back_to_a_free_one() {
+        let first = bind_preferred(0);
+        let taken = first.local_addr().unwrap().port();
+        let second = bind_preferred(taken);
+        assert_ne!(second.local_addr().unwrap().port(), taken);
+        assert!(second.local_addr().unwrap().ip().is_loopback());
     }
 }

@@ -7,6 +7,31 @@ const UPD = { info: null };
 const isNumericVersion = (v) => /^\d+(\.\d+)*$/.test(v);
 const safeLink = (u) => (/^https?:\/\//i.test(u || "") ? u : "");
 
+/** First launch (not Docker): ask once before GitHub is ever contacted, in a small notice that doesn't block the page.
+    Yes and No are saved; closing it with the cross saves nothing, so the question comes again at the next start. */
+async function askUpdateCheck() {
+  let info;
+  try { info = await api("/api/settings"); } catch { return; }
+  if (!info?.update_ask) return;
+  const answer = async (on) => {
+    try { await api("/api/settings/updates", { method: "POST", body: JSON.stringify({ update_check: on }) }); }
+    catch (e) { toast(e.message, "err"); return; }
+    note.remove();
+    if (on) checkUpdate();
+  };
+  const note = el("div", { class: "toast notice", role: "group", "aria-label": "Check for updates automatically?" },
+    el("b", {}, "Check for updates automatically?"),
+    el("p", {}, "Once a day the studio would ask GitHub whether a newer version is out. GitHub sees your IP address and the studio's " +
+      "version, nothing about you, your files or your Tiiny. It never downloads or installs anything. You can change this " +
+      "any time in Settings."),
+    el("div", { class: "notice-row" },
+      el("button", { class: "btn-sm accent", type: "button", onclick: () => answer(true) }, "Yes"),
+      el("button", { class: "btn-sm", type: "button", onclick: () => answer(false) }, "No"),
+      el("span", { class: "spacer" }),
+      el("button", { class: "icon-btn", type: "button", title: "Ask me again next time", "aria-label": "Close without answering", onclick: () => note.remove() }, "✕")));
+  $("#toasts").append(note);
+}
+
 async function checkUpdate() {
   let r;
   try { r = await api("/api/update"); } catch { return; }  // offline, or an older server: say nothing
@@ -70,4 +95,4 @@ function updateSettings() {
 $("#updateOpen").onclick = openUpdate;
 $("#updateDismiss").onclick = dismissUpdate;
 document.addEventListener("keydown", (e) => { if (e.key === "Escape" && $("#updateModal").classList.contains("show")) { e.stopPropagation(); closeUpdate(); } }, true);
-document.addEventListener("DOMContentLoaded", checkUpdate);
+document.addEventListener("DOMContentLoaded", async () => { await askUpdateCheck(); checkUpdate(); });

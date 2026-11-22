@@ -66,7 +66,7 @@ pub struct AppState {
 
 impl AppState {
     pub fn new(config: Config) -> Self {
-        let _ = std::fs::create_dir_all(&config.data_dir);
+        let _ = config::private_dir(&config.data_dir);
         let settings = Settings::load(
             &config.data_dir,
             config.lan_access,
@@ -112,7 +112,7 @@ pub fn build_router(config: Config) -> axum::Router {
 /// Serve on an already-bound listener (the desktop app binds 127.0.0.1:0 and reads the port back).
 /// Also starts the device monitor (auto-switch between saved addresses), every 20 s like server.py.
 pub async fn serve(listener: tokio::net::TcpListener, config: Config) -> std::io::Result<()> {
-    std::fs::create_dir_all(&config.data_dir)?;
+    config::private_dir(&config.data_dir)?;
     let state = AppState::new(config);
     let monitor = state.clone();
     tokio::spawn(async move {

@@ -1,11 +1,12 @@
 //! Instrument loops and songs (media.py run_loop, run_song, _compose, song_progress, _song_entry).
 
+use std::collections::BTreeSet;
 use std::time::Duration;
 
 use base64::Engine;
 use serde_json::{json, Map, Value};
 
-use super::audio::strip;
+use super::audio::{strip, wav_seconds};
 use super::recover::session_ids;
 use super::{
     decode_uri, ensure_running, err, http, http_bytes, instance_url, json_body, port_open,
@@ -26,6 +27,9 @@ const SONG_CONFIG: [&str; 9] = [
     "top_k",
     "top_p",
 ];
+/// The longest style reference the device takes (SongGeneration, AceStep: 120 s). The studio's own page sends at most 30 s,
+/// and audio past 30 s changes the result, so this is only the hard limit.
+const STYLE_REF_MAX: f64 = 120.0;
 const FULL_SONG_SECONDS: f64 = 240.0; // at or above this, the gateway path renders the model's full-length arrangement
 
 /// AceStep's own settings, sent nested as config.ace_step (at the top level it answers "Extra inputs are not permitted").
@@ -57,6 +61,59 @@ async fn plain_song_model(ctx: &Ctx, model: &str) -> bool {
         Some(service) => !service.starts_with("SongGeneration"),
         None => model.starts_with("ACE-Step/"),
     }
+}
+
+/// What the device takes as a song's style reference, checked here so an API or MCP caller gets a plain answer instead
+/// of the device's "Request failed" after the model was engaged (docs/DEVICE-API.md, Known quirks): a WAV clip, only
+/// for a model whose /v1/music/info lists reference_audio_base64 among its supported_prompt_sources, 10-120 s for
+/// SongGeneration and 5-120 s for AceStep. Without a readable answer from the device the length rule is by service.
+async fn check_style_reference(ctx: &Ctx, model: &str, clip: &[u8]) -> Result<(), JobError> {
+    let (code, info) = ctx
+        .call(
+            "GET",
+            &format!("/v1/music/info?model={}", quote(model)),
+            None,
+            15,
+        )
+        .await;
+    let name = model.rsplit('/').next().unwrap_or(model);
+    if code == 200 {
+        if let Some(sources) = info
+            .pointer("/model_info/model/supported_prompt_sources")
+            .and_then(Value::as_array)
+        {
+            if !sources.iter().any(|s| s == "reference_audio_base64") {
+                return Err(JobError(format!("{name} doesn't take a style reference")));
+            }
+        }
+    }
+    let service = info
+        .get("service_name")
+        .and_then(Value::as_str)
+        .filter(|_| code == 200);
+    let min = match service {
+        Some(s) if s.starts_with("SongGeneration") => 10.0,
+        Some(s) if s.starts_with("AceStep") => 5.0,
+        Some(_) => 0.0,
+        None if model.contains("SongGeneration") => 10.0,
+        None => 0.0,
+    };
+    let Ok(Some(secs)) = wav_seconds(clip) else {
+        return Err(JobError(
+            "The style reference must be a WAV audio clip".into(),
+        ));
+    };
+    if secs < min {
+        return Err(JobError(format!(
+            "The style reference must be at least {min:.0} seconds long for {name} (this one is {secs:.1} s)"
+        )));
+    }
+    if secs > STYLE_REF_MAX {
+        return Err(JobError(format!(
+            "The style reference can be at most {STYLE_REF_MAX:.0} seconds long (this one is {secs:.0} s)"
+        )));
+    }
+    Ok(())
 }
 
 /// {k: req[k] for k in keys if req.get(k) not in (None, "")}
@@ -152,7 +209,7 @@ pub async fn run_loop(ctx: Ctx) -> JobResult {
     }
     let mut entry = json!({"kind": "loop", "params": params, "sources": [], "outputs": [out], "duration": config.get("seconds_total")});
     if let [sid] = new.as_slice() {
-        entry["device"] = json!({"music_session": sid});
+        entry["device"] = json!({"music_session": sid, "device_id": ctx.target.id});
     }
     Ok(entry)
 }
@@ -181,6 +238,7 @@ pub async fn run_song(ctx: Ctx) -> JobResult {
     let mut sources = vec![];
     if req.get("reference_audio").is_some_and(truthy) {
         let (_, reference) = decode_uri(text(req, "reference_audio"))?;
+        check_style_reference(&ctx, &model, &reference).await?;
         config.insert(
             "reference_audio_base64".into(),
             json!(base64::engine::general_purpose::STANDARD.encode(&reference)),
@@ -221,9 +279,16 @@ pub async fn run_song(ctx: Ctx) -> JobResult {
 const SONG_WATCH: u64 = 30;
 const SONG_ANSWER_GRACE: u64 = 90;
 
-/// The id of a song session for `model` that the Tiiny started after `since` (this job: the device runs one at a time)
-/// and finished, and that nothing has claimed (#91). Never returns otherwise: it's raced against the job's own answer.
-async fn finished_session(ctx: &Ctx, model: &str, since: f64) -> String {
+/// The id of a song session for `model` that the Tiiny started after this job did (this job: the device runs one at a
+/// time) and finished, and that nothing has claimed (#91). "Started after" is: not among the sessions `before` the
+/// request (identity, so the device's clock doesn't matter); when the device couldn't list them then, by its
+/// `created_at` against the PC's `since`. Never returns otherwise: it's raced against the job's own answer.
+async fn finished_session(
+    ctx: &Ctx,
+    model: &str,
+    before: Option<&BTreeSet<String>>,
+    since: f64,
+) -> String {
     loop {
         tokio::time::sleep(Duration::from_secs(SONG_WATCH)).await;
         let (code, v) = ctx.call("GET", "/v1/music/sessions", None, 20).await;
@@ -241,7 +306,13 @@ async fn finished_session(ctx: &Ctx, model: &str, since: f64) -> String {
                 !id.is_empty()
                     && text(s, "status") == "completed"
                     && text(s, "model_id") == model
-                    && s.get("created_at").and_then(Value::as_f64).unwrap_or(0.0) >= since - 5.0
+                    && match before {
+                        Some(before) => !before.contains(id),
+                        None => {
+                            s.get("created_at").and_then(Value::as_f64).unwrap_or(0.0)
+                                >= since - 5.0
+                        }
+                    }
                     && !seen.contains(id)
             });
         if let Some(s) = done {
@@ -280,6 +351,8 @@ async fn compose(
         let (url, body) = post("", json!(config), None);
         // A song takes many minutes, and a connection that quiet can be dropped on the way (Wi-Fi, a router), so the
         // answer never comes (#91). Watch the Tiiny's sessions too: when this model's song is done there, use it.
+        let before = session_ids(&ctx.state, &ctx.target).await;
+        let since = crate::jobs::now();
         let answer = http(ctx, "POST", &url, Some(body), 3600, true);
         tokio::pin!(answer);
         let sid = tokio::select! {
@@ -287,7 +360,7 @@ async fn compose(
                 let (code, res) = r?;
                 return Ok((code, res, "gateway", None));
             }
-            sid = finished_session(ctx, model, crate::jobs::now()) => sid,
+            sid = finished_session(ctx, model, before.as_ref(), since) => sid,
         };
         // the answer may just be on its way (a whole song in base64): give it a moment before using the session
         ctx.update(json!({"message": "The Tiiny finished the song: saving it"}));
@@ -457,14 +530,20 @@ async fn song_entry(
                 slug.push('_');
             }
         }
-        let fname = save(ctx, &format!("{}-{slug}.wav", ctx.id), &b64(data)?)?;
+        // two stems that slug alike (or one named "song") must not overwrite each other
+        let mut stem = slug.clone();
+        while outputs.contains(&format!("{}-{stem}.wav", ctx.id)) {
+            stem.push('_');
+        }
+        let fname = save(ctx, &format!("{}-{stem}.wav", ctx.id), &b64(data)?)?;
         outputs.push(fname.clone());
         tracks.insert(fname, json!(name));
     }
     let (mut downloads, mut resume, mut device) = (vec![], None, None);
     let sid = res.get("session_id").filter(|s| truthy(s)).map(show);
     if let (Some(url), Some(sid)) = (&url, &sid) {
-        http(
+        // clean-up only: the song is saved, so a dropped link here must not throw it away
+        let _ = http(
             ctx,
             "DELETE",
             &format!("{url}/v1/sessions/{}", quote(sid)),
@@ -472,7 +551,7 @@ async fn song_entry(
             15,
             false,
         )
-        .await?;
+        .await;
     } else if let Some(sid) = &sid {
         // Gateway songs can also be fetched as MP3 from their session.
         let dl = format!(
@@ -492,7 +571,7 @@ async fn song_entry(
             // leave it unclaimed: recovery picks it up on the next open
             return Err(JobError("The Tiiny finished this song, but it couldn't be downloaded. It'll be saved from the Tiiny the next time the studio opens.".into()));
         }
-        device = Some(json!({"music_session": sid})); // the session stays on the Tiiny until this entry is deleted
+        device = Some(json!({"music_session": sid, "device_id": ctx.target.id})); // the session stays on the Tiiny until this entry is deleted
         ctx.state.store.mark_seen(std::slice::from_ref(sid), false);
     }
     if from_session {
