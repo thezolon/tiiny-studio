@@ -8,6 +8,7 @@ async function loadSettings() {
   try { SET.info = await api("/api/settings"); } catch { SET.info = null; }
   if (SET.info?.version) $("#settingsBtn").title = `Settings · Tiiny Studio ${SET.info.version}`;  // the version, one hover away (#95)
   renderDeviceLabel();
+  for (const w of SET.info?.data_warnings || []) toast(w, "err");  // a saved file couldn't be read and was kept aside
   if (SET.info && !SET.info.configured) openSettings(true);
   return SET.info;
 }

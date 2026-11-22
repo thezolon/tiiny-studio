@@ -97,12 +97,25 @@ pub async fn recover(state: &AppState, check: bool) -> Value {
     };
     let vids = device_list(state, &to, "/v1/videos", "data").await;
     let sessions = device_list(state, &to, "/v1/music/sessions", "sessions").await;
-    let Some(seen) = state.store.seen_ids() else {
-        // first look: everything there now is history
+    // The baseline is per device: device_seen.json lists "@device:<id>" for every Tiiny whose history was set aside
+    // (older files have none: they belong to the device in use now).
+    let marker = format!("@device:{}", to.id.as_deref().unwrap_or(""));
+    let seen = state.store.seen_ids();
+    let first_look = match &seen {
+        None => true,
+        Some(s) if s.contains(&marker) => false,
+        Some(s) if s.iter().any(|i| i.starts_with("@device:")) => true,
+        Some(_) => {
+            state.store.mark_seen(std::slice::from_ref(&marker), false);
+            false
+        }
+    };
+    let Some(seen) = seen.filter(|_| !first_look) else {
+        // first look at this Tiiny: everything there now is history
         let (Some(vids), Some(sessions)) = (vids, sessions) else {
             return nothing;
         };
-        let ids: Vec<String> = vids
+        let mut ids: Vec<String> = vids
             .iter()
             .filter(|v| text(v, "status") == "completed")
             .filter_map(|v| v.get("id").and_then(Value::as_str))
@@ -113,6 +126,7 @@ pub async fn recover(state: &AppState, check: bool) -> Value {
             )
             .map(String::from)
             .collect();
+        ids.push(marker);
         state.store.mark_seen(&ids, true);
         return json!({"recovered": [], "baseline": true});
     };

@@ -138,10 +138,12 @@ class Hardening(Jobs):
         self.assertEqual(self.files(), before)
 
     def test_a_video_that_fails_after_the_download_keeps_no_files(self):
-        # the clip and its first frame are saved, then the gallery can't take the entry (history.tmp is in the way)
+        # the clip and its first frame are saved, then the gallery can't take the entry (history.json is a folder)
         before = self.files()
-        tmps = [d / "history.tmp" for d in self.h.tmp[-2:]]
+        tmps = [d / "history.json" for d in self.h.tmp[-2:]]
+        saved = [d.read_bytes() if d.exists() else None for d in tmps]
         for d in tmps:
+            d.unlink(missing_ok=True)
             d.mkdir()
         try:
             for base in (self.h.py_url, self.h.rs_url):
@@ -150,19 +152,25 @@ class Hardening(Jobs):
                 self.assertTrue(job["error"].startswith("Couldn't save the result: "), job["error"])
                 self.assertTrue(any(p.endswith("/content") for _, p, *_ in calls))  # it did download the clip
         finally:
-            for d in tmps:
+            for d, data in zip(tmps, saved):
                 d.rmdir()
+                if data is not None:
+                    d.write_bytes(data)
         self.assertEqual(self.files(), before)
 
     def test_settings_that_cannot_be_saved_are_a_500(self):
-        tmps = [d / "config.tmp" for d in self.h.tmp[-2:]]
-        for d in tmps:
-            d.mkdir()  # the file the settings are written through can't be created
+        cfgs = [d / "config.json" for d in self.h.tmp[-2:]]
+        saved = [c.read_bytes() if c.exists() else None for c in cfgs]
+        for c in cfgs:
+            c.unlink(missing_ok=True)
+            c.mkdir()  # the file can't be replaced
         try:
             py, rs = self.post("/api/settings/auto", {"auto": False})
         finally:
-            for d in tmps:
-                d.rmdir()
+            for c, data in zip(cfgs, saved):
+                c.rmdir()
+                if data is not None:
+                    c.write_bytes(data)
         for r in (py, rs):
             self.assertEqual(r.status, 500)
             self.assertTrue(r.json["error"]["message"].startswith("Couldn't save your changes: "), r.body)

@@ -164,7 +164,8 @@ pub async fn run(ctx: Ctx) -> JobResult {
     }
     let params: Map<String, Value> = body
         .into_iter()
-        .filter(|(k, _)| k != "image" && k != "response_format")
+        // the pictures are saved as source files already; their data URIs would only bloat history.json
+        .filter(|(k, _)| k != "image" && k != "images" && k != "response_format")
         .collect();
     Ok(
         json!({"kind": "image", "mode": if refs { "refs" } else if sources.is_empty() { "create" } else { "edit" }, "params": params, "sources": src_names, "outputs": outputs}),

@@ -324,8 +324,11 @@ async fn chats(State(state): State<AppState>) -> Json<Value> {
 }
 
 async fn chat(State(state): State<AppState>, Path(id): Path<String>) -> Response {
+    if !word(&id) {
+        return error(StatusCode::NOT_FOUND, "no such chat"); // before any file system access: the id is a URL segment
+    }
     let path = state.store.chat_path(&id);
-    match std::fs::read(&path).ok().filter(|_| word(&id)) {
+    match std::fs::read(&path).ok() {
         Some(b) => (
             [
                 (header::CONTENT_TYPE, "application/json"),
@@ -398,6 +401,7 @@ async fn wipe(State(state): State<AppState>) -> Response {
             shred(&p);
         }
     }
+    state.store.shred_leftovers();
     let saved = state
         .store
         .save_history(&[])
@@ -591,6 +595,11 @@ async fn embed(state: &AppState, model: &str, texts: &[String]) -> Result<Vec<Ve
     Ok(vecs)
 }
 
+/// Cache key text: the embedding model is part of it (another model's vectors live in a different space).
+fn cache_key(model: &str, text: &str) -> String {
+    format!("{model}\n{text}")
+}
+
 /// Rank saved results by meaning with the device's embedding model (vectors kept in memory only).
 async fn search(State(state): State<AppState>, body: Bytes) -> Response {
     let req = match read_json(&body) {
@@ -631,7 +640,9 @@ async fn search(State(state): State<AppState>, body: Bytes) -> Response {
         let cache = state.search_cache.lock().unwrap_or_else(|e| e.into_inner());
         items
             .iter()
-            .filter(|e| cache.get(str_of(e, "id")).map(|c| &c.0) != Some(&entry_text(e)))
+            .filter(|e| {
+                cache.get(str_of(e, "id")).map(|c| &c.0) != Some(&cache_key(&model, &entry_text(e)))
+            })
             .collect()
     };
     let texts: Vec<String> = todo.iter().map(|e| entry_text(e)).collect();
@@ -642,7 +653,10 @@ async fn search(State(state): State<AppState>, body: Bytes) -> Response {
     {
         let mut cache = state.search_cache.lock().unwrap_or_else(|e| e.into_inner());
         for ((e, t), v) in todo.iter().zip(texts).zip(vecs) {
-            cache.insert(str_of(e, "id").to_string(), (t, v));
+            if !v.is_empty() {
+                // a row that came back without an embedding is asked for again next time
+                cache.insert(str_of(e, "id").to_string(), (cache_key(&model, &t), v));
+            }
         }
     }
     let q = match embed(&state, &model, &[query]).await {
@@ -661,12 +675,15 @@ async fn search(State(state): State<AppState>, body: Bytes) -> Response {
         .iter()
         .filter_map(|e| {
             let id = str_of(e, "id");
-            cache.get(id).map(|(_, v)| {
-                (
-                    q.iter().zip(v).map(|(a, b)| a * b).sum::<f64>() / (qn * norm(v)),
-                    id.to_string(),
-                )
-            })
+            cache
+                .get(id)
+                .filter(|(_, v)| v.len() == q.len())
+                .map(|(_, v)| {
+                    (
+                        q.iter().zip(v).map(|(a, b)| a * b).sum::<f64>() / (qn * norm(v)),
+                        id.to_string(),
+                    )
+                })
         })
         .collect();
     scored.sort_by(|a, b| b.partial_cmp(a).unwrap_or(std::cmp::Ordering::Equal));

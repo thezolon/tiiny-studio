@@ -890,7 +890,8 @@ async fn icon(
     State(state): State<AppState>,
     Path((org, name)): Path<(String, String)>,
 ) -> Response {
-    if !safe_name(&org) || !safe_name(&name) {
+    let plain = |s: &str| safe_name(s) && s != "." && s != "..";
+    if !plain(&org) || !plain(&name) {
         return not_found().await;
     }
     let dir = state.config.data_dir.join("icons");
@@ -910,7 +911,12 @@ async fn icon(
             .send()
             .await
         {
-            Ok(r) if r.status().is_success() => r.bytes().await.ok(),
+            // only a real, small PNG is kept: a wrong address may answer 200 with a web page
+            Ok(r) if r.status().is_success() => r
+                .bytes()
+                .await
+                .ok()
+                .filter(|b| b.starts_with(b"\x89PNG\r\n\x1a\n") && b.len() <= 1 << 20),
             Ok(r) if r.status() == StatusCode::NOT_FOUND => {
                 // the device has none: don't ask again on every redraw
                 NO_ICON.lock().unwrap().insert(key);
@@ -920,7 +926,7 @@ async fn icon(
         };
         match bytes {
             Some(b) => {
-                let _ = std::fs::write(&cached, &b);
+                let _ = crate::store::write_atomic(&cached, &b, false);
             }
             None => return error(StatusCode::NOT_FOUND, "no icon"),
         }

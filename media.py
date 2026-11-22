@@ -892,7 +892,7 @@ def run_image(m, job, req):
         src_names.append(m.save(f"{job['id']}-src{i}.{ {'image/jpeg': 'jpg', 'image/webp': 'webp'}.get(ctype, 'png') }", data))
     outputs = [m.save(f"{job['id']}-{i}.png", base64.b64decode(d["b64_json"])) for i, d in enumerate(res["data"]) if d.get("b64_json")]
     return {"kind": "image", "mode": "refs" if refs else "edit" if sources else "create",
-            "params": {k: v for k, v in body.items() if k not in ("image", "response_format")},
+            "params": {k: v for k, v in body.items() if k not in ("image", "images", "response_format")},
             "sources": src_names, "outputs": outputs}
 
 
