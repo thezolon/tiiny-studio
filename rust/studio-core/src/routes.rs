@@ -712,6 +712,10 @@ fn file_uri(p: &std::path::Path) -> String {
     out
 }
 
+/// Settings changes take the save error back (`Settings::take_save_error` reads and clears one shared slot), so two
+/// requests changing settings at once would read each other's error. They run their change and that read under this.
+static SETTINGS_CHANGE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 /// Add or update a saved device ({id?, name, url, key}); without an id on first run, the active one.
 async fn save_settings(State(state): State<AppState>, body: Bytes) -> Response {
     let req = match read_json(&body) {
@@ -719,20 +723,28 @@ async fn save_settings(State(state): State<AppState>, body: Bytes) -> Response {
         Err(e) => return error(StatusCode::BAD_REQUEST, &e),
     };
     let new = req.get("new").is_some_and(device::truthy);
-    state.settings.take_save_error();
-    let did = Some(str_of(&req, "id"))
-        .filter(|s| !s.is_empty())
-        .map(String::from)
-        .or_else(|| if new { None } else { state.settings.active() });
-    if let Err(e) = state.settings.upsert(
-        did.as_deref(),
-        str_of(&req, "name"),
-        str_of(&req, "url"),
-        str_of(&req, "key").trim(),
-    ) {
-        return error(StatusCode::BAD_REQUEST, &e);
-    }
-    if let Some(e) = state.settings.take_save_error() {
+    let changed = {
+        let _one_at_a_time = SETTINGS_CHANGE.lock().unwrap_or_else(|e| e.into_inner());
+        state.settings.take_save_error();
+        let did = Some(str_of(&req, "id"))
+            .filter(|s| !s.is_empty())
+            .map(String::from)
+            .or_else(|| if new { None } else { state.settings.active() });
+        state
+            .settings
+            .upsert(
+                did.as_deref(),
+                str_of(&req, "name"),
+                str_of(&req, "url"),
+                str_of(&req, "key").trim(),
+            )
+            .map(|_| state.settings.take_save_error())
+    };
+    let save_error = match changed {
+        Ok(e) => e,
+        Err(e) => return error(StatusCode::BAD_REQUEST, &e),
+    };
+    if let Some(e) = save_error {
         return error(
             StatusCode::INTERNAL_SERVER_ERROR,
             &format!("Couldn't save your changes: {e}"),
@@ -750,36 +762,51 @@ async fn device_action(
 ) -> Response {
     let req = read_json(&body).unwrap_or(json!({}));
     let did = str_of(&req, "id");
-    state.settings.take_save_error();
-    match action.as_str() {
-        "delete" => state.settings.remove(did),
-        "move" => state.settings.move_device(
-            did,
-            if req.get("dir").and_then(Value::as_f64).unwrap_or(-1.0) < 0.0 {
-                -1
-            } else {
-                1
-            },
-        ),
-        "activate" => state.settings.activate(did, None),
-        "auto" => state
-            .settings
-            .set_auto(req.get("auto").map(device::truthy).unwrap_or(true)),
-        "swap" => state.settings.set_swap(&req),
-        "mcp" => state.settings.set_mcp(&req),
-        "updates" => {
-            state
-                .settings
-                .set_update_check(req.get("update_check").map(device::truthy).unwrap_or(false));
-            state.update_cache.lock().await.take(); // a fresh answer the next time it's on
-        }
-        "tags" => state
-            .settings
-            .set_tag_prompts(req.get("tag_prompts").map(device::truthy).unwrap_or(true)),
-        "check" => state.settings.check(&state.http).await,
-        _ => return not_found().await,
+    if !matches!(
+        action.as_str(),
+        "delete" | "move" | "activate" | "auto" | "swap" | "mcp" | "updates" | "tags" | "check"
+    ) {
+        return not_found().await;
     }
-    if let Some(e) = state.settings.take_save_error() {
+    // the awaiting parts first; what's left is synchronous, so the save error it reads is its own (see SETTINGS_CHANGE)
+    if action == "check" {
+        state.settings.check(&state.http).await;
+    }
+    if action == "updates" {
+        state.update_cache.lock().await.take(); // a fresh answer the next time it's on
+    }
+    let save_error = {
+        let _one_at_a_time = SETTINGS_CHANGE.lock().unwrap_or_else(|e| e.into_inner());
+        if action != "check" {
+            state.settings.take_save_error();
+        }
+        match action.as_str() {
+            "delete" => state.settings.remove(did),
+            "move" => state.settings.move_device(
+                did,
+                if req.get("dir").and_then(Value::as_f64).unwrap_or(-1.0) < 0.0 {
+                    -1
+                } else {
+                    1
+                },
+            ),
+            "activate" => state.settings.activate(did, None),
+            "auto" => state
+                .settings
+                .set_auto(req.get("auto").map(device::truthy).unwrap_or(true)),
+            "swap" => state.settings.set_swap(&req),
+            "mcp" => state.settings.set_mcp(&req),
+            "updates" => state
+                .settings
+                .set_update_check(req.get("update_check").map(device::truthy).unwrap_or(false)),
+            "tags" => state
+                .settings
+                .set_tag_prompts(req.get("tag_prompts").map(device::truthy).unwrap_or(true)),
+            _ => {} // "check": done above
+        }
+        state.settings.take_save_error()
+    };
+    if let Some(e) = save_error {
         return error(
             StatusCode::INTERNAL_SERVER_ERROR,
             &format!("Couldn't save your changes: {e}"),
@@ -1006,18 +1033,8 @@ async fn model_launch(State(state): State<AppState>, body: Bytes) -> Response {
     if mid.is_empty() {
         return error(StatusCode::BAD_REQUEST, "id required");
     }
-    let path = format!("/api/v1/models/{}/launch", quote(&mid));
-    reply(
-        device::call(
-            &state,
-            "POST",
-            &path,
-            Some(json!({"model_id": mid})),
-            120,
-            None,
-        )
-        .await,
-    )
+    let cur = state.settings.current();
+    reply(crate::media::launch_on(&state, (&cur.url, &cur.key), &mid, || false).await)
 }
 
 async fn model_stop(State(state): State<AppState>, body: Bytes) -> Response {
@@ -1170,7 +1187,11 @@ async fn icon(
     if !cached.exists() {
         let base = state.settings.current().url;
         let key = format!("{base} {org}/{name}");
-        if NO_ICON.lock().unwrap().contains(&key) {
+        if NO_ICON
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .contains(&key)
+        {
             return error(StatusCode::NOT_FOUND, "no icon");
         }
         let url = format!("{base}/api/v1/models/online_models/{org}/{name}/icon");
@@ -1189,7 +1210,10 @@ async fn icon(
                 .filter(|b| b.starts_with(b"\x89PNG\r\n\x1a\n") && b.len() <= 1 << 20),
             Ok(r) if r.status() == StatusCode::NOT_FOUND => {
                 // the device has none: don't ask again on every redraw
-                NO_ICON.lock().unwrap().insert(key);
+                NO_ICON
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .insert(key);
                 None
             }
             _ => None,

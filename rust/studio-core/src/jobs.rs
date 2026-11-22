@@ -262,10 +262,21 @@ impl Jobs {
             .any(|j| matches!(Self::status_of(j), "queued" | "running"))
     }
 
+    /// A queued or running job uses this model: as its own, as the tool model of a chat's inline sub-job, or (a chat
+    /// still waiting, queued as "default") as whatever model that chat is about to pick.
     pub fn active_on(&self, model: &str) -> bool {
         self.lock().values().any(|j| {
-            j.data.get("model").and_then(Value::as_str) == Some(model)
-                && matches!(Self::status_of(j), "queued" | "running")
+            let status = Self::status_of(j);
+            let own = j.data.get("model").and_then(Value::as_str);
+            let tool = j
+                .data
+                .get("tool")
+                .and_then(|t| t.get("model"))
+                .and_then(Value::as_str);
+            matches!(status, "queued" | "running")
+                && (own == Some(model)
+                    || tool == Some(model)
+                    || (status == "queued" && own == Some("default")))
         })
     }
 
@@ -274,6 +285,13 @@ impl Jobs {
             j.data.get("model").and_then(Value::as_str) == Some(model)
                 && Self::status_of(j) == "running"
         })
+    }
+
+    /// This job is queued or running.
+    pub fn is_active(&self, id: &str) -> bool {
+        self.lock()
+            .get(id)
+            .is_some_and(|j| matches!(Self::status_of(j), "queued" | "running"))
     }
 
     pub fn remove(&self, id: &str) {
@@ -661,6 +679,37 @@ mod tests {
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
         }
         panic!("job {id} never finished");
+    }
+
+    fn job_with(data: Value) -> Job {
+        Job {
+            data: data.as_object().cloned().unwrap_or_default(),
+            cancel: Arc::new(AtomicBool::new(false)),
+            remote_task: None,
+            target: Target::default(),
+            halt: None,
+        }
+    }
+
+    #[test]
+    fn a_chat_blocks_its_tool_model_and_a_queued_default_chat_blocks_any() {
+        let jobs = Jobs::default();
+        let put = |id: &str, data: Value| jobs.lock().insert(id.into(), job_with(data));
+        put(
+            "run",
+            json!({"status": "running", "model": "org/chat", "tool": {"name": "create_image", "model": "org/img"}}),
+        );
+        assert!(jobs.active_on("org/chat") && jobs.active_on("org/img"));
+        assert!(!jobs.active_on("org/other"));
+        jobs.remove("run");
+        put("wait", json!({"status": "queued", "model": "default"}));
+        assert!(
+            jobs.active_on("org/img"),
+            "a queued default chat may pick any model"
+        );
+        jobs.remove("wait");
+        put("done", json!({"status": "done", "model": "default"}));
+        assert!(!jobs.active_on("org/img"));
     }
 
     #[tokio::test]

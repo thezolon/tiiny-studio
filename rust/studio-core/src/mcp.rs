@@ -1003,15 +1003,8 @@ async fn installed(state: &AppState, mid: &str) -> Result<(), String> {
 
 async fn load_model(state: &AppState, mid: &str) -> Out {
     installed(state, mid).await?;
-    let (code, res) = device::call(
-        state,
-        "POST",
-        &format!("/api/v1/models/{}/launch", quote(mid)),
-        Some(json!({"model_id": mid})),
-        120,
-        None,
-    )
-    .await;
+    let cur = state.settings.current();
+    let (code, res) = crate::media::launch_on(state, (&cur.url, &cur.key), mid, || false).await;
     if code != 200 {
         return Err(data("device error", &crate::media::err(&res)));
     }

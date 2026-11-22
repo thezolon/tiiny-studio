@@ -388,17 +388,23 @@ impl Awake {
     }
 }
 
-/// Cancel the studio's running jobs through its own API and wait (at most 20 s) until they've ended.
+/// Cancel the studio's queued and running jobs through its own API and wait (at most 20 s) until they've ended. Queued
+/// jobs go first: once the running one lets go of the device, the next queued job would otherwise start just before exit.
 async fn stop_running_jobs(port: u16) {
     let base = format!("http://127.0.0.1:{port}");
     let http = reqwest::Client::new();
     let running = |jobs: &serde_json::Value| -> Vec<String> {
-        jobs.as_array()
-            .into_iter()
-            .flatten()
-            .filter(|j| j["status"] == "running")
-            .filter_map(|j| j["id"].as_str().map(String::from))
-            .collect()
+        let with = |status: &str| -> Vec<String> {
+            jobs.as_array()
+                .into_iter()
+                .flatten()
+                .filter(|j| j["status"] == status)
+                .filter_map(|j| j["id"].as_str().map(String::from))
+                .collect()
+        };
+        let mut ids = with("queued");
+        ids.extend(with("running"));
+        ids
     };
     let list = || async {
         http.get(format!("{base}/api/jobs"))
