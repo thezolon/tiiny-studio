@@ -4013,6 +4013,7 @@ dependencies = [
 name = "studio-desktop"
 version = "0.7.1"
 dependencies = [
+ "base64 0.22.1",
  "reqwest 0.12.28",
  "serde_json",
  "studio-core",
