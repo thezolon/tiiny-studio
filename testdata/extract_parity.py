@@ -73,6 +73,12 @@ EXTRA = {
     "tabs.tsv": b"a\tb\n1\t2\n",
     "pipes.csv": b"a|b|c\n1|2|3\n4|5|6\n",
     "single.csv": b"just\none\ncolumn\n",
+    "nested-table.html": b"<table><tr><td>ONE</td><td>TWO<table><tr><td>inner</td></tr></table>AFTER</td></tr><tr><td><p>A</p><p>B</p></td></tr></table>",
+    "no-head-end.html": b"<html><head><title>T</title><meta charset=utf-8><body><h1>Hello</h1><p>kept</p></body></html>",
+    "quotes.rtf": rb"{\rtf1\ansi It\rquote s a \ldblquote q\rdblquote  \endash  x.\par}",
+    "cr-only.csv": b"a,b\rc,d\r",
+    "stray-quote.csv": b'a,b\n"stray,quote\nmore\n',
+    "latin1-even.txt": b"Caf\xe9 menu: cr\xe8me br\xfbl\xe9e!",
     "messy.html": (b"<!DOCTYPE html><html><head><title>T</title><style>p{color:red}</style></head><body>"
                    b"<h1>Head &amp; <em>tail</em></h1><p>Para one<br>line two &copy; &#x41;&#66; &bogus; &lt;b&gt;</p>"
                    b"<div>div text</div><ul><li>a<ul><li>nested</li></ul></li><li>b</li></ul>"

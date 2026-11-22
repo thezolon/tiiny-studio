@@ -461,8 +461,9 @@ pub fn pptx(doc: &mut Doc) -> R<()> {
 
 // ---------- Excel ----------
 
-/// Column number (0-based) of a cell reference like "AB12"; cells beyond Excel's last column (XFD) are ignored.
-fn col_index(cell: &str) -> R<Option<usize>> {
+/// Column number (0-based) of a cell reference like "AB12": `None` when it has no letters (the cell then follows
+/// the previous one), `Some(None)` beyond Excel's last column (XFD; the cell is ignored).
+fn col_index(cell: &str) -> Option<Option<usize>> {
     let letters = cell.bytes().take_while(u8::is_ascii_uppercase);
     let mut n = 0usize;
     let mut any = false;
@@ -471,9 +472,9 @@ fn col_index(cell: &str) -> R<Option<usize>> {
         n = n.saturating_mul(26).saturating_add((b - 64) as usize);
     }
     if !any {
-        return Err(Fail::Other("AttributeError"));
+        return None;
     }
-    Ok((n <= MAX_COLS).then(|| n - 1))
+    Some((n <= MAX_COLS).then(|| n - 1))
 }
 
 /// Text of a shared string or inline string: its `t` and the `t` of its runs, not the phonetic guide (`rPh`).
@@ -536,7 +537,7 @@ pub fn xlsx(doc: &mut Doc) -> R<()> {
                     vtext.unwrap_or("").to_string()
                 };
                 let col = match c.get("r").filter(|r| !r.is_empty()) {
-                    Some(cell) => col_index(cell)?,
+                    Some(cell) => col_index(cell).unwrap_or(Some(next_col)),
                     None => Some(next_col),
                 };
                 if let Some(col) = col {

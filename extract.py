@@ -12,6 +12,7 @@ import io
 import json
 import posixpath
 import re
+import urllib.parse
 import xml.etree.ElementTree as ET
 import zipfile
 
@@ -20,6 +21,10 @@ MAX_TOTAL = 256 << 20
 MAX_IMAGES = 50
 MAX_ROWS = 5000            # per sheet or CSV
 MIN_IMAGE = 6 << 10        # smaller pictures are icons, bullets and logos
+MAX_CELLS = 1_000_000      # cells kept per sheet
+MAX_COLS = 16_384          # Excel's own column limit
+MAX_LIST_DEPTH = 16        # deeper list nesting / longer runs of spaces in a file are clamped
+MAX_SPACES = 1000
 IMAGE_TYPES = {"png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg", "gif": "image/gif", "bmp": "image/bmp",
                "webp": "image/webp", "tif": "image/tiff", "tiff": "image/tiff"}
 NS = {
@@ -37,6 +42,7 @@ NS = {
     "style": "urn:oasis:names:tc:opendocument:xmlns:style:1.0",
     "pres": "urn:oasis:names:tc:opendocument:xmlns:presentation:1.0",
     "xlink": "http://www.w3.org/1999/xlink",
+    "mc": "http://schemas.openxmlformats.org/markup-compatibility/2006",
 }
 TEXT_EXT = {"txt", "md", "markdown", "csv", "tsv", "json", "xml", "log", "ini", "yaml", "yml", "srt", "vtt", "py", "js", "css"}
 LEGACY = {"doc": "Word 97-2003 (.doc)", "xls": "Excel 97-2003 (.xls)", "ppt": "PowerPoint 97-2003 (.ppt)"}
@@ -110,11 +116,15 @@ class Doc:
 
     def read(self, name):
         info = self.zf.getinfo(name)
-        if info.file_size > MAX_MEMBER or self.total + info.file_size > MAX_TOTAL:
+        limit = min(MAX_MEMBER, MAX_TOTAL - self.total)
+        if info.file_size > limit:
             raise ExtractError("The document is too large to read.")
-        self.total += info.file_size
         with self.zf.open(info) as f:
-            return f.read(MAX_MEMBER + 1)[:MAX_MEMBER]
+            data = f.read(limit + 1)  # the limits count the bytes really read, not the size the directory claims
+        if len(data) > limit:
+            raise ExtractError("The document is too large to read.")
+        self.total += len(data)
+        return data
 
     def xml(self, name):
         return ET.fromstring(self.read(name))
@@ -123,6 +133,10 @@ class Doc:
         return name in self.zf.namelist()
 
     def add(self, *block):
+        if block[0] == "h":
+            block = ("h", min(max(block[1], 0), 6), block[2])
+        elif block[0] == "li":
+            block = ("li", min(max(block[1], 0), MAX_LIST_DEPTH), block[2], block[3])
         last = block[-1]
         if block[0] == "table" or (isinstance(last, str) and last.strip()):
             self.blocks.append(block)
@@ -152,7 +166,8 @@ def rels(doc, part):
     out = {}
     for r in doc.xml(path).iter(q("rel:Relationship")):
         if r.get("TargetMode") != "External":
-            out[r.get("Id")] = posixpath.normpath(posixpath.join(d, r.get("Target", "")))
+            # an absolute target ("/xl/worksheets/sheet1.xml") names the zip member without its slash
+            out[r.get("Id")] = posixpath.normpath(posixpath.join(d, r.get("Target", ""))).lstrip("/")
     return out
 
 
@@ -171,7 +186,9 @@ def ooxml_runs(el, pics):
             rid = node.get(q("r:embed")) or node.get(q("r:id"))
             if rid:
                 pics.append(rid)
-        elif t not in (q("w:delText"), q("w:instrText"), q("w:pPr"), q("a:pPr")):
+        elif t == q("w:p"):  # a paragraph inside a paragraph (a text box): kept apart from the text around it
+            out.append("\n" + ooxml_runs(node, pics) + "\n")
+        elif t not in (q("w:delText"), q("w:instrText"), q("w:pPr"), q("a:pPr"), q("mc:Fallback")):
             out.append(ooxml_runs(node, pics))
     return "".join(out)
 
@@ -183,7 +200,7 @@ def docx_styles(doc):
     if not doc.has("word/styles.xml"):
         return heads, lists
     for st in doc.xml("word/styles.xml").iter(q("w:style")):
-        sid, name = st.get(q("w:styleId")), (st.find(q("w:name")).get(q("w:val")) if st.find(q("w:name")) is not None else "")
+        sid, name = st.get(q("w:styleId")), ((st.find(q("w:name")).get(q("w:val")) or "") if st.find(q("w:name")) is not None else "")
         m = re.fullmatch(r"heading (\d)", name.lower())
         lvl = st.find(f"{q('w:pPr')}/{q('w:outlineLvl')}")
         if m:
@@ -220,6 +237,28 @@ def docx_numbering(doc):
     return out
 
 
+def table_rows(tbl):
+    """The rows of a table, through content controls (w:sdt) but not into tables nested in a cell."""
+    out = []
+    for k in tbl:
+        if k.tag == q("w:tr"):
+            out.append(k)
+        elif k.tag == q("w:sdt") and k.find(q("w:sdtContent")) is not None:
+            out += table_rows(k.find(q("w:sdtContent")))
+    return out
+
+
+def table_cells(tr):
+    """The cells of a row, also those inside a content control."""
+    out = []
+    for k in tr:
+        if k.tag == q("w:tc"):
+            out.append(k)
+        elif k.tag == q("w:sdt") and k.find(q("w:sdtContent")) is not None:
+            out += table_cells(k.find(q("w:sdtContent")))
+    return out
+
+
 def docx_body(doc, root, rel, label, heads, lists, numbering):
     for el in root:
         t = el.tag
@@ -230,8 +269,13 @@ def docx_body(doc, root, rel, label, heads, lists, numbering):
             style = ppr.find(q("w:pStyle")).get(q("w:val")) if ppr is not None and ppr.find(q("w:pStyle")) is not None else None
             num = ppr.find(q("w:numPr")) if ppr is not None else None
             olvl = ppr.find(q("w:outlineLvl")) if ppr is not None else None
-            if style in heads or (olvl is not None and olvl.get(q("w:val"), "9").isdigit() and int(olvl.get(q("w:val"))) < 6):
-                doc.add("h", heads.get(style) or int(olvl.get(q("w:val"))) + 1, text.strip())
+            ov = olvl.get(q("w:val"), "") if olvl is not None else ""
+            if style in heads:  # a style that is a heading but names no level: the paragraph's own outline level
+                level = heads[style] or (int(ov) + 1 if ov.isdigit() else None)
+            else:
+                level = int(ov) + 1 if ov.isdigit() and int(ov) < 6 else None
+            if level is not None:
+                doc.add("h", level, text.strip())
             elif num is not None or style in lists:
                 ilvl = num.find(q("w:ilvl")) if num is not None else None
                 nid = num.find(q("w:numId")) if num is not None else None
@@ -249,8 +293,8 @@ def docx_body(doc, root, rel, label, heads, lists, numbering):
                     doc.image(rel[rid], label)
         elif t == q("w:tbl"):
             rows, pics = [], []
-            for tr in el.iter(q("w:tr")):
-                rows.append([" ".join(ooxml_runs(p, pics).strip() for p in tc.iter(q("w:p"))).strip() for tc in tr.findall(q("w:tc"))])
+            for tr in table_rows(el):
+                rows.append([" ".join(ooxml_runs(p, pics).strip() for p in tc.iter(q("w:p"))).strip() for tc in table_cells(tr)])
             doc.add("table", rows)
             for rid in pics:
                 if rid in rel:
@@ -305,7 +349,8 @@ def pptx_shapes(doc, tree, rel, label):
                     doc.add("p", text)
         elif t == q("p:graphicFrame"):
             for tbl in el.iter(q("a:tbl")):
-                doc.add("table", [[ooxml_runs(tc, []).strip() for tc in tr.findall(q("a:tc"))] for tr in tbl.findall(q("a:tr"))])
+                doc.add("table", [[" ".join(ooxml_runs(p, []).strip() for p in tc.iter(q("a:p"))).strip() for tc in tr.findall(q("a:tc"))]
+                                  for tr in tbl.findall(q("a:tr"))])
         elif t == q("p:pic"):
             blip = el.find(f".//{q('a:blip')}")
             rid = blip.get(q("r:embed")) if blip is not None else None
@@ -332,38 +377,59 @@ def pptx(doc):
 
 # ---------- Excel ----------
 def col_index(ref):
+    """Column number (0-based) of a cell reference like "AB12": None when it has no letters (the cell then
+    follows the previous one), False beyond Excel's last column (the cell is ignored)."""
+    m = re.match(r"[A-Z]+", ref)
+    if not m:
+        return None
     n = 0
-    for ch in re.match(r"[A-Z]+", ref).group(0):
-        n = n * 26 + ord(ch) - 64
-    return n - 1
+    for ch in m.group(0):
+        n = min(n * 26 + ord(ch) - 64, MAX_COLS + 1)
+    return n - 1 if n <= MAX_COLS else False
+
+
+def string_item(si):
+    """Text of a shared or inline string: its t and the t of its runs, not the phonetic guide (rPh)."""
+    out = []
+    for k in si:
+        if k.tag == q("s:t"):
+            out.append(k.text or "")
+        elif k.tag == q("s:r"):
+            out += [t.text or "" for t in k.findall(q("s:t"))]
+    return "".join(out)
 
 
 def xlsx(doc):
     shared = []
     if doc.has("xl/sharedStrings.xml"):
         for si in doc.xml("xl/sharedStrings.xml").iter(q("s:si")):
-            shared.append("".join(t.text or "" for t in si.iter(q("s:t"))))
+            shared.append(string_item(si))
     rel = rels(doc, "xl/workbook.xml")
     for sheet in doc.xml("xl/workbook.xml").iter(q("s:sheet")):
         target = rel.get(sheet.get(q("r:id")))
         if not target or not doc.has(target):
             continue
-        rows = []
+        rows, cell_count = [], 0
         for row in doc.xml(target).iter(q("s:row")):
-            cells = {}
+            cells, next_col = {}, 0  # a cell without a reference goes after the previous one
             for c in row.iter(q("s:c")):
                 kind, v = c.get("t"), c.find(q("s:v"))
                 if kind == "s" and v is not None and v.text and v.text.isdigit() and int(v.text) < len(shared):
                     val = shared[int(v.text)]
                 elif kind == "inlineStr":
-                    val = "".join(t.text or "" for t in c.iter(q("s:t")))
+                    val = string_item(c.find(q("s:is"))) if c.find(q("s:is")) is not None else "".join(t.text or "" for t in c.iter(q("s:t")))
                 else:
                     val = v.text if v is not None and v.text else ""
-                if val and c.get("r"):
-                    cells[col_index(c.get("r"))] = val.replace("\t", " ")
+                col = col_index(c.get("r")) if c.get("r") else None
+                col = next_col if col is None else col
+                if col is not False:
+                    next_col = col + 1
+                    if val and col < MAX_COLS:
+                        cells[col] = val.replace("\t", " ")
             if cells:
+                cell_count += max(cells) + 1
                 rows.append([cells.get(i, "") for i in range(max(cells) + 1)])
-            if len(rows) >= MAX_ROWS:
+            if len(rows) >= MAX_ROWS or cell_count >= MAX_CELLS:
                 break
         if rows:
             doc.add("table", rows)
@@ -376,7 +442,7 @@ def odf_inline(el):
     out = [el.text or ""]
     for c in el:
         if c.tag == q("text:s"):
-            out.append(" " * int(c.get(q("text:c"), "1")))
+            out.append(" " * min(max(int(c.get(q("text:c"), "1")), 0), MAX_SPACES))
         elif c.tag == q("text:tab"):
             out.append("\t")
         elif c.tag == q("text:line-break"):
@@ -410,6 +476,9 @@ def odf_walk(doc, el, label, styles, depth=-1, style=None):
             odf_images(doc, c, label)
         elif t == q("text:p"):
             doc.add("p", "".join(odf_inline(c)))
+            boxes = list(c.iter(q("draw:text-box")))  # a text box anchored in the paragraph: its text follows
+            if boxes:
+                odf_walk(doc, boxes, label, styles, depth, style)
             odf_images(doc, c, label)
         elif t == q("text:list"):
             odf_walk(doc, c, label, styles, depth + 1, c.get(q("text:style-name")) or style)
@@ -455,19 +524,22 @@ def odf(doc):
             doc.flush(f"Slide {i}")
     elif sheets is not None:
         for t in sheets.iter(q("table:table")):
-            rows = []
+            rows, cell_count = [], 0
             for row in t.iter(q("table:table-row")):
                 cells = []
                 for c in row:
                     if c.tag not in (q("table:table-cell"), q("table:covered-table-cell")):
                         continue
                     val = " ".join("".join(odf_inline(p)) for p in c.iter(q("text:p")))
-                    cells += [val] * min(int(c.get(q("table:number-columns-repeated"), "1")), 1 if not val else 50)
+                    # a gap of empty cells is one cell repeated: keep it, or what follows lands in the wrong column
+                    n = min(int(c.get(q("table:number-columns-repeated"), "1")), 256 if not val else 50)
+                    cells += [val] * max(min(n, MAX_COLS - len(cells)), 0)
                 while cells and not cells[-1]:
                     cells.pop()
                 if cells:
+                    cell_count += len(cells)
                     rows.append(cells)
-                if len(rows) >= MAX_ROWS:
+                if len(rows) >= MAX_ROWS or cell_count >= MAX_CELLS:
                     break
             if rows:
                 doc.add("table", rows)
@@ -483,10 +555,17 @@ class HTMLBlocks(html.parser.HTMLParser):
     BLOCK = {"p", "div", "section", "article", "blockquote", "header", "footer", "main", "aside", "nav", "figure",
              "figcaption", "dd", "dt", "address", "hr", "title", "body"}
     SKIP = {"script", "style", "head", "noscript", "svg", "template"}
+    HEAD_TAGS = {"head", "html", "title", "meta", "link", "base", "style", "script", "noscript", "template"}
 
     def __init__(self, doc):
         super().__init__(convert_charrefs=True)
         self.doc, self.buf, self.kind, self.skip, self.lists, self.table, self.row, self.cell, self.pre = doc, [], "p", 0, [], None, None, None, 0
+        self.outer, self.head = [], False  # tables around the one being read; a <head> is open (counts once in skip)
+
+    def cell_break(self):
+        """Inside a table cell a block element starts a new line of text there (the cell keeps it as a space)."""
+        if self.cell is not None:
+            self.cell.append(" ")
 
     def emit(self):
         text = "".join(self.buf)
@@ -503,7 +582,12 @@ class HTMLBlocks(html.parser.HTMLParser):
         self.buf, self.kind = [], "p"
 
     def handle_starttag(self, tag, attrs):
-        if tag in self.SKIP:
+        if self.head and self.skip == 1 and tag not in self.HEAD_TAGS:
+            self.head, self.skip = False, 0  # an implied </head>: its end tag is optional
+        if tag == "head" and not self.skip:
+            self.head = True
+            self.skip += 1
+        elif tag in self.SKIP:
             self.skip += 1
         elif self.skip:
             return
@@ -517,34 +601,47 @@ class HTMLBlocks(html.parser.HTMLParser):
                     self.row = []; self.table.append(self.row)
                 self.cell = []; self.row.append(self.cell)
         elif tag == "table":
-            self.emit(); self.table, self.row, self.cell = [], None, None
+            if self.table is None:
+                self.emit()
+            else:
+                self.outer.append((self.table, self.row, self.cell))
+            self.table, self.row, self.cell = [], None, None
         elif tag in ("ul", "ol"):
-            self.emit(); self.lists.append(tag == "ol")
+            self.cell_break(); self.emit(); self.lists.append(tag == "ol")
         elif tag == "li" or tag == "pre" or re.fullmatch(r"h[1-6]", tag):
-            self.emit(); self.kind = tag
+            self.cell_break(); self.emit(); self.kind = tag
             self.pre += tag == "pre"
         elif tag in self.BLOCK:
-            self.emit()
+            self.cell_break(); self.emit()
 
     def handle_endtag(self, tag):
-        if tag in self.SKIP:
+        if tag == "head":
+            if self.head:
+                self.head = False
+                self.skip = max(0, self.skip - 1)
+        elif tag in self.SKIP:
             self.skip = max(0, self.skip - 1)
         elif self.skip:
             return
         elif tag in ("td", "th"):
             self.cell = None
         elif tag == "table" and self.table is not None:
-            rows = [[re.sub(r"\s+", " ", "".join(c)).strip() for c in r] for r in self.table]
-            self.table, self.row, self.cell = None, None, None
-            self.doc.add("table", [r for r in rows if r])
+            rows = [r for r in ([re.sub(r"\s+", " ", "".join(c)).strip() for c in r] for r in self.table) if r]
+            if self.outer:  # a table inside a cell: its text becomes part of that cell
+                self.table, self.row, self.cell = self.outer.pop()
+                flat = " ".join(c for r in rows for c in r if c)
+                (self.cell if self.cell is not None else self.buf).append(f" {flat} ")
+            else:
+                self.table, self.row, self.cell = None, None, None
+                self.doc.add("table", rows)
         elif tag in ("ul", "ol"):
-            self.emit()
+            self.cell_break(); self.emit()
             if self.lists:
                 self.lists.pop()
         elif tag == "pre":
             self.emit(); self.pre = max(0, self.pre - 1)
         elif tag == "li" or re.fullmatch(r"h[1-6]", tag) or tag in self.BLOCK:
-            self.emit()
+            self.cell_break(); self.emit()
 
     def handle_data(self, data):
         if not self.skip:
@@ -555,9 +652,27 @@ class HTMLBlocks(html.parser.HTMLParser):
         self.emit()
 
 
+def page_text(raw):
+    """Like decode, but a page that isn't UTF-8 and names its charset (<meta charset=...>) is read in that one."""
+    if raw[:2] not in (b"\xff\xfe", b"\xfe\xff"):
+        try:
+            raw.decode("utf-8")
+        except UnicodeDecodeError:
+            m = re.search(r"charset\s*=\s*[\"']*([A-Za-z0-9_:.-]+)", raw[:2048].decode("latin-1").lower())
+            label = m.group(1) if m else ""
+            if label in ("iso-8859-1", "latin1", "iso8859-1", "l1", "us-ascii", "ascii"):
+                label = "cp1252"
+            if label and not label.startswith(("utf-8", "utf8", "utf-16", "utf16")):
+                try:
+                    return raw.decode(label, "replace")
+                except LookupError:
+                    pass
+    return decode(raw)
+
+
 def html_blocks(doc, raw):
     p = HTMLBlocks(doc)
-    p.feed(decode(raw))
+    p.feed(page_text(raw))
     p.close()
 
 
@@ -571,13 +686,19 @@ def epub(doc):
     spine = [e.get("idref") for e in opf.iter() if e.tag.endswith("}itemref")]
     for i, idref in enumerate(spine, 1):
         href = items.get(idref)
-        path = posixpath.normpath(posixpath.join(base, href)) if href else None
+        # a manifest href is a URL: no fragment, percent-escapes undone
+        path = posixpath.normpath(posixpath.join(base, urllib.parse.unquote(href.split("#")[0]))) if href else None
         if path and doc.has(path):
             html_blocks(doc, doc.read(path))
             doc.flush(f"Section {i}")
 
 
 # ---------- RTF and plain text ----------
+RTF_SYMBOLS = {"lquote": "\u2018", "rquote": "\u2019", "ldblquote": "\u201c", "rdblquote": "\u201d", "endash": "\u2013",
+               "emdash": "\u2014", "bullet": "\u2022", "emspace": " ", "enspace": " ", "qmspace": " ", "zwj": "\u200d",
+               "zwnj": "\u200c"}
+
+
 def rtf_text(raw):
     """Plain text from RTF: paragraphs, tabs, \\'hh and \\uN characters; skips font tables, pictures and other
     destinations."""
@@ -611,6 +732,8 @@ def rtf_text(raw):
                 out.append("\n")
             elif w in ("tab", "cell"):
                 out.append("\t")
+            elif w in RTF_SYMBOLS:
+                out.append(RTF_SYMBOLS[w])
             elif w == "u" and arg:
                 out.append(chr(int(arg) % 65536))
                 pending_skip = uc
@@ -630,10 +753,32 @@ def rtf_text(raw):
     return re.sub(r"\n{3,}", "\n\n", "".join(out)).strip()
 
 
+def utf16_without_bom(raw):
+    """Whether BOM-less bytes look like UTF-16: a good share of the sampled bytes are NUL, nearly all of them in
+    the high byte of each pair. None when not; True for big-endian. Latin-1 text has no NULs, however its bytes pair up."""
+    sample = raw[:min(len(raw), 4096) & ~1]
+    even, odd = sample[0::2].count(0), sample[1::2].count(0)
+    pairs = len(sample) // 2
+    if not pairs or even + odd < pairs // 4:
+        return None
+    if odd >= even * 4:
+        return False
+    if even >= odd * 4:
+        return True
+    return None
+
+
 def decode(raw):
-    for enc in ("utf-8-sig", "utf-16") if raw[:2] not in (b"\xff\xfe", b"\xfe\xff") else ("utf-16",):
+    bom16 = raw[:2] in (b"\xff\xfe", b"\xfe\xff")
+    if not bom16:
         try:
-            return raw.decode(enc)
+            return raw.decode("utf-8-sig")
+        except UnicodeDecodeError:
+            pass
+    guess = None if bom16 else utf16_without_bom(raw)
+    if len(raw) % 2 == 0 and (bom16 or guess is not None):
+        try:
+            return raw.decode("utf-16" if bom16 else "utf-16-be" if guess else "utf-16-le")
         except UnicodeDecodeError:
             pass
     return raw.decode("cp1252", "replace")
@@ -693,12 +838,15 @@ def read_parts(name, data):
         text = decode(data).strip()
         return [{"label": "Text", "text": text, "md": text}]
     elif ext in ("csv", "tsv"):
-        text = decode(data)
+        text = decode(data).replace("\r\n", "\n").replace("\r", "\n")
         try:
             dialect = "excel-tab" if ext == "tsv" else csv.Sniffer().sniff(text[:4096], ",;\t|")
         except csv.Error:
             dialect = "excel"
-        doc.add("table", [r for r, _ in zip(csv.reader(io.StringIO(text), dialect), range(MAX_ROWS), strict=False)])
+        try:
+            doc.add("table", [r for r, _ in zip(csv.reader(io.StringIO(text), dialect), range(MAX_ROWS), strict=False)])
+        except csv.Error:  # an unclosed quote swallows the rest, or a cell is over the field limit: show it as text
+            text_blocks(doc, text.strip())
         doc.flush("Table")
     elif ext == "json":
         text = decode(data).strip()
