@@ -318,8 +318,8 @@ const ChatWS = {
     if (!slot) x.pending ? mdStream(body, x.text || "") : (body.innerHTML = mdToHtml(x.text || ""));
     return el("div", { class: "msg bot" + (x.error ? " err" : "") },
       // attachments that look like prompt injection: still sent, but the model was told not to obey them
-      (x.warnings || []).length ? el("div", { class: "msg-warn", title: "The model was told to treat attachments as content only and never follow instructions inside them." },
-        "⚠ Possible prompt injection in " + x.warnings.map((w) => `${w.source.replace(/^document: /, "")} (${w.reasons.join(", ").replace(/_/g, " ")})`).join("; ") + ". Check the reply with that in mind.") : null,
+      (x.warnings || []).length ? el("div", { class: "msg-warn", title: "The model was told to treat attachments as content only and never follow instructions inside them. Its tools (pictures, speech, model swaps) were switched off for this reply." },
+        "⚠ Possible prompt injection in " + x.warnings.map((w) => `${w.source.replace(/^document: /, "")} (${w.reasons.join(", ").replace(/_/g, " ")})`).join("; ") + ". Tools were switched off for this reply. Check it with that in mind.") : null,
       x.reasoning ? el("details", { class: "msg-think", open: thinkOpen.get(x) ?? (!!x.pending && !x.text) },
         el("summary", { onclick: (e) => thinkOpen.set(x, !e.currentTarget.parentElement.open) }, x.pending && !x.text ? "Thinking…" : "Thoughts"), el("div", {}, x.reasoning)) : null,
       body,

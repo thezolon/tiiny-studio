@@ -213,7 +213,7 @@ def run_chat(m, job, req):
     if not messages:
         raise JobError("Nothing to send")
     # attached documents are untrusted: delimited, screened, and flagged to the user (never silently dropped)
-    rule = " " + safety.RULE if safety.has_documents(messages) else ""
+    rule = (" " + safety.RULE if safety.has_documents(messages) else "") + (" " + safety.IMAGE_RULE if safety.has_images(messages) else "")
     messages, warnings = safety.guard_messages(messages)
     if warnings:
         job["warnings"] = warnings
@@ -221,7 +221,7 @@ def run_chat(m, job, req):
     mode = media.thinking_mode(model, thinking)
     think = mode == "always" or (mode == "switch" and bool(req.get("thinking")))
     job["model"] = model
-    tools = [{"type": "function", "function": {"name": n, **spec}} for n, spec in TOOL_SPECS.items() if n in (req.get("tools") or [])]
+    tools = [{"type": "function", "function": {"name": n, **spec}} for n, spec in TOOL_SPECS.items() if n in (req.get("tools") or []) and not warnings]  # flagged content: no tools this turn
     convo = [{"role": "system", "content": SYSTEM + rule + (" " + req["system"].strip() if (req.get("system") or "").strip() else "")}] + messages
     job["partial"] = {"content": "", "reasoning": "", "done": "", "done_reasoning": ""}
     artifacts, usage_rounds = [], 0
