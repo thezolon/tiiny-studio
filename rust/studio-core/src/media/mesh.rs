@@ -306,12 +306,17 @@ pub async fn run(ctx: Ctx) -> JobResult {
     })
     .collect();
     let mut have = Have::default();
+    let (ext, mime) = super::image::sniff(&image);
     have.set(
         "image",
-        ("input.png".into(), image.clone(), "image/png".into()),
+        (format!("input.{ext}"), image.clone(), mime.into()),
     );
     let mut stage_log = vec![];
-    let src = save(&ctx, &format!("{}-src.png", ctx.id), &original)?;
+    let src = save(
+        &ctx,
+        &format!("{}-src.{}", ctx.id, super::image::sniff(&original).0),
+        &original,
+    )?;
 
     let last = plan.last().copied();
     for stage in plan {

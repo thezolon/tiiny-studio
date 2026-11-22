@@ -530,7 +530,12 @@ async fn song_entry(
                 slug.push('_');
             }
         }
-        let fname = save(ctx, &format!("{}-{slug}.wav", ctx.id), &b64(data)?)?;
+        // two stems that slug alike (or one named "song") must not overwrite each other
+        let mut stem = slug.clone();
+        while outputs.contains(&format!("{}-{stem}.wav", ctx.id)) {
+            stem.push('_');
+        }
+        let fname = save(ctx, &format!("{}-{stem}.wav", ctx.id), &b64(data)?)?;
         outputs.push(fname.clone());
         tracks.insert(fname, json!(name));
     }
