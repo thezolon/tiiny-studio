@@ -126,6 +126,7 @@ ${e.params?.recovered ? "" : `Took ${fmtSec(e.seconds)} to render · `}${e.param
 
   renderStage() {
     const head = $("#vHead"), stage = $("#vStage");
+    releaseVideos(stage);
     const failed = this.failedStage(head);
     if (failed) return stage.replaceChildren(failed);
     const j = this.liveJob();
