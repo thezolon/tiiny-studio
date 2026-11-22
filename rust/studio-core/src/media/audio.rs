@@ -168,7 +168,7 @@ fn parse(buf: &[u8]) -> Result<Wav, WavError> {
         return Err(err("file does not start with RIFF id"));
     }
     let mut declared = le32(&buf[4..8]); // chunks inside can't read past the RIFF chunk's own size
-    // a streamed WAV (ffmpeg or a TTS server writing to a pipe) has no sizes yet: 0 or 0xFFFFFFFF, "to the end"
+                                         // a streamed WAV (ffmpeg or a TTS server writing to a pipe) has no sizes yet: 0 or 0xFFFFFFFF, "to the end"
     let streaming = declared == 0 || declared == 0xFFFF_FFFF;
     if streaming {
         declared = (buf.len() - 8) as u64;
@@ -462,7 +462,10 @@ mod tests {
 
     #[test]
     fn joining_parts_in_different_formats_is_refused() {
-        let (a, b) = (wav_with(8000, 1, 44 + 16000 - 8, 16000), wav_with(16000, 1, 44 + 32000 - 8, 32000));
+        let (a, b) = (
+            wav_with(8000, 1, 44 + 16000 - 8, 16000),
+            wav_with(16000, 1, 44 + 32000 - 8, 32000),
+        );
         let e = super::join_wavs(&[a, b]).unwrap_err();
         assert!(e.to_string().contains("different audio formats"), "{e}");
     }

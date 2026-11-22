@@ -69,7 +69,12 @@ async fn plain_song_model(ctx: &Ctx, model: &str) -> bool {
 /// SongGeneration and 5-120 s for AceStep. Without a readable answer from the device the length rule is by service.
 async fn check_style_reference(ctx: &Ctx, model: &str, clip: &[u8]) -> Result<(), JobError> {
     let (code, info) = ctx
-        .call("GET", &format!("/v1/music/info?model={}", quote(model)), None, 15)
+        .call(
+            "GET",
+            &format!("/v1/music/info?model={}", quote(model)),
+            None,
+            15,
+        )
         .await;
     let name = model.rsplit('/').next().unwrap_or(model);
     if code == 200 {
@@ -82,7 +87,10 @@ async fn check_style_reference(ctx: &Ctx, model: &str, clip: &[u8]) -> Result<()
             }
         }
     }
-    let service = info.get("service_name").and_then(Value::as_str).filter(|_| code == 200);
+    let service = info
+        .get("service_name")
+        .and_then(Value::as_str)
+        .filter(|_| code == 200);
     let min = match service {
         Some(s) if s.starts_with("SongGeneration") => 10.0,
         Some(s) if s.starts_with("AceStep") => 5.0,
@@ -91,7 +99,9 @@ async fn check_style_reference(ctx: &Ctx, model: &str, clip: &[u8]) -> Result<()
         None => 0.0,
     };
     let Ok(Some(secs)) = wav_seconds(clip) else {
-        return Err(JobError("The style reference must be a WAV audio clip".into()));
+        return Err(JobError(
+            "The style reference must be a WAV audio clip".into(),
+        ));
     };
     if secs < min {
         return Err(JobError(format!(
@@ -298,7 +308,10 @@ async fn finished_session(
                     && text(s, "model_id") == model
                     && match before {
                         Some(before) => !before.contains(id),
-                        None => s.get("created_at").and_then(Value::as_f64).unwrap_or(0.0) >= since - 5.0,
+                        None => {
+                            s.get("created_at").and_then(Value::as_f64).unwrap_or(0.0)
+                                >= since - 5.0
+                        }
                     }
                     && !seen.contains(id)
             });

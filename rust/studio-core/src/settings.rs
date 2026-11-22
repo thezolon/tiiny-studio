@@ -271,15 +271,41 @@ impl State {
 impl Settings {
     pub fn load(data_dir: &std::path::Path, lan_access: bool, password: bool, app: bool) -> Self {
         let path = data_dir.join("config.json");
-        let saved: Value = std::fs::read_to_string(&path)
-            .ok()
-            .and_then(|s| serde_json::from_str(&s).ok())
+        // a config.json that exists but can't be read is kept aside, not overwritten by the next save
+        let saved: Value = crate::store::read_json_or_set_aside(&path)
+            .filter(Value::is_object)
             .unwrap_or(json!({}));
         let mut st = State::default();
-        if let Some(devices) = saved
-            .get("devices")
-            .and_then(|d| serde_json::from_value::<Vec<Device>>(d.clone()).ok())
-        {
+        if let Some(devices) = saved.get("devices").and_then(Value::as_array).map(|a| {
+            // one bad record must not drop the others (and their keys)
+            a.iter()
+                .filter_map(|d| {
+                    let url = d.get("url").and_then(Value::as_str).unwrap_or("");
+                    let named = |k: &str| {
+                        d.get(k)
+                            .and_then(Value::as_str)
+                            .filter(|s| !s.is_empty())
+                            .map(String::from)
+                    };
+                    if url.is_empty() {
+                        crate::store::warn_data(
+                            "A saved Tiiny in config.json has no address and was skipped.".into(),
+                        );
+                        return None;
+                    }
+                    Some(Device {
+                        id: named("id").unwrap_or_else(new_id),
+                        name: named("name").unwrap_or_else(|| default_device_name(url)),
+                        url: url.to_string(),
+                        key: d
+                            .get("key")
+                            .and_then(Value::as_str)
+                            .unwrap_or("")
+                            .to_string(),
+                    })
+                })
+                .collect::<Vec<Device>>()
+        }) {
             st.devices = devices;
             st.active = saved
                 .get("active")
@@ -414,7 +440,7 @@ impl Settings {
             .as_ref()
             .map(|d| (d.url.clone(), d.key.clone()))
             .unwrap_or_default();
-        json!({
+        let mut v = json!({
             "devices": st.devices.iter().map(|d| {
                 let mut row = json!({
                     "id": d.id, "name": d.name, "url": d.url, "host": hostname(&d.url),
@@ -433,7 +459,12 @@ impl Settings {
             "swap": st.swap, "mcp": st.mcp, "helper_model": st.helper_model, "docker": in_docker(),
             "update_check": update_check, "update_ask": update_ask, "tag_prompts": st.tag_prompts.unwrap_or(true),
             "app": self.app, // the desktop app: no .env to edit, so the UI words the network notes differently
-        })
+        });
+        let warnings = crate::store::data_warnings(); // a saved file that was unreadable and kept aside
+        if !warnings.is_empty() {
+            v["data_warnings"] = json!(warnings);
+        }
+        v
     }
 
     fn save(&self, st: &mut State) {
@@ -444,20 +475,8 @@ impl Settings {
         if let Some(on) = st.tag_prompts {
             body["tag_prompts"] = json!(on);
         }
-        let tmp = self.path.with_extension("tmp");
-        let written = std::fs::write(
-            &tmp,
-            serde_json::to_string_pretty(&body).unwrap_or_default(),
-        )
-        .and_then(|_| {
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                let _ = std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600));
-            }
-            std::fs::rename(&tmp, &self.path)
-        });
-        st.save_error = written.err().map(|e| crate::store::io_reason(&e));
+        let text = serde_json::to_string_pretty(&body).unwrap_or_default();
+        st.save_error = crate::store::write_atomic(&self.path, text.as_bytes(), true).err();
         st.source = "file";
     }
 
@@ -816,6 +835,24 @@ mod tests {
     }
 
     #[test]
+    fn a_device_record_without_a_name_keeps_all_devices() {
+        let dir = std::env::temp_dir().join(format!("studio-settings-{}", new_id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("config.json"),
+            r#"{"devices":[{"id":"a1","url":"http://192.168.1.50","key":"k1"},{"id":"b2","name":"B","url":"http://192.168.1.60","key":"k2"},{"id":"c3","name":"no address"}],"active":"b2"}"#,
+        )
+        .unwrap();
+        let s = Settings::load(&dir, false, false, false);
+        let d = s.devices();
+        assert_eq!(d.len(), 2);
+        assert_eq!((d[0].key.as_str(), d[1].key.as_str()), ("k1", "k2"));
+        assert_eq!(d[0].name, "Tiiny (192.168.1.50)");
+        assert_eq!(s.active().as_deref(), Some("b2"));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
     fn a_bad_saved_address_is_kept_but_gets_no_key() {
         let dir = std::env::temp_dir().join(format!("studio-settings-{}", new_id()));
         std::fs::create_dir_all(&dir).unwrap();
@@ -877,6 +914,31 @@ mod tests {
         assert_eq!(s.active().as_deref(), Some(a.as_str()), "two misses: stay");
         s.check(&client).await;
         assert_eq!(s.active().as_deref(), Some(b.as_str()), "third miss: leave");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn an_unreadable_config_is_kept_aside_not_overwritten() {
+        let dir = std::env::temp_dir().join(format!("studio-settings-{}", new_id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("config.json"), b"{\"devices\": [").unwrap();
+        let s = Settings::load(&dir, false, false, false);
+        assert!(s.devices().is_empty());
+        s.upsert(None, "", "192.168.1.50", "key").unwrap();
+        let broken: Vec<_> = std::fs::read_dir(&dir)
+            .unwrap()
+            .flatten()
+            .filter(|e| {
+                e.file_name()
+                    .to_string_lossy()
+                    .starts_with("config.json.broken-")
+            })
+            .collect();
+        assert_eq!(broken.len(), 1);
+        assert_eq!(std::fs::read(broken[0].path()).unwrap(), b"{\"devices\": [");
+        assert!(crate::store::data_warnings()
+            .iter()
+            .any(|w| w.starts_with("config.json could not be read")));
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

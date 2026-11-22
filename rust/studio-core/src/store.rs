@@ -24,6 +24,72 @@ pub fn read_json_file(path: &Path) -> Option<Value> {
         .and_then(|s| serde_json::from_str(&s).ok())
 }
 
+/// Problems with the saved data that the page can show (a file moved aside as unreadable, a skipped record).
+/// Process-wide: history, voices and config all report here.
+static DATA_WARNINGS: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
+pub fn warn_data(msg: String) {
+    eprintln!("studio: {msg}");
+    let mut w = DATA_WARNINGS.lock().unwrap_or_else(|e| e.into_inner());
+    if !w.contains(&msg) {
+        w.push(msg);
+    }
+}
+
+pub fn data_warnings() -> Vec<String> {
+    DATA_WARNINGS
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone()
+}
+
+fn unix_now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+/// Keep an unusable file as `<name>.broken-<time>` (so the next save can't overwrite it) and report it.
+pub fn set_aside(path: &Path, why: &str) {
+    let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("file");
+    let mut aside = path.with_file_name(format!("{name}.broken-{}", unix_now()));
+    let mut n = 1;
+    while aside.exists() {
+        aside = path.with_file_name(format!("{name}.broken-{}-{n}", unix_now()));
+        n += 1;
+    }
+    let kept = std::fs::rename(path, &aside).or_else(|_| std::fs::copy(path, &aside).map(|_| ()));
+    let aside_name = aside.file_name().and_then(|n| n.to_str()).unwrap_or("");
+    warn_data(match kept {
+        Ok(()) => format!("{name} could not be read ({why}). It was kept as {aside_name} in the data folder and the studio started with an empty one."),
+        Err(e) => format!("{name} could not be read ({why}) and could not be moved aside ({}). Fix or remove it before saving anything.", io_reason(&e)),
+    });
+}
+
+/// Read a JSON file where "not there yet" (None) is fine but "there and unusable" is not: that file is moved aside
+/// (`set_aside`) and then counts as missing.
+pub fn read_json_or_set_aside(path: &Path) -> Option<Value> {
+    if path.is_dir() {
+        // a folder where the file belongs: leave it, saves fail until someone looks at it
+        let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("file");
+        warn_data(format!(
+            "{name} is a folder, not a file. Fix or remove it before saving anything."
+        ));
+        return None;
+    }
+    let why = match std::fs::read(path) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return None,
+        Err(e) => io_reason(&e),
+        Ok(b) => match serde_json::from_slice(&b) {
+            Ok(v) => return Some(v),
+            Err(e) => format!("not valid JSON: {e}"),
+        },
+    };
+    set_aside(path, &why);
+    None
+}
+
 /// What went wrong with a file, in a few words ("No space left on device"): Rust adds " (os error N)".
 pub fn io_reason(e: &std::io::Error) -> String {
     let s = e.to_string();
@@ -34,12 +100,43 @@ pub fn io_reason(e: &std::io::Error) -> String {
         .to_string()
 }
 
-/// Write through a temp file so a crash never leaves half a file. Err is the reason it couldn't be written.
+/// Write through a unique temp file (flushed to disk before the rename, the folder too where the OS allows) so a
+/// crash never leaves half a file. Err is the reason it couldn't be written.
+pub fn write_atomic(path: &Path, bytes: &[u8], private: bool) -> Result<(), String> {
+    use std::io::Write;
+    let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("file");
+    let tmp = path.with_file_name(format!(
+        "{name}.{}.tmp",
+        &uuid::Uuid::new_v4().simple().to_string()[..12]
+    ));
+    let written = (|| {
+        let mut f = std::fs::File::create(&tmp)?;
+        #[cfg(unix)]
+        if private {
+            use std::os::unix::fs::PermissionsExt;
+            f.set_permissions(std::fs::Permissions::from_mode(0o600))?;
+        }
+        #[cfg(not(unix))]
+        let _ = private;
+        f.write_all(bytes)?;
+        f.sync_all()?;
+        drop(f);
+        std::fs::rename(&tmp, path)
+    })();
+    if let Err(e) = written {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(io_reason(&e));
+    }
+    #[cfg(unix)]
+    if let Some(dir) = path.parent().and_then(|d| std::fs::File::open(d).ok()) {
+        let _ = dir.sync_all();
+    }
+    Ok(())
+}
+
 pub fn save_json(path: &Path, v: &Value) -> Result<(), String> {
-    let tmp = path.with_extension("tmp");
-    std::fs::write(&tmp, serde_json::to_string_pretty(v).unwrap_or_default())
-        .map_err(|e| io_reason(&e))?;
-    std::fs::rename(&tmp, path).map_err(|e| io_reason(&e))
+    let text = serde_json::to_string_pretty(v).unwrap_or_default();
+    write_atomic(path, text.as_bytes(), false)
 }
 
 /// Overwrite a file with zeros, then delete it. Best effort: SSDs and copy-on-write filesystems may still
@@ -64,18 +161,30 @@ pub fn shred(path: &Path) {
     let _ = std::fs::remove_file(path);
 }
 
+/// Windows opens these as devices ("NUL", "CON.txt", "COM1.png"), whatever the extension.
+fn reserved_name(name: &str) -> bool {
+    let stem = name.split('.').next().unwrap_or("").to_ascii_uppercase();
+    matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL")
+        || ["COM", "LPT"].iter().any(|p| {
+            stem.strip_prefix(p)
+                .is_some_and(|n| n.len() == 1 && n != "0" && n.chars().all(|c| c.is_ascii_digit()))
+        })
+}
+
 /// A file name inside images/ that can't climb out of it (server.py only accepts `[\w.-]+`).
 pub fn safe_file(name: &str) -> bool {
     !name.is_empty()
         && name != "."
         && name != ".."
+        && !name.ends_with('.')
+        && !reserved_name(name)
         && name
             .chars()
             .all(|c| c.is_alphanumeric() || c == '_' || c == '.' || c == '-')
 }
 
 pub fn word(id: &str) -> bool {
-    !id.is_empty() && id.chars().all(|c| c.is_alphanumeric() || c == '_')
+    !id.is_empty() && !reserved_name(id) && id.chars().all(|c| c.is_alphanumeric() || c == '_')
 }
 
 fn list_of(v: &Value, k: &str) -> Vec<String> {
@@ -118,10 +227,20 @@ impl Store {
         self.lock.lock().unwrap_or_else(|e| e.into_inner())
     }
 
+    /// A saved list. A file that exists but is unusable is set aside (`set_aside`) and never saved over.
+    fn load_list(path: &Path) -> Vec<Value> {
+        match read_json_or_set_aside(path) {
+            Some(Value::Array(a)) => a,
+            Some(_) => {
+                set_aside(path, "not a list");
+                vec![]
+            }
+            None => vec![],
+        }
+    }
+
     pub fn load_history(&self) -> Vec<Value> {
-        read_json_file(&self.history)
-            .and_then(|v| v.as_array().cloned())
-            .unwrap_or_default()
+        Self::load_list(&self.history)
     }
 
     pub fn save_history(&self, items: &[Value]) -> Result<(), String> {
@@ -197,9 +316,7 @@ impl Store {
     }
 
     pub fn load_voices(&self) -> Vec<Value> {
-        read_json_file(&self.voices)
-            .and_then(|v| v.as_array().cloned())
-            .unwrap_or_default()
+        Self::load_list(&self.voices)
     }
 
     pub fn save_voices(&self, voices: &[Value]) -> Result<(), String> {
@@ -258,6 +375,23 @@ impl Store {
         out
     }
 
+    /// For "wipe everything": temp files and `.broken-*` copies of history/voices/chats hold content too.
+    pub fn shred_leftovers(&self) {
+        let data = self.history.parent().unwrap_or(Path::new("."));
+        for dir in [data, self.chats.as_path()] {
+            for e in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+                let n = e.file_name().to_string_lossy().into_owned();
+                let ours = n.ends_with(".tmp") && !n.starts_with("config.json")
+                    || (n.starts_with("history.json.") || n.starts_with("voices.json."))
+                        && n.contains(".broken-")
+                    || dir == self.chats && n.contains(".json.broken-");
+                if ours && e.path().is_file() {
+                    shred(&e.path());
+                }
+            }
+        }
+    }
+
     pub fn chat_path(&self, id: &str) -> PathBuf {
         self.chats.join(format!("{id}.json"))
     }
@@ -285,6 +419,73 @@ mod tests {
         assert_eq!(s.load_history().len(), 1);
         assert!(!s.images.join("a.png").exists());
         assert!(!safe_file("../x") && !safe_file("a/b") && safe_file("voice-1.wav"));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn an_unreadable_history_is_kept_aside_and_a_missing_one_is_empty() {
+        let dir =
+            std::env::temp_dir().join(format!("studio-store-{}", uuid::Uuid::new_v4().simple()));
+        let s = Store::new(&dir);
+        assert!(s.load_history().is_empty() && s.load_voices().is_empty());
+        assert!(!dir.join("history.json").exists());
+        std::fs::write(dir.join("history.json"), vec![0u8; 64]).unwrap();
+        assert!(s.load_history().is_empty());
+        s.add_history(json!({"id": "e1"})).unwrap();
+        let kept: Vec<_> = std::fs::read_dir(&dir)
+            .unwrap()
+            .flatten()
+            .filter(|e| {
+                e.file_name()
+                    .to_string_lossy()
+                    .starts_with("history.json.broken-")
+            })
+            .collect();
+        assert_eq!(kept.len(), 1);
+        assert_eq!(std::fs::read(kept[0].path()).unwrap(), vec![0u8; 64]);
+        assert_eq!(s.load_history().len(), 1);
+        // wipe takes the kept copy too, and no temp file is left behind by saves
+        s.shred_leftovers();
+        assert!(!kept[0].path().exists());
+        assert!(std::fs::read_dir(&dir)
+            .unwrap()
+            .flatten()
+            .all(|e| !e.file_name().to_string_lossy().ends_with(".tmp")));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn reserved_windows_names_are_refused() {
+        for n in [
+            "NUL", "nul", "CON.png", "com1", "LPT9.wav", "aux.txt", "a.", "PRN",
+        ] {
+            assert!(!safe_file(n), "{n}");
+        }
+        assert!(safe_file("console.png") && safe_file("com10.png") && safe_file("a.b-c_1.png"));
+        assert!(!word("NUL") && word("nul1") && word("chat_1"));
+    }
+
+    #[test]
+    fn concurrent_saves_of_one_file_all_succeed() {
+        let dir =
+            std::env::temp_dir().join(format!("studio-store-{}", uuid::Uuid::new_v4().simple()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let p = dir.join("c.json");
+        let hs: Vec<_> = (0..4)
+            .map(|t| {
+                let p = p.clone();
+                std::thread::spawn(move || {
+                    (0..100)
+                        .filter(|i| save_json(&p, &json!({"t": t, "i": i})).is_err())
+                        .count()
+                })
+            })
+            .collect();
+        let failed: usize = hs.into_iter().map(|h| h.join().unwrap()).sum();
+        // Windows may refuse a rename onto a file another thread has open for reading; none here reads
+        assert_eq!(failed, 0);
+        assert!(read_json_file(&p).is_some());
+        assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 1);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
