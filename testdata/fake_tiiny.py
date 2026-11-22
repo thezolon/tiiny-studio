@@ -16,8 +16,12 @@ Model store and downloads: every CATALOG model starts installed; STORE_ONLY ones
 with time: "download_rate" N (% per second, 50 by default), "download_hold" (stays at 10%), "download_fail" (stops with
 status "error" at 30%, like a Tiiny without internet), "offline" (downloads fail at once and every need_update reads false,
 as on the real device), "updates" [ids] (these read need_update until downloaded again). As on 0.1.39 (probed 2026-11-21):
-pause_download leaves status "download_stop", download again resumes from there, interrupt only stops chats. DELETE of a
-paused download drops it, row and all (also tested on 0.1.39). The disk counts what a download has fetched so far.
+pause_download leaves status "download_stop" (a second pause answers 200 "is not currently downloading."), download again resumes
+from there, interrupt only stops chats. DELETE of a downloading or paused download drops it, row and all, at once (tested on 0.1.39).
+The disk counts what a download has fetched so far.
+Like the device (0.1.39), a model has to be loaded to answer: chat, images, speech, transcriptions, OCR and embeddings answer 404
+"<id> is not loaded." for a named model that isn't running, and 503 "No suitable model is currently running." for `default`
+(or no name) when no model of that kind runs. Loading works for every model in the store once it is downloaded.
 More: "odd_status" {id: status} lists that model in both model lists with a status the studio doesn't know (not
 installed); "update_size" {id: bytes} makes the store's download bigger than the installed build; "delete_lost" makes a
 DELETE happen but answer 504, like an answer lost on the way back.
@@ -144,6 +148,11 @@ TTS_CAPS = {"Qwen/Qwen3-TTS-Base": tts_caps(clone=True, instruct=True), "Fake/Cu
             "Fake/VoiceDesign": tts_caps(design=True, instruct=True), "Fake/Broken-TTS": tts_caps(speakers=("F1", "M1"))}
 
 
+# the model type each inference route needs loaded
+ROUTE_KIND = {"/v1/chat/completions": "Text Generation", "/v1/images/generations": "Text-to-Image", "/v1/audio/speech": "Text-to-Speech",
+              "/v1/audio/transcriptions": "ASR", "/v1/ocr": "OCR", "/v1/embeddings": "Embedding"}
+
+
 def model(mid, name, mtype, npu, supported=(), inp="text", out="text", thinking=NO_THINKING):
     return {"id": mid, "display_name": name, "params": "4B", "type": mtype, "input": inp, "output": out, "supported": list(supported),
             "desc": f"Fake {name}", "npu_usage": npu, "load_time": 20, "costMemory": npu * 100, "size": 1 << 30, "version": 1,  # the device sends numbers
@@ -206,6 +215,7 @@ class State:
             self.requests, self.shutdowns, self.release_hits = [], 0, []
             self.running = {mid: self._instance(mid) for mid in self.initial}
             self.pending, self.tasks, self.sessions, self.videos = set(), {}, {}, {}
+            self.plain_songs = 0
             self.session_meta = {}  # session id -> model_id, route, created_at (what GET /v1/music/sessions adds)
             self.flags = {}
             self.installed = {m["id"] for m in CATALOG}
@@ -443,8 +453,27 @@ class Handler(BaseHTTPRequestHandler):
     do_PUT = lambda self: self.handle_any("PUT")
 
     # ---------- routes ----------
+    def loaded(self, kind, named):
+        """True when a model can answer; else sends the device's refusal (0.1.39, tested) and returns False. A named model has to
+        be running (404 otherwise, even an installed one); `default` or no name takes whichever of the kind runs (503 if none)."""
+        st = self.st
+        with st.lock:
+            if named and named != "default":
+                if named in st.running:
+                    return True
+                self.send_json(404, {"error": {"message": f"\"{named}\" is not loaded.", "type": "model_not_found", "code": 404}})
+                return False
+            if any(ALL_MODELS[mid]["type"] == kind for mid in st.running):
+                return True
+        self.send_json(503, {"error": {"message": "No suitable model is currently running.", "type": "service_unavailable"}})
+        return False
+
     def route(self, method, p):
         st = self.st
+        if method == "POST" and p in ROUTE_KIND:
+            named = self.body.get("model") or (self.multi or {}).get("fields", {}).get("model") or (self.query.get("model") or [None])[0]
+            if not self.loaded(ROUTE_KIND[p], named):
+                return True
         if method == "GET" and p == "/":
             self.send_bytes(200, b"<html><body>Fake Tiiny status page</body></html>", "text/html; charset=utf-8")
         elif method == "GET" and p == "/api/v1/models/":
@@ -475,11 +504,14 @@ class Handler(BaseHTTPRequestHandler):
         elif method == "POST" and (m := re.fullmatch(r"/api/v1/models/(.+)/pause_download", p)):
             with st.lock:
                 d = st.downloads.get(m.group(1))
-                if d and d["status"] == "downloading":
+                paused_now = bool(d and d["status"] == "downloading")
+                if paused_now:
                     d.update(status=st.PAUSED, done=st.progress(m.group(1)) or 0.0)
             if not d or d["status"] != st.PAUSED:
                 return self.err(400, f"{m.group(1)} is not downloading") or True
-            self.send_json(200, {"message": f"Model {m.group(1)} download paused successfully.", "status": st.PAUSED,
+            # a second pause is no error on 0.1.39: 200, with the same status
+            what = "download paused successfully." if paused_now else "is not currently downloading."
+            self.send_json(200, {"message": f"Model {m.group(1)} {what}", "status": st.PAUSED,
                                  "progress": d["done"], "pause_in_progress": False, "process_id": "fake"})
         elif method == "DELETE" and (m := re.fullmatch(r"/api/v1/models/(.+)", p)):
             mid = m.group(1)
@@ -529,21 +561,21 @@ class Handler(BaseHTTPRequestHandler):
                 {"id": mid, "object": "model", "aliases": ["default"] if mid == CHAT_MODEL else [], "supports_vision": False,
                  "supports_chat": mid == CHAT_MODEL, "context_window": 32768,
                  # an object since the 2026-10 TiinyOS update (was a bool)
-                 "thinking": next(m for m in CATALOG if m["id"] == mid)["thinking"]} for mid in list(st.running)]})
+                 "thinking": ALL_MODELS[mid]["thinking"]} for mid in list(st.running)]})
         elif method == "GET" and p == "/api/tags":
             self.send_json(200, {"models": [{"name": m["id"]} for m in CATALOG]})
         elif method == "GET" and p == "/v1/capabilities":
             named = (self.query.get("model") or [None])[0]
             if not named:
                 return self.send_json(200, {"capabilities": ["chat"]}) or True
-            row = next((m for m in CATALOG if m["id"] == named), None)
+            row = ALL_MODELS.get(named)
             if not row or named not in st.running:  # like the device: only a loaded model answers
                 return self.send_json(503, {"error": {"message": "No suitable model is currently running."}}) or True
             if row["type"] == "Text Generation":
                 self.send_json(200, {"object": "capabilities", "service": "chat", "model": named, "supports_chat": True,
                                      "supported": row["supported"], "thinking": row["thinking"]})
             elif row["type"] == "Text-to-Speech":
-                self.send_json(200, {**TTS_CAPS[named], "model": named})
+                self.send_json(200, {**(TTS_CAPS.get(named) or tts_caps()), "model": named})
             else:
                 self.send_json(400, {"error": {"message": f"Model '{named}' does not support tts.", "type": "invalid_request_error"}})
         elif method == "POST" and p == "/api/v1/sys/shutdown/":
@@ -633,8 +665,8 @@ class Handler(BaseHTTPRequestHandler):
         self.send_json(200, answer)
 
     def unload_candidate(self, mid):
-        m = next((c for c in CATALOG if c["id"] == mid), None)
-        if not m:
+        m = ALL_MODELS.get(mid)  # the store's models too, once they're downloaded
+        if not m or mid not in self.st.installed:
             return self.err(404, f"model {mid} not found")
         with self.st.lock:
             victims, free = [], 100 - self.st.used()
@@ -675,7 +707,19 @@ class Handler(BaseHTTPRequestHandler):
         for d in chunks:
             out += b"data: " + json.dumps({"id": "chatcmpl-fake", "object": "chat.completion.chunk", "choices": [{"index": 0, "delta": d, "finish_reason": None}]}).encode() + b"\n\n"
         out += b"data: " + json.dumps({"id": "chatcmpl-fake", "object": "chat.completion.chunk", "choices": [{"index": 0, "delta": {}, "finish_reason": finish}]}).encode() + b"\n\n"
-        self.send_bytes(200, out + b"data: [DONE]\n\n", "text/event-stream")
+        # several writes, each event cut in two, like a live stream: a parser sees partial lines, not one body
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("Connection", "close")
+        self.end_headers()
+        self.close_connection = True
+        for ev in [e + b"\n\n" for e in out.split(b"\n\n") if e] + [b"data: [DONE]\n\n"]:
+            cut = len(ev) // 2
+            for part in (ev[:cut], ev[cut:]):
+                self.wfile.write(part)
+                self.wfile.flush()
+                time.sleep(0.002)
 
     def song(self, sid):
         out = {"success": True, "audio_data": base64.b64encode(WAV).decode(), "session_id": sid, "duration": 0.25}
@@ -793,6 +837,10 @@ class Handler(BaseHTTPRequestHandler):
                 with wave.open(io.BytesIO(base64.b64decode(cfg["reference_audio_base64"]))) as ref:  # SongGeneration: 10 s at least
                     if ref.getnframes() / ref.getframerate() < 10:
                         return self.send_json(500, {"success": False, "audio_data": None, "error": "Request failed"})
+            if p == "/v1/music/generate" and self.body.get("model") in PLAIN_SONG:
+                # a plain-gateway song's session is listed only while it's completed, and gone once the answer was sent
+                st.plain_songs += 1
+                return self.send_json(200, self.song(f"plain-{st.plain_songs}"))
             sid = self.body.get("session_id") or self.new_session("completed")
             st.sessions[sid] = "completed"
             st.session_meta.setdefault(sid, {"model_id": self.body.get("model"), "route": p.rsplit("/", 1)[-1] if p != "/v1/music/generate" else "generate", "created_at": time.time()})

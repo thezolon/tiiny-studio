@@ -98,7 +98,7 @@ class Audio(Jobs):
 
     # ---------- transcribe ----------
     def test_transcribe(self):
-        base = {"kind": "transcribe", "model": ASR}
+        base = {"kind": "transcribe", "model": ASR, "load": ASR}
         py, rs = self.same_job({**base, "audio": WAV, "language": " en ", "name": "RUST TEST clip"})  # 24 kHz: resampled
         self.assertEqual(py["entry"]["text"], "fake transcript")
         self.files_equal(py, rs, "sources")
@@ -121,7 +121,7 @@ class Audio(Jobs):
             o.setframerate(rate)
             o.writeframes(struct.pack(f"<{n}h", *s))
         long_wav = "data:audio/wav;base64," + base64.b64encode(buf.getvalue()).decode()
-        py, rs = self.same_job({"kind": "transcribe", "model": ASR, "audio": long_wav, "ephemeral": True})
+        py, rs = self.same_job({"kind": "transcribe", "model": ASR, "load": ASR, "audio": long_wav, "ephemeral": True})
         self.assertEqual((py["status"], rs["status"]), ("done", "done"), (py.get("error"), rs.get("error")))
         posts = [c for c in self.last_calls if c[1] == "/v1/audio/transcriptions"]
         self.assertEqual(len(posts), 3)  # cut at 53 s and 110 s (the quiet spots); the last 75 s stay whole; same bytes on both servers

@@ -295,8 +295,9 @@ const swapOn = (section) => { const s = SET.info?.swap; return !s || (s.on && s[
 const helperSection = (task) => (task === "lyrics" || task === "tags" ? "audio" : "image");
 /** An Image-to-Text model that finds a page's regions but doesn't read them (PP-DocLayoutV3): not an OCR model. */
 const layoutOnly = (m) => /layout analysis only|does not transcribe/i.test(m.desc || "") || /DocLayout/i.test(m.id);
-/** Models the device's gateway can't run (0.1.38): they work only where the studio reaches the model's own port. */
-const needsWifi = (m) => /GLM-OCR|supertonic/i.test(m?.id || "");
+/** Models the device's gateway can't run (GLM-OCR, still on 0.1.39): they work only where the studio reaches the model's own port.
+ *  Supertonic-3 used to be here; the gateway runs it since 0.1.39. */
+const needsWifi = (m) => /GLM-OCR/i.test(m?.id || "");
 /** A banner when the picked model needs Wi-Fi/LAN and this connection (the USB cable) only reaches the gateway. */
 function wifiNote(m) {
   if (!m || S.directAccess !== false || !needsWifi(m)) return null;

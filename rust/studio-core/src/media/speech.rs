@@ -17,7 +17,7 @@ fn text<'a>(req: &'a Value, k: &str) -> &'a str {
 
 fn upstream_failed(model: &str) -> String {
     format!(
-        "{} failed on the device (\"The upstream TTS model failed\"). Some voice models and modes don't work through TiinyOS's gateway yet (on 0.1.38: Supertonic-3 over USB, and cloning with MOSS-TTS-Nano). Try another voice model.",
+        "{} failed on the device (\"The upstream TTS model failed\"). Some voice models and modes don't work through TiinyOS's gateway yet (cloning with MOSS-TTS-Nano; Supertonic-3 failed this way on 0.1.38 and works from 0.1.39). Try another voice model.",
         model.rsplit('/').next().unwrap_or(model)
     )
 }

@@ -112,6 +112,15 @@ class FakeTiiny(unittest.TestCase):
             time.sleep(0.05)
         self.assertIn("Qwen/Qwen-Image-2.1", [i["model_id"] for i in run["instances"]["running"]])
 
+    def load(self, *ids):
+        """Load models on the fake and wait until they run: it answers 404 for a model that isn't loaded, like the device."""
+        for mid in ids:
+            request(self.url, "POST", "/api/v1/models/" + mid.replace("/", "%2F") + "/launch", {"model_id": mid}, headers=AUTH)
+            end = time.monotonic() + 10
+            while mid not in self.srv.state.running and time.monotonic() < end:
+                time.sleep(0.05)
+            self.assertIn(mid, self.srv.state.running)
+
     def raw(self, method, path, body=b"", key=True):
         """One request over a bare socket; returns everything the server wrote back before it closed."""
         host, port = self.url.removeprefix("http://").split(":")
@@ -130,7 +139,8 @@ class FakeTiiny(unittest.TestCase):
         request(self.url, "POST", "/__reset")
         self.srv.state.unrouted.clear()
         request(self.url, "POST", "/__flags", {"image_warmup": 1})
-        out = self.raw("POST", "/v1/images/generations", b'{"model": "x", "prompt": "y"}')
+        self.load("Qwen/Qwen-Image-2.1")
+        out = self.raw("POST", "/v1/images/generations", b'{"model": "Qwen/Qwen-Image-2.1", "prompt": "y"}')
         self.assertEqual(out.count(b"HTTP/1."), 1, out[:300])
         self.assertIn(b" 500 ", out.split(b"\r\n", 1)[0])
         out = self.raw("GET", "/api/v1/models/online_models/MiniMax-H3-Turbo/icon", key=False)
@@ -139,6 +149,7 @@ class FakeTiiny(unittest.TestCase):
 
     def test_device_rules_the_docs_state(self):
         request(self.url, "POST", "/__reset")
+        self.load("Qwen/Qwen-Image-2.1", "Qwen/Qwen3-TTS-Base")
         body = {"model": "Qwen/Qwen-Image-2.1", "prompt": "x", "size": "512x512"}
         self.assertEqual(request(self.url, "POST", "/v1/images/generations", {**body, "n": 1}, headers=AUTH).status, 200)
         self.assertEqual(request(self.url, "POST", "/v1/images/generations", {**body, "n": 2}, headers=AUTH).status, 500)  # one image per request

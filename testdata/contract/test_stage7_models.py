@@ -395,6 +395,59 @@ class Models(ContractCase):
             self.assertEqual(self.queue_of(call), {"items": [], "stopped": None})
         self.scenario(steps)
 
+    def test_a_downloaded_model_can_be_loaded_and_used(self):
+        # download a store model, load it, speak with it, unload it: the fake knows every model in the store, and (like the
+        # device) refuses to speak with a model that isn't loaded
+        say = {"kind": "speech", "model": SMALL, "text": "RUST TEST hello there."}
+        for base in (self.h.py_url, self.h.rs_url):
+            request(self.h.fake_url, "POST", "/__reset")
+            self.forget(base)
+            self.flags(download_rate=1000)
+            self.assertEqual(request(base, "POST", "/api/model/download", {"id": SMALL}).status, 200)
+            self.wait_until(lambda base=base: any(m["id"] == SMALL and m["status"] == "downloaded"
+                                                  for m in request(base, "GET", "/api/store").json["models"]), "the download to finish")
+            job, _ = self.run_job(base, say, reset=False)  # installed, but not loaded: the device says so
+            self.assertEqual(job["status"], "error", job)
+            self.load_on_fake(SMALL)
+            code = request(self.h.fake_url, "GET", f"/api/v1/models/{SMALL}/unload_candidate", headers=AUTH).status
+            self.assertEqual(code, 200)
+            job, calls = self.run_job(base, say, reset=False)
+            self.assertEqual(job["status"], "done", job.get("error"))
+            self.assertIn(("POST", "/v1/audio/speech"), [c[:2] for c in calls])
+            request(self.h.fake_url, "POST", f"/api/v1/models/{SMALL}/stop", {}, headers=AUTH)
+            self.assertNotIn(SMALL, self.fake.state.running)
+            self.forget(base)
+
+    def test_the_fake_answers_a_model_that_is_not_loaded_like_the_device(self):
+        # tested on 0.1.39: 404 for a named model that isn't running, 503 for `default` when no such model runs
+        request(self.h.fake_url, "POST", "/__reset")
+        gone = {"model": SMALL, "input": "hi", "prompt": "hi", "messages": [{"role": "user", "content": "hi"}]}
+        for path in ("/v1/chat/completions", "/v1/audio/speech", "/v1/embeddings", "/v1/images/generations"):
+            r = request(self.h.fake_url, "POST", path, gone, headers=AUTH)
+            self.assertEqual(r.status, 404, path)
+            self.assertEqual(r.json["error"], {"message": f'"{SMALL}" is not loaded.', "type": "model_not_found", "code": 404})
+        request(self.h.fake_url, "POST", "/api/v1/models/unload_all", {}, headers=AUTH)
+        r = request(self.h.fake_url, "POST", "/v1/chat/completions", {**gone, "model": "default"}, headers=AUTH)
+        self.assertEqual((r.status, r.json["error"]["type"]), (503, "service_unavailable"))
+        r = request(self.h.fake_url, "POST", "/v1/ocr", {"input": "x"}, headers=AUTH)
+        self.assertEqual((r.status, r.json["error"]["message"]), (503, "No suitable model is currently running."))
+
+    def test_the_fake_pauses_and_deletes_downloads_like_the_device(self):
+        # tested on 0.1.39 (2026-11-22): a second pause is a 200 saying so; DELETE of a download that isn't paused works at once
+        request(self.h.fake_url, "POST", "/__reset")
+        self.flags(download_hold=True)
+        api = f"/api/v1/models/{SMALL}"
+        request(self.h.fake_url, "POST", api + "/download", headers=AUTH)
+        r = request(self.h.fake_url, "POST", api + "/pause_download", headers=AUTH)
+        self.assertEqual((r.status, r.json["status"], r.json["message"]), (200, "download_stop", f"Model {SMALL} download paused successfully."))
+        r = request(self.h.fake_url, "POST", api + "/pause_download", headers=AUTH)
+        self.assertEqual((r.status, r.json["status"], r.json["message"]), (200, "download_stop", f"Model {SMALL} is not currently downloading."))
+        request(self.h.fake_url, "POST", api + "/download", headers=AUTH)  # resume
+        r = request(self.h.fake_url, "DELETE", api, headers=AUTH)
+        self.assertEqual((r.status, r.json["message"]), (200, f"Model {SMALL} deleted finish."))
+        rows = request(self.h.fake_url, "GET", "/api/v1/models/?including_downloading=true", headers=AUTH).json["data"]
+        self.assertNotIn(SMALL, [m["id"] for m in rows])
+
 
 class DefaultCaches(ContractCase):
     """The production cache times (60 s for the device's free space and the store's facts); every other class runs with
