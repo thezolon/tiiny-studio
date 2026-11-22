@@ -1,4 +1,4 @@
-"""Stage 0 contract tests: the shell of the Rust server matches the Python one, and the fake Tiiny behaves."""
+"""Stage 0 contract tests: the shell of the Rust server (pages, files, refusals), and the fake Tiiny behaves."""
 import json
 import socket
 import time
@@ -8,68 +8,74 @@ import harness
 from harness import AUTH, ContractCase, request
 
 
+NOT_FOUND = {"error": {"message": "not found"}}
+# every key GET /api/settings answers with
+SETTINGS_KEYS = {"devices", "active", "name", "url", "host", "auto", "key_set", "key_hint", "configured", "source", "lan_access", "password",
+                 "last_switch", "version", "swap", "mcp", "helper_model", "docker", "update_check", "update_ask", "tag_prompts", "app",
+                 "can_open_folder"}
+
+
 class Scaffold(ContractCase):
     def test_index_is_html(self):
-        for r in self.get("/"):
-            self.assertEqual(r.status, 200)
-            self.assertIn("text/html", r.headers.get("Content-Type", ""))
-            self.assertIn(b"<html", r.body.lower())
+        r = self.get("/")
+        self.assertEqual(r.status, 200)
+        self.assertIn("text/html", r.headers.get("Content-Type", ""))
+        self.assertIn(b"<html", r.body.lower())
 
     def test_static_bytes_equal(self):
-        py, rs = self.get("/static/shared.js")
-        self.assertEqual((py.status, rs.status), (200, 200))
-        self.assertEqual(py.body, rs.body)
+        # the page's own files are served as they are in the repository
+        r = self.get("/static/shared.js")
+        self.assertEqual(r.status, 200)
+        self.assertEqual(r.body, (harness.ROOT / "static" / "shared.js").read_bytes())
 
     def test_docs(self):
-        py, rs = self.get("/docs/CONNECTING.md")
-        self.assertEqual((py.status, rs.status), (200, 200))
-        self.assertEqual(py.body, rs.body)
-        self.assertEqual(rs.headers.get("Content-Type"), "text/plain; charset=utf-8")
-        self.same(self.get("/docs/../server.py"))
+        r = self.get("/docs/CONNECTING.md")
+        self.assertEqual(r.status, 200)
+        self.assertEqual(r.body, (harness.ROOT / "docs" / "CONNECTING.md").read_bytes())
+        self.assertEqual(r.headers.get("Content-Type"), "text/plain; charset=utf-8")
+        self.expect(self.get("/docs/../server.py"), 404, NOT_FOUND)
 
     def test_extract(self):
-        for name, body in (("RUST%20TEST%20notes.md", b"# Title\n\n- one\n- two\n"), ("old.doc", b"\xd0\xcf\x11\xe0junk"),
-                           ("t%C3%A9st.csv", b"a,b\n1,2\n")):
-            self.same(self.post_raw("/api/extract", body, {"X-Filename": name}))
+        notes = {"parts": [{"label": "Text", "text": "# Title\n\n- one\n- two", "md": "# Title\n\n- one\n- two"}]}
+        doc = {"error": {"message": "Word 97-2003 (.doc) is an old binary format the studio can't read. Save it as the newer format (.docx) or as PDF first."}}
+        table = {"parts": [{"label": "Table", "text": "a\tb\n1\t2", "md": "| a | b |\n| --- | --- |\n| 1 | 2 |"}]}
+        for name, body, status, expected in (("RUST%20TEST%20notes.md", b"# Title\n\n- one\n- two\n", 200, notes), ("old.doc", b"\xd0\xcf\x11\xe0junk", 400, doc),
+                                             ("t%C3%A9st.csv", b"a,b\n1,2\n", 200, table)):
+            self.expect(self.post_raw("/api/extract", body, {"X-Filename": name}), status, expected)
 
     def test_big_json_body(self):
-        # base64 pictures make large JSON bodies; both servers must accept them (3 MB here)
+        # base64 pictures make large JSON bodies; the server must accept them (3 MB here)
         big = "data:image/png;base64," + "A" * (3 << 20)
-        self.same(self.post("/api/voices", {"name": "RUST TEST big", "audio": big}), ("id", "created", "file"))
+        r = self.post("/api/voices", {"name": "RUST TEST big", "audio": big})
+        self.expect(r, 200, {"name": "RUST TEST big", "text": ""}, ("id", "created", "file"))
+        self.assertIn("file", r.json)
 
     def test_unknown_path_is_json_404(self):
-        py, rs = self.get("/api/no-such-route")
-        self.assertEqual(py.status, 404)
-        self.same((py, rs))
+        self.expect(self.get("/api/no-such-route"), 404, NOT_FOUND)
 
     def test_settings_keys(self):
-        # The Python server is configured from TIINY_URL (it shows a device); the Rust stub shows none until
-        # Stage 1 brings saved devices. So compare only what Stage 0 supports: the key set and "version".
-        py, rs = self.get("/api/settings")
-        self.assertEqual((py.status, rs.status), (200, 200))
-        self.assertEqual(set(py.json), set(rs.json) - {"mcp"})  # the MCP server is Rust only
-        self.assertEqual(py.json["version"], rs.json["version"])
+        r = self.get("/api/settings")
+        self.assertEqual(r.status, 200)
+        self.assertEqual(set(r.json), SETTINGS_KEYS)
+        self.assertEqual(r.json["version"], (harness.ROOT / "VERSION").read_text("utf-8").strip())
 
 
 class OtherWebsites(ContractCase):
-    """Both servers refuse other websites: cross-site changes (CSRF) and foreign Host names (DNS rebinding)."""
+    """The server refuses other websites: cross-site changes (CSRF) and foreign Host names (DNS rebinding)."""
 
     def test_cross_site_post_refused(self):
         for origin in ("https://evil.example", "null"):
-            pair = self.post_raw("/api/privacy/wipe", b"{}", {"Origin": origin, "Content-Type": "text/plain"})
-            self.assertEqual([r.status for r in pair], [403, 403], origin)
-            self.same(pair)
+            r = self.post_raw("/api/privacy/wipe", b"{}", {"Origin": origin, "Content-Type": "text/plain"})
+            self.expect(r, 403, {"error": {"message": "Requests from other websites aren't allowed."}})
 
     def test_foreign_host_refused(self):
-        pair = self.get("/api/history", headers={"Host": "evil.example"})
-        self.assertEqual([r.status for r in pair], [403, 403])
-        self.same(pair)
+        r = self.get("/api/history", headers={"Host": "evil.example"})
+        self.expect(r, 403, {"error": {"message": "This studio only answers at localhost."}})
 
     def test_own_page_allowed(self):
-        for base in (self.h.py_url, self.h.rs_url):
-            own = base.split("//", 1)[1]
-            r = request(base, "POST", "/api/voices", {"name": "RUST TEST own page", "audio": ""}, headers={"Origin": "http://" + own})
-            self.assertNotEqual(r.status, 403, base)
+        own = self.h.rs_url.split("//", 1)[1]
+        r = request(self.h.rs_url, "POST", "/api/voices", {"name": "RUST TEST own page", "audio": ""}, headers={"Origin": "http://" + own})
+        self.assertNotEqual(r.status, 403)
 
 
 class FakeTiiny(unittest.TestCase):
