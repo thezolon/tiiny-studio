@@ -54,6 +54,7 @@ def main():
     found = {}
     try:
         post = srv.post
+        post("/api/settings/updates", {"update_check": True})  # off until the user answers the first-run question
         post("/api/model/launch", {"id": "Qwen/Qwen-Image-2.1"})
         time.sleep(1)
         # the model store: two updates waiting and a download that stays under way, so the drawer shows all of it
@@ -66,7 +67,7 @@ def main():
         with sync_playwright() as p:
             browser = p.chromium.launch()
             for scheme in ("dark", "light"):  # the theme tokens differ, so every state is scanned in both
-                page = browser.new_page(viewport={"width": 1280, "height": 860}, color_scheme=scheme)
+                page = browser.new_page(viewport={"width": 1280, "height": 860}, color_scheme=scheme, bypass_csp=True)  # axe is injected as a script tag
                 ui_server.watch(page, js_errors, f"{scheme}: ")
 
                 def scan(state, page=page, scheme=scheme):

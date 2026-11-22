@@ -121,7 +121,17 @@ pub fn write_atomic(path: &Path, bytes: &[u8], private: bool) -> Result<(), Stri
         f.write_all(bytes)?;
         f.sync_all()?;
         drop(f);
-        std::fs::rename(&tmp, path)
+        // Windows refuses a rename onto a file that another save (or a reader) has open for a moment: retry briefly
+        let mut tries = 0;
+        loop {
+            match std::fs::rename(&tmp, path) {
+                Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied && tries < 20 => {
+                    tries += 1;
+                    std::thread::sleep(std::time::Duration::from_millis(5 * tries));
+                }
+                other => break other,
+            }
+        }
     })();
     if let Err(e) = written {
         let _ = std::fs::remove_file(&tmp);
