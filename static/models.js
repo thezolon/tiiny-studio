@@ -141,11 +141,12 @@ function eta(id, p) {
 }
 function progressBar(d, label) {
   const p = Math.max(0, Math.min(100, d.progress || 0)), size = d.size || storeModel(d.id)?.size;
-  const done = typeof size === "number" ? `${(size * p / 100 / 1e9).toFixed(size < 1e9 ? 2 : 1)} of ${GB(size)}` : `${Math.floor(p)}%`;
+  // the GB part only when the size is known (a model that isn't in the store has none): no "41% · 41%"
+  const done = typeof size === "number" ? `${(size * p / 100 / 1e9).toFixed(size < 1e9 ? 2 : 1)} of ${GB(size)}` : "";
   return el("div", { class: "load-bar mm-progress" },
-    el("small", {}, `${label} · ${Math.floor(p)}% · ${done}${d.status === "downloading" ? eta(d.id, p) : ""}`),
+    el("small", {}, `${label} · ${Math.floor(p)}%${done ? ` · ${done}` : ""}${d.status === "downloading" ? eta(d.id, p) : ""}`),
     el("div", { class: "bar", role: "progressbar", "aria-label": `Download of ${d.name || mmName(d.id)}`, "aria-valuemin": 0, "aria-valuemax": 100,
-      "aria-valuenow": Math.floor(p), "aria-valuetext": `${Math.floor(p)}%, ${done}` }, el("i", { style: `width:${p}%` })));
+      "aria-valuenow": Math.floor(p), "aria-valuetext": done ? `${Math.floor(p)}%, ${done}` : `${Math.floor(p)}%` }, el("i", { style: `width:${p}%` })));
 }
 function downloadControls(d) {
   const busy = !!S.mmBusy[d.id];
@@ -193,8 +194,8 @@ function updatesArea() {
         el("button", { class: "btn-sm accent", onclick: () => getModel(id) }, `${queueBusy() ? "Queue the download" : "Download again"} · ${GB(storeModel(id)?.size)}`))));
   }
   if (!waiting.length) {
-    out.push(el("div", { class: "hint-line mm-uptodate" }, "No updates found ",
-      el("span", {}, "(the Tiiny needs internet to check).")));
+    out.push(el("div", { class: "hint-line mm-uptodate" }, "No updates found. ",
+      el("span", {}, "Updates only show while the Tiiny is online.")));
     return out;
   }
   const total = waiting.reduce((a, m) => a + (m.size || 0), 0);

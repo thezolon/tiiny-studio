@@ -48,11 +48,11 @@ fn fail(code: u16, message: &str) -> Answer {
     (code, json!({"error": {"message": message}}))
 }
 
-/// A device row's state, normalised: downloading, paused, error, or downloaded (installed, loaded or not).
 /// A device row's state, normalised: downloaded (installed, loaded or not), downloading, paused, error, or "absent"
 /// (not on the Tiiny; device_rows drops those). A paused download reads "download_stop" on 0.1.39 (tested
-/// 2026-11-21). A status this studio doesn't know counts as a download under way: never installed, loadable or
-/// deletable.
+/// 2026-11-21); a model being loaded into memory reads "loading" with its load progress (tested 2026-11-22), so it is
+/// installed ("unloading" is a guess at the way back). A status this studio doesn't know counts as a download under
+/// way: never installed, loadable or deletable.
 pub(crate) fn live_status(row: &Value) -> &'static str {
     let s = match row.get("status") {
         None | Some(Value::Null) => "",
@@ -60,7 +60,7 @@ pub(crate) fn live_status(row: &Value) -> &'static str {
         Some(_) => "?",
     };
     match s {
-        "downloaded" | "running" | "stopped" | "" => "downloaded",
+        "downloaded" | "running" | "stopped" | "loading" | "unloading" | "" => "downloaded",
         "not_downloaded" => "absent",
         "download_stop" => "paused",
         "error" => "error",
@@ -1055,6 +1055,8 @@ mod tests {
             ("downloaded", "downloaded"),
             ("running", "downloaded"),
             ("stopped", "downloaded"),
+            ("loading", "downloaded"),
+            ("unloading", "downloaded"),
         ] {
             assert_eq!(live_status(&json!({"status": s})), want);
         }

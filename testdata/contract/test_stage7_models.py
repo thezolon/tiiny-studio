@@ -232,6 +232,24 @@ class Models(ContractCase):
         _, log = self.scenario(steps)
         self.assertFalse(any(c[0] == "DELETE" for c in log))
 
+    def test_a_model_being_loaded_is_installed_not_a_download(self):
+        # 0.1.39 (tested 2026-11-22): while a model loads, its row reads status "loading" with the load's progress; the
+        # Models panel showed that as a download
+        asr, delay = "Fake/Whisper-ASR", self.fake.state.launch_delay
+
+        def steps(call):
+            self.fake.state.launch_delay = 30  # stays loading for the whole scenario
+            request(self.h.fake_url, "POST", "/api/v1/models/" + asr.replace("/", "%2F") + "/launch", {"model_id": asr}, headers=AUTH)
+            j = call("GET", "/api/store")[1]
+            m = next(m for m in j["models"] if m["id"] == asr)
+            self.assertEqual((m["installed"], m["status"]), (True, "downloaded"))
+            self.assertIsNone(j["downloading"])
+            self.assertEqual(call("POST", "/api/model/download", {"id": SMALL})[0], 200)  # nothing else counts as downloading
+        try:
+            self.scenario(steps)
+        finally:
+            self.fake.state.launch_delay = delay
+
     def test_store_unreadable_installed_still_managed(self):
         asr = "Fake/Whisper-ASR"
 

@@ -547,10 +547,11 @@ UNDER_WAY = ("downloading", "paused", "error")
 
 def live_status(row):
     """A device row's state, normalised: downloaded (installed, loaded or not), downloading, paused, error, or None
-    (not on the Tiiny). A paused download reads "download_stop" on 0.1.39 (tested 2026-11-21). A status this studio
+    (not on the Tiiny). A paused download reads "download_stop" on 0.1.39 (tested 2026-11-21); a model being loaded into
+    memory reads "loading" (tested 2026-11-22), so it is installed ("unloading" is a guess). A status this studio
     doesn't know counts as a download under way: never installed, loadable or deletable."""
     s = str((row or {}).get("status") or "")
-    if s in ("downloaded", "running", "stopped", ""):
+    if s in ("downloaded", "running", "stopped", "loading", "unloading", ""):
         return "downloaded"
     if s == "not_downloaded":
         return None

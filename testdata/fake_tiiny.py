@@ -21,7 +21,8 @@ from there, interrupt only stops chats. DELETE of a downloading or paused downlo
 The disk counts what a download has fetched so far.
 Like the device (0.1.39), a model has to be loaded to answer: chat, images, speech, transcriptions, OCR and embeddings answer 404
 "<id> is not loaded." for a named model that isn't running, and 503 "No suitable model is currently running." for `default`
-(or no name) when no model of that kind runs. Loading works for every model in the store once it is downloaded.
+(or no name) when no model of that kind runs. Loading works for every model in the store once it is downloaded; while one loads,
+the including_downloading list shows it as "loading" (tested 2026-11-22).
 More: "odd_status" {id: status} lists that model in both model lists with a status the studio doesn't know (not
 installed); "update_size" {id: bytes} makes the store's download bigger than the installed build; "delete_lost" makes a
 DELETE happen but answer 504, like an answer lost on the way back.
@@ -482,8 +483,11 @@ class Handler(BaseHTTPRequestHandler):
                 rows = [{**m, "status": "running" if m["id"] in st.running else "stopped", "need_update": st.need_update(m["id"])}
                         for m in ALL_MODELS.values() if m["id"] in st.installed]
                 if self.query.get("including_downloading", [""])[0] == "true":
-                    # as download_models.py reads it: installed rows say downloaded, downloads their status and progress
-                    rows = [{**r, "status": "downloaded", "progress": 100.0} for r in rows]
+                    # as on 0.1.39 (tested 2026-11-22): a loaded model says running, one being loaded says loading (with
+                    # its load progress), the others downloaded; downloads add their status and progress
+                    rows = [{**r, "status": "running", "progress": 100.0} if r["id"] in st.running
+                            else {**r, "status": "loading", "progress": 0.0} if r["id"] in st.pending
+                            else {**r, "status": "downloaded", "progress": 100.0} for r in rows]
                     rows += [{**ALL_MODELS[mid], "status": d["status"], "progress": st.progress(mid), "need_update": False}
                              for mid, d in st.downloads.items()]
                 # a state the studio doesn't know, in both lists (the =false one too: never trust it to hide downloads)
