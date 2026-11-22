@@ -147,6 +147,7 @@ reference the Rust version is tested against. Data goes to `./data` either way.
 | Devices (address + API key) | **Settings** (gear icon), saved to `data/config.json` | Save each way you reach your Tiiny (home Wi-Fi, phone hotspot, USB). With auto-switch on, the studio uses the first device in the list that answers (checked every 20 s) and comes back to a preferred one when it returns; a device you pick with **Use** stays until it stops answering. Each key is only sent to its own address and never to the browser. `TIINY_URL` / `TIINY_KEY` seed the first device. |
 | `STUDIO_BIND` | `.env` (copy `.env.example`) | Who can open the studio. Default `127.0.0.1`, meaning only this computer. `0.0.0.0` opens it to your network. |
 | `STUDIO_PASSWORD` | `.env` | Optional. Makes the browser ask for a password (any username). Set one if you open the studio to your network. |
+| `STUDIO_HOSTS` | `.env` | Optional, with network access on: extra names the studio answers to, comma separated, e.g. `studio.example.org` for a reverse proxy. Without it the studio answers at IP addresses, `localhost`, one-word names (`http://nas:7860`) and `.local`, `.lan`, `.home.arpa` names, and refuses other domain names (that is what stops a website from re-pointing its own domain at the studio). |
 | `PORT`, `DATA_DIR`, `HOST` | env | Default `7860`, `./data` (Docker: `/data`, mounted from `./data`) and, for native runs, `127.0.0.1`. |
 
 **Network access is off by default.** Out of the box only the computer running the studio can open
@@ -157,7 +158,15 @@ port 7860 through the firewall.
 
 **Other websites can't use it.** The studio refuses changes sent from other web pages, and while network access is
 off it only answers at `localhost`/`127.0.0.1`, so a page you visit can't reach it through a trick domain. If you put
-the studio behind a reverse proxy or open it by a hostname, turn network access on (and set a password).
+the studio behind a reverse proxy or open it by a hostname, turn network access on (and set a password) and list the name in `STUDIO_HOSTS`.
+
+**On a network: password, plain HTTP, reverse proxy.** The password is HTTP basic auth, and the studio speaks plain
+HTTP, so on Wi-Fi or a shared LAN anyone who can sniff the traffic can read it (and everything you make). That is fine
+on a home network you trust; for anything beyond that, put a reverse proxy that does TLS in front (Caddy, nginx,
+Traefik), list its name in `STUDIO_HOSTS`, and keep the studio itself bound to `127.0.0.1` or the proxy's network. After
+ten wrong passwords in a row (or wrong MCP tokens) the studio slows further attempts down (answers 429 for a growing
+time, up to a minute), so pick a password that isn't guessable. On Linux and macOS the data folder (outside Docker) is made readable by its
+owner only.
 
 ## Agents (MCP)
 

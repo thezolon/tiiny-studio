@@ -153,7 +153,9 @@ function mcpSettings() {
     el("b", {}, "Agents (MCP)"),
     el("p", {}, "Off by default. When on, agents such as Claude, Cline or Hermes can make images, voice, music, 3D and video through the studio, using its queue and models. An agent sees only what it makes itself, not your gallery or chats."),
     el("label", { class: "auto" }, el("input", { type: "checkbox", checked: !!m.on, onchange: (e) => set({ on: e.target.checked }) }), "Let agents use the studio (MCP)"),
-    m.on ? [row("mcpUrl", "Endpoint", url), row("mcpToken", "Token", m.token || ""),
+    // the token isn't in every settings answer; "Show token" asks for it (an empty POST answers with it)
+    m.on ? [row("mcpUrl", "Endpoint", url),
+      m.token ? row("mcpToken", "Token", m.token) : el("button", { class: "btn-sm", type: "button", onclick: () => set({}) }, "Show token"),
       el("button", { class: "btn-sm", type: "button", onclick: () => { if (confirm("Make a new token? Agents using the old one are locked out until you give them the new one.")) set({ new_token: true }); } }, "New token")] : null);
 }
 

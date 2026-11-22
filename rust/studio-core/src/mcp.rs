@@ -96,6 +96,9 @@ pub async fn endpoint(
     if !cfg.on {
         return error(StatusCode::NOT_FOUND, "not found");
     }
+    if let Some(wait) = crate::routes::MCP_GUARD.wait() {
+        return crate::routes::too_many_attempts(wait);
+    }
     let given = headers
         .get(header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok())
@@ -103,6 +106,9 @@ pub async fn endpoint(
         .map(str::trim)
         .unwrap_or("");
     if cfg.token.is_empty() || !constant_time_eq(given.as_bytes(), cfg.token.as_bytes()) {
+        if headers.contains_key(header::AUTHORIZATION) {
+            crate::routes::MCP_GUARD.failed("MCP token");
+        }
         return (
             StatusCode::UNAUTHORIZED,
             [(
@@ -113,6 +119,7 @@ pub async fn endpoint(
         )
             .into_response();
     }
+    crate::routes::MCP_GUARD.succeeded();
     if method != Method::POST {
         return (StatusCode::METHOD_NOT_ALLOWED, [(header::ALLOW, "POST")]).into_response();
     }

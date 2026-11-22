@@ -89,7 +89,8 @@ struct State {
     auto: bool,
     source: &'static str,
     status: HashMap<String, Probe>,
-    pinned: Option<String>, // a device picked by hand stays in use while it answers
+    misses: HashMap<String, u32>, // probes in a row a device didn't answer (see LEAVE_AFTER_MISSES)
+    pinned: Option<String>,       // a device picked by hand stays in use while it answers
     last_switch: Option<Value>,
     save_error: Option<String>, // why the last write of config.json failed
 }
@@ -119,11 +120,61 @@ impl Target {
 
 pub fn normalize_url(url: &str) -> String {
     let url = url.trim().trim_end_matches('/');
-    if !url.is_empty() && !(url.starts_with("http://") || url.starts_with("https://")) {
+    let lower = url.to_ascii_lowercase();
+    if !url.is_empty() && !(lower.starts_with("http://") || lower.starts_with("https://")) {
         format!("http://{url}")
     } else {
         url.to_string()
     }
+}
+
+/// A device address as the HTTP client will read it, or why it is refused. The check uses the `url` crate, the
+/// parser reqwest sends requests with, so the key can't go to a different host than the one this code sees
+/// (a hand-written parser once read `http://a:80\@b` as host b while the request went to a). Refused: a
+/// backslash, a user name or password in the address, a query or fragment, a scheme other than http(s).
+/// Answers the address in its normal form (no trailing slash).
+pub fn device_url(url: &str) -> Result<String, String> {
+    let bad = |why: &str| Err(format!("That isn't a usable device address: {why}."));
+    let url = normalize_url(url);
+    if url.contains('\\') {
+        return bad("it has a backslash");
+    }
+    if url.matches("://").count() != 1 || url.ends_with(':') {
+        return bad("it must start with http:// or https://");
+    }
+    let Ok(u) = url::Url::parse(&url) else {
+        return bad("it can't be read as a web address");
+    };
+    if !matches!(u.scheme(), "http" | "https") || u.host_str().is_none() {
+        return bad("it must start with http:// or https:// and name a host");
+    }
+    if !u.username().is_empty() || u.password().is_some() {
+        return bad("it must not contain a user name or password");
+    }
+    if u.query().is_some() || u.fragment().is_some() {
+        return bad("it must not contain a ? or # part");
+    }
+    Ok(u.as_str().trim_end_matches('/').to_string())
+}
+
+/// scheme://host:port of an address as the HTTP client reads it; None when it isn't a usable address.
+pub fn origin_of(url: &str) -> Option<String> {
+    device_url(url)
+        .ok()
+        .and_then(|u| url::Url::parse(&u).ok())
+        .map(|u| u.origin().ascii_serialization())
+}
+
+/// Two addresses are the same device origin (scheme, host and port); a key is only ever sent to its own origin.
+pub fn same_origin(a: &str, b: &str) -> bool {
+    matches!((origin_of(a), origin_of(b)), (Some(x), Some(y)) if x == y)
+}
+
+/// The request address for `path` on a device, built from the parsed address instead of by joining strings.
+pub fn device_endpoint(url: &str, path: &str) -> Result<url::Url, String> {
+    let base = device_url(url)?;
+    url::Url::parse(&format!("{base}{path}"))
+        .map_err(|_| "That isn't a usable device address.".to_string())
 }
 
 /// The host part of a URL ("" when there is none), lower-cased like urlparse().hostname.
@@ -141,6 +192,10 @@ pub fn hostname(url: &str) -> String {
     };
     host.to_ascii_lowercase()
 }
+
+/// A device is only given up (auto-switch) after this many missed probes in a row, 20 s apart: one slow answer
+/// from a busy Tiiny must not switch the studio away and the download queue with it.
+const LEAVE_AFTER_MISSES: u32 = 3;
 
 /// Running in the Docker image (its Dockerfile sets STUDIO_DOCKER=1).
 pub fn in_docker() -> bool {
@@ -306,6 +361,7 @@ impl Settings {
         self.save(&mut st);
     }
 
+    /// Everything the settings page shows; the routes take the MCP token out except where it is asked for.
     pub fn public(&self) -> Value {
         let update_check = self.update_check();
         let st = self.lock();
@@ -365,18 +421,18 @@ impl Settings {
         url: &str,
         key: &str,
     ) -> Result<String, String> {
-        let url = normalize_url(url);
-        if url.is_empty() {
+        if normalize_url(url).is_empty() {
             return Err("Enter the device address, e.g. http://192.168.1.50".into());
         }
+        let url = device_url(url)?;
         let name: String = name.trim().chars().take(40).collect();
         let mut st = self.lock();
         let id = match did.and_then(|did| st.devices.iter_mut().find(|d| d.id == did)) {
             Some(d) => {
                 if !key.is_empty() {
                     d.key = key.into();
-                } else if hostname(&url) != hostname(&d.url) {
-                    d.key.clear(); // a key is never sent to a different host: a new address needs it re-entered
+                } else if !same_origin(&url, &d.url) {
+                    d.key.clear(); // a key is never sent to a different origin: a new address needs it re-entered
                 }
                 d.url = url;
                 if !name.is_empty() {
@@ -552,11 +608,21 @@ impl Settings {
         let switch = {
             let mut st = self.lock();
             st.status.extend(results.clone());
+            for (id, p) in &results {
+                let n = st.misses.entry(id.clone()).or_default();
+                *n = if p.ok { 0 } else { n.saturating_add(1) };
+            }
             if !(st.auto && devices.len() > 1) {
                 return;
             }
             let ok = |id: &str| results.get(id).is_some_and(|p| p.ok);
             let cur = st.current().cloned();
+            if let Some(c) = &cur {
+                let missed = st.misses.get(&c.id).copied().unwrap_or(0);
+                if !ok(&c.id) && missed < LEAVE_AFTER_MISSES {
+                    return; // one or two missed probes: it may just be busy, stay
+                }
+            }
             if let (Some(p), Some(c)) = (&st.pinned, &cur) {
                 if p == &c.id && ok(&c.id) {
                     return; // the hand-picked device still answers: leave it
@@ -615,6 +681,104 @@ mod tests {
         );
         assert_eq!(hint("abcdefgh1234"), "…1234");
         assert_eq!(hint("short"), "");
+    }
+
+    #[test]
+    fn device_addresses_are_read_like_the_http_client_does() {
+        assert_eq!(device_url("192.168.1.50/").unwrap(), "http://192.168.1.50");
+        assert_eq!(
+            device_url("HTTP://Tiiny.Local:8080").unwrap(),
+            "http://tiiny.local:8080"
+        );
+        for bad in [
+            "http://attacker:8080\\@192.168.1.50", // the parser reads this as host attacker
+            "http://192.168.1.50@attacker:8080",
+            "http://user:pw@192.168.1.50",
+            "http://192.168.1.50?x=1",
+            "http://192.168.1.50#x",
+            "ftp://192.168.1.50",
+            "http://",
+        ] {
+            assert!(device_url(bad).is_err(), "{bad}");
+        }
+        // scheme, host and port all count: another port on the same host is another origin
+        assert!(same_origin("192.168.1.50", "http://192.168.1.50:80/"));
+        assert!(!same_origin(
+            "http://192.168.1.50",
+            "http://192.168.1.50:8080"
+        ));
+        assert!(!same_origin("http://192.168.1.50", "https://192.168.1.50"));
+        assert!(!same_origin(
+            "http://127.0.0.1:9\\@192.168.1.50",
+            "http://192.168.1.50"
+        ));
+        let u = device_endpoint("http://192.168.1.50:8080/", "/v1/models?a=1").unwrap();
+        assert_eq!(u.as_str(), "http://192.168.1.50:8080/v1/models?a=1");
+    }
+
+    #[test]
+    fn a_key_stays_only_with_its_own_origin() {
+        let dir = std::env::temp_dir().join(format!("studio-settings-{}", new_id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let s = Settings::load(&dir, false, false, false);
+        let a = s.upsert(None, "", "192.168.1.50", "key-aaaa-1111").unwrap();
+        // other port, other scheme, backslash trick: refused or key dropped, never kept
+        s.upsert(Some(&a), "", "http://192.168.1.50:8080", "")
+            .unwrap();
+        assert_eq!(s.devices()[0].key, "");
+        s.upsert(Some(&a), "", "http://192.168.1.50", "key-aaaa-1111")
+            .unwrap();
+        assert!(s
+            .upsert(Some(&a), "", "http://127.0.0.1:9\\@192.168.1.50", "")
+            .is_err());
+        assert_eq!(s.devices()[0].url, "http://192.168.1.50");
+        assert_eq!(s.devices()[0].key, "key-aaaa-1111");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// Answers every request on 127.0.0.1 with an empty 200 (what a probe needs); returns the address.
+    async fn live_server() -> String {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = l.local_addr().unwrap();
+        tokio::spawn(async move {
+            loop {
+                let Ok((mut c, _)) = l.accept().await else {
+                    return;
+                };
+                tokio::spawn(async move {
+                    let mut buf = [0u8; 1024];
+                    let _ = c.read(&mut buf).await;
+                    let _ = c
+                        .write_all(
+                            b"HTTP/1.1 200 OK\r\ncontent-length: 0\r\nconnection: close\r\n\r\n",
+                        )
+                        .await;
+                });
+            }
+        });
+        format!("http://{addr}")
+    }
+
+    #[tokio::test]
+    async fn auto_switch_waits_for_three_missed_probes() {
+        let dir = std::env::temp_dir().join(format!("studio-settings-{}", new_id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let s = Settings::load(&dir, false, false, false);
+        let live = live_server().await;
+        // the first (preferred, active) device is dead: nothing listens on port 1
+        let a = s
+            .upsert(None, "dead", "http://127.0.0.1:1", "key-aaaa-1111")
+            .unwrap();
+        let b = s.upsert(None, "live", &live, "key-bbbb-2222").unwrap();
+        s.set_auto(true);
+        let client = reqwest::Client::new();
+        s.check(&client).await;
+        s.check(&client).await;
+        assert_eq!(s.active().as_deref(), Some(a.as_str()), "two misses: stay");
+        s.check(&client).await;
+        assert_eq!(s.active().as_deref(), Some(b.as_str()), "third miss: leave");
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

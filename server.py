@@ -435,8 +435,8 @@ def device(method, path, body=None, timeout=30, url=None, key=None):
             raw = r.read()
             try:
                 return r.status, json.loads(raw or b"{}")
-            except ValueError:  # a 200 that isn't JSON (a login page, a proxy): an error, not a crash
-                return 502, {"error": {"message": raw.decode("utf-8", "replace")[:500]}}
+            except ValueError:  # a 200 that isn't JSON (a login page, a router): the wrong address, not a locked Tiiny
+                return 502, {"error": {"message": "Device unreachable: this address answered, but not like a Tiiny (" + raw.decode("utf-8", "replace")[:500] + ")"}}
     except urllib.error.HTTPError as e:
         raw = e.read()
         try:
@@ -490,7 +490,11 @@ def catalog():
         return 502, {"error": {"message": LOCKED, "type": "device_locked"}}  # it answers, but its services aren't up
     if code != 200:
         return code, inst
-    _, run = device("GET", "/api/v1/models/running", timeout=15)
+    run_code, run = device("GET", "/api/v1/models/running", timeout=15)
+    if run_code != 200:  # without the running list every model would read "stopped"
+        if run_code == 502 and not str((run.get("error") or {}).get("message", "")).startswith("Device unreachable"):
+            return 502, {"error": {"message": LOCKED, "type": "device_locked"}}
+        return run_code, run
     running = {r["model_id"]: r for r in (run.get("instances") or {}).get("running", [])}
     pending = {r.get("model_id") for r in (run.get("instances") or {}).get("pending", [])} | set(run.get("pending") or [])
     keep = ("id", "display_name", "params", "type", "input", "output", "supported", "desc",
@@ -1405,6 +1409,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_json(200, {"ok": False, "message": ("The device rejected the API key. Copy the API key (not the device ID) from TiinyOS: avatar → Settings → API Key." if key else "The device needs an API key.")})
         if STUDIO_DOCKER and (urlparse(url).hostname or "").startswith("172.17."):
             return self.send_json(200, {"ok": False, "message": DOCKER_USB})
+        if code == 502 and not str((res.get("error") or {}).get("message", "")).startswith("Device unreachable"):
+            return self.send_json(200, {"ok": False, "message": LOCKED})  # the device's own 502: locked after a restart
         msg = (res.get("error") or {}).get("message") if isinstance(res.get("error"), dict) else res.get("error")
         return self.send_json(200, {"ok": False, "message": msg or f"Unexpected response (HTTP {code})."})
 
