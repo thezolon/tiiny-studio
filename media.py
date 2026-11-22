@@ -110,6 +110,10 @@ class Media:
         self._disk = (time.time(), self.settings.url, val)
         return val
 
+    def forget_disk(self):
+        """The next disk_space() reads the device again (after something was downloaded, deleted or cancelled)."""
+        self._disk = (0, None, None)
+
     def check_disk(self, kind):
         """Fail early when the Tiiny has almost no room left for what this job would write there."""
         if kind in DISK_KINDS:

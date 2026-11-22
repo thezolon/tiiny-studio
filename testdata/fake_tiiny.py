@@ -17,7 +17,10 @@ with time: "download_rate" N (% per second, 50 by default), "download_hold" (sta
 status "error" at 30%, like a Tiiny without internet), "offline" (downloads fail at once and every need_update reads false,
 as on the real device), "updates" [ids] (these read need_update until downloaded again). As on 0.1.39 (probed 2026-11-21):
 pause_download leaves status "download_stop", download again resumes from there, interrupt only stops chats. DELETE of a
-paused download drops it, row and all (also tested on 0.1.39).
+paused download drops it, row and all (also tested on 0.1.39). The disk counts what a download has fetched so far.
+More: "odd_status" {id: status} lists that model in both model lists with a status the studio doesn't know (not
+installed); "update_size" {id: bytes} makes the store's download bigger than the installed build; "delete_lost" makes a
+DELETE happen but answer 504, like an answer lost on the way back.
 GET /__release (no auth) stands in for GitHub's releases/latest: it answers the "release" flag (a release JSON; 404 when unset), or
 "release_fail" N (that status instead), and logs each call: GET /__release_hits (User-Agent and Accept of every call).
 POST /__seed {"videos": [{"id", "status", "age", "seconds"}], "sessions": [{"session_id", "model_id", "route", "status", "age"}]} plants results the studio never
@@ -312,6 +315,7 @@ class Handler(BaseHTTPRequestHandler):
         with self.st.lock:  # what was downloaded takes space, what was deleted frees it
             moved = sum(ALL_MODELS[m]["size"] for m in self.st.installed - {c["id"] for c in CATALOG})
             moved -= sum(c["size"] for c in CATALOG if c["id"] not in self.st.installed)
+            moved += sum(ALL_MODELS[m]["size"] * (self.st.progress(m) or 0) / 100 for m in self.st.downloads)
         return {"total_bytes": total, "used_bytes": total - int(flags.get("disk_free_gb", 400) * 1e9) + moved}
 
     @property
@@ -442,12 +446,16 @@ class Handler(BaseHTTPRequestHandler):
                     rows = [{**r, "status": "downloaded", "progress": 100.0} for r in rows]
                     rows += [{**ALL_MODELS[mid], "status": d["status"], "progress": st.progress(mid), "need_update": False}
                              for mid, d in st.downloads.items()]
+                # a state the studio doesn't know, in both lists (the =false one too: never trust it to hide downloads)
+                rows += [{**ALL_MODELS[mid], "status": status, "progress": 50.0, "need_update": False}
+                         for mid, status in (st.flags.get("odd_status") or {}).items()]
             self.send_json(200, {"data": rows})
         elif method == "GET" and p == "/api/v1/models/online_models":
             # the device answers a bare list here, keyed by model_id, with each model's live download state
             with st.lock:
                 st.tick()
-                rows = [{**store_row(m, i), "status": st.store_status(m["id"]),
+                sizes = st.flags.get("update_size") or {}
+                rows = [{**store_row({**m, "size": sizes.get(m["id"], m["size"])}, i), "status": st.store_status(m["id"]),
                          "progress": st.progress(m["id"]) or (100.0 if m["id"] in st.installed else 0.0),
                          "need_update": st.need_update(m["id"])} for i, m in enumerate(ALL_MODELS.values(), 1)]
             self.send_json(200, rows)
@@ -470,10 +478,13 @@ class Handler(BaseHTTPRequestHandler):
                 if not busy and not missing:
                     st.installed.discard(mid)
                     st.downloads.pop(mid, None)
+                    st.fresh.discard(mid)
             if busy:
                 return self.err(409, f"Model {mid} is running; stop it first") or True
             if missing:
                 return self.err(404, f"Model {mid} not found") or True
+            if st.flags.get("delete_lost"):  # it happened, but the answer never made it back
+                return self.err(504, "Gateway Time-out") or True
             self.send_json(200, {"message": f"Model {mid} deleted finish."})
         elif method == "GET" and re.fullmatch(r"/api/v1/models/online_models/.+/icon", p):
             if p.split("/online_models/", 1)[1].rsplit("/", 1)[0] == VIDEO:  # 0.1.38 has no icon for MiniMax-H3-Turbo

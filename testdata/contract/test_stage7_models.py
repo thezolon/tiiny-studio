@@ -2,6 +2,7 @@
 Both servers share one fake Tiiny, so each scenario runs once per server from a fresh fake (reset), and the answers
 and the requests each server made to the device are compared. Nothing here touches a real Tiiny."""
 import json
+import threading
 import time
 import unittest
 
@@ -187,6 +188,85 @@ class Models(ContractCase):
                 code, j = call("GET", path)
                 self.assertEqual((code, j["error"]["type"]), (502, "device_locked"))
         self.scenario(steps)
+
+    # ---------- from the review (2026-11-21) ----------
+    def test_resume_needs_only_the_rest(self):
+        # 18.3 GB with 21 GB free starts; paused at 10% it has fetched 1.83 GB, so 19.17 GB is free: resuming needs
+        # the other 16.47 GB + 2, not the whole 18.3 + 2
+        def steps(call):
+            self.flags(disk_free_gb=21, download_hold=True)
+            self.assertEqual(call("POST", "/api/model/download", {"id": BIG})[0], 200)
+            self.assertEqual(call("POST", "/api/model/pause", {"id": BIG})[0], 200)
+            code, j = call("POST", "/api/model/download", {"id": BIG})
+            self.assertEqual(code, 200, j)
+            self.assertEqual(call("POST", "/api/model/cancel", {"id": BIG})[0], 200)
+        self.scenario(steps)
+
+    def test_two_updates_at_once_delete_once(self):
+        asr = "Fake/Whisper-ASR"
+
+        def steps(call):
+            self.flags(updates=[asr], download_hold=True)
+            codes = []
+            threads = [threading.Thread(target=lambda: codes.append(call("POST", "/api/model/update", {"id": asr, "confirm": asr}, record=False)[0]))
+                       for _ in range(2)]
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join()
+            self.assertEqual(sorted(codes), [200, 409])
+        _, log = self.scenario(steps)
+        self.assertEqual(sum(1 for c in log if c[0] == "DELETE"), 1)
+
+    def test_unknown_status_is_never_installed(self):
+        odd = "Fake/Store-Image"
+
+        def steps(call):
+            self.flags(odd_status={odd: "verifying"})
+            self.assertNotIn(odd, [m["id"] for m in call("GET", "/api/catalog")[1]["models"]])  # no Load button
+            m = next(m for m in call("GET", "/api/store")[1]["models"] if m["id"] == odd)
+            self.assertEqual((m["installed"], m["status"]), (False, "downloading"))
+            self.assertEqual(call("POST", "/api/model/delete", {"id": odd, "confirm": odd})[0], 409)
+            self.assertEqual(call("POST", "/api/model/download", {"id": SMALL})[0], 409)  # counts as the one download
+        _, log = self.scenario(steps)
+        self.assertFalse(any(c[0] == "DELETE" for c in log))
+
+    def test_store_unreadable_installed_still_managed(self):
+        asr = "Fake/Whisper-ASR"
+
+        def steps(call):
+            self.flags(fail={"/api/v1/models/online_models": [500, "store down"]})
+            code, j = call("GET", "/api/store")
+            self.assertEqual(code, 200)
+            self.assertIn("store down", j["store_error"])
+            self.assertTrue(next(m for m in j["models"] if m["id"] == CHAT)["installed"])
+            self.assertEqual(call("POST", "/api/model/delete", {"id": asr, "confirm": asr})[0], 200)
+            self.assertEqual(call("POST", "/api/model/download", {"id": SMALL})[0], 500)  # a download needs the store
+        self.scenario(steps)
+
+    def test_update_goes_on_when_the_delete_answer_is_lost(self):
+        asr = "Fake/Whisper-ASR"
+
+        def steps(call):
+            self.flags(updates=[asr], delete_lost=True, download_hold=True)
+            code, j = call("POST", "/api/model/update", {"id": asr, "confirm": asr})
+            self.assertEqual(code, 200, j)
+        _, log = self.scenario(steps)
+        self.assertEqual([c for c in log if c[0] == "DELETE" or c[1].endswith("/download")],
+                         [("DELETE", "/api/v1/models/Fake/Whisper-ASR"), ("POST", "/api/v1/models/Fake/Whisper-ASR/download")])
+
+    def test_update_space_counts_the_growth(self):
+        asr = "Fake/Whisper-ASR"  # installed: 1.07 GB; the update: 6 GB, so it needs 4.9 GB more + 2
+
+        def steps(call):
+            self.flags(updates=[asr], update_size={asr: 6_000_000_000}, disk_free_gb=5, download_hold=True)
+            code, j = call("POST", "/api/model/update", {"id": asr, "confirm": asr})
+            self.assertEqual(code, 409, j)
+            self.assertIn("Not enough space", j["error"]["message"])
+            self.flags(disk_free_gb=8)
+            self.assertEqual(call("POST", "/api/model/update", {"id": asr, "confirm": asr})[0], 200)
+        _, log = self.scenario(steps)
+        self.assertEqual(sum(1 for c in log if c[0] == "DELETE"), 1)  # only the update that fits deleted anything
 
 
 if __name__ == "__main__":

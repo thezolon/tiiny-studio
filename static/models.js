@@ -9,9 +9,14 @@ const GB = (b) => (typeof b === "number" && b > 0 ? `${(b / 1e9).toFixed(b < 1e9
 const SPACE_FLOOR_GB = 2;  // the servers keep this much free after a download
 const UNDER_WAY = ["downloading", "paused", "error"];
 Object.assign(S, {
-  mtab: store.get("modelsTab", "installed"), store: null, downloads: [], storeQuery: "", storeWs: store.get("storeWs", "all"),
+  mtab: store.get("modelsTab", "installed"), store: null, storeErr: null, downloads: [], storeQuery: "", storeWs: store.get("storeWs", "all"),
   hideInstalled: store.get("storeHideInstalled", false), mconfirm: null, dlSamples: {}, dlSeen: {}, updateQueue: [],
   missing: store.get("missingModels", []), mmBusy: {},
+  checking: new Set(),   // downloads that left the list: finished, cancelled or failed? the store says which
+  cancelled: new Set(),  // cancelled from here: no "finished" toast when they disappear
+  updateIds: new Set(),  // downloads that are updates: their old build is already deleted
+  updating: null,        // {id, since}: the update Update all (or one Update) waits for, set once its request succeeded
+  pollSeq: 0, pollShown: 0,
 });
 
 const storeModel = (id) => (S.store?.models || []).find((m) => m.id === id);
@@ -19,21 +24,35 @@ const mmName = (id) => storeModel(id)?.name || shortName(id);
 const busyOnDevice = (id) => { const m = modelById(id); return !!(m && (m.status === "running" || m.status === "loading" || S.loading[id])); };
 const jobOn = (id) => (S.jobs || []).some((j) => j.model === id && (j.status === "queued" || j.status === "running"));
 const nowDownloading = () => (S.downloads.find((d) => d.status === "downloading") || {}).id || null;  // fresh every poll
+const updateRunning = () => !!(S.updating || S.updateQueue.length || S.updateInFlight);
+function saveMissing() { store.set("missingModels", S.missing); }
 
 /* ---------- polling ---------- */
+// Both polls feed noteDownloads; an answer that arrives after a newer one is dropped, so nothing is announced twice.
 async function loadStore() {
-  try { S.store = await api("/api/store"); }
-  catch { return; }  // the catalog's own poll reports an offline or locked Tiiny
-  noteDownloads(S.store.models.filter((m) => UNDER_WAY.includes(m.status)).map((m) => ({ id: m.id, name: m.name, status: m.status, progress: m.progress, size: m.size })));
-  S.missing = S.missing.filter((id) => !storeModel(id) || storeModel(id).status === "not_downloaded");
-  store.set("missingModels", S.missing);
+  const seq = ++S.pollSeq;
+  let j;
+  try { j = await api("/api/store"); }
+  catch (e) { S.storeErr = e.message; renderDrawer(); return; }  // the catalog's own poll explains an offline or locked Tiiny
+  if (seq < S.pollShown) return;
+  S.pollShown = seq; S.store = j; S.storeErr = null;
+  noteDownloads(j.models.filter((m) => UNDER_WAY.includes(m.status)).map((m) => ({ id: m.id, name: m.name, status: m.status, progress: m.progress, size: m.size })), j.models);
+  if (!j.store_error) {  // a model stays "missing" while the store lists it as not downloaded
+    S.missing = S.missing.filter((id) => storeModel(id)?.status === "not_downloaded");
+    saveMissing();
+  }
   renderDrawer();
 }
 async function loadDownloads() {
-  try { noteDownloads((await api("/api/downloads")).downloads || []); } catch { /* see loadStore */ }
+  const seq = ++S.pollSeq;
+  let j;
+  try { j = await api("/api/downloads"); } catch { return; }
+  if (seq < S.pollShown) return;
+  S.pollShown = seq;
+  noteDownloads(j.downloads || []);
 }
-/** Compare with the last poll: a download that's gone finished (or was cancelled), one in "error" failed. */
-function noteDownloads(list) {
+/** Compare with the last poll. A download that left the list is checked against the store before anything is said. */
+function noteDownloads(list, models) {
   const before = S.dlSeen, now = {};
   for (const d of list) {
     now[d.id] = d.status;
@@ -41,35 +60,52 @@ function noteDownloads(list) {
     if (d.status === "downloading" && typeof d.progress === "number") {
       const s = (S.dlSamples[d.id] ||= []); s.push([Date.now(), d.progress]);
       while (s.length > 2 && Date.now() - s[0][0] > 180e3) s.shift();
-    }
+    } else delete S.dlSamples[d.id];
   }
-  const finished = Object.keys(before).filter((id) => before[id] === "downloading" && !now[id]);
-  // the update Update all is waiting for: done once it's no longer under way (a quick one may finish between two polls)
+  for (const id of Object.keys(before)) if (!now[id]) S.checking.add(id);
   const u = S.updating;
-  if (u && !now[u.id] && Date.now() - u.since > 4000 && !finished.includes(u.id)) finished.push(u.id);
-  if (u && finished.includes(u.id)) S.updating = null;
-  if (u && now[u.id] === "error") {  // its download failed: the rest of Update all stays as it was
-    S.updating = null;
-    if (S.updateQueue.length) { S.updateQueue = []; toast("Update all stopped; the rest were left as they were.", "err"); }
-  }
+  // a quick update may finish between two polls; the clock starts when its request succeeded
+  if (u && !now[u.id] && Date.now() - u.since > 4000) S.checking.add(u.id);
+  if (u && now[u.id] === "error") { S.updating = null; stopQueue(); }  // its download failed: the rest stay as they were
   S.downloads = list; S.dlSeen = now;
-  if (finished.length) {
-    for (const id of finished) { delete S.dlSamples[id]; announce(`${mmName(id)}: download finished`); }
-    toast(finished.length === 1 ? `${mmName(finished[0])} is on your Tiiny` : `${finished.length} downloads finished`);
-    loadModels(true);
-    if (S.drawer) loadStore();
-    nextUpdate();
-  }
+  if (S.checking.size) { if (models) settle(models, now); else loadStore(); }
   renderModelBtn();
+}
+function settle(models, now) {
+  const done = [];
+  for (const id of [...S.checking]) {
+    const m = models.find((x) => x.id === id);
+    if (now[id]) { S.checking.delete(id); continue; }  // back in the list: still under way
+    S.checking.delete(id);
+    const wasUpdate = S.updateIds.has(id);
+    S.updateIds.delete(id); delete S.dlSamples[id];
+    if (S.updating?.id === id) S.updating = null;
+    if (m?.installed) { done.push(id); continue; }
+    if (S.cancelled.delete(id)) continue;  // the user stopped it: they know
+    toast(`${mmName(id)} stopped downloading and isn't on your Tiiny.`, "err");
+    if (wasUpdate && !S.missing.includes(id)) { S.missing.push(id); saveMissing(); }
+    stopQueue();
+  }
+  if (done.length) {
+    for (const id of done) announce(`${mmName(id)}: download finished`);
+    toast(done.length === 1 ? `${mmName(done[0])} is on your Tiiny` : `${done.length} downloads finished`);
+    loadModels(true);
+  }
+  nextUpdate();
+}
+function stopQueue() {
+  if (!S.updateQueue.length) return;
+  S.updateQueue = [];
+  toast("Update all stopped; the rest were left as they were.", "err");
 }
 // Fast while the drawer is open (the catalog poll in studio.js runs then too), every 5 s while a download runs.
 let lastStorePoll = 0;
 setInterval(() => {
-  const open = S.drawer, active = S.downloads.some((d) => d.status === "downloading") || S.updateQueue.length || S.updating;
+  const open = S.drawer, active = S.downloads.some((d) => d.status === "downloading") || updateRunning() || S.checking.size;
   const every = open ? 2500 : active ? 5000 : 0;
   if (!every || Date.now() - lastStorePoll < every || S.deviceOk === false) return;
   lastStorePoll = Date.now();
-  (open ? loadStore : loadDownloads)();
+  (open || S.checking.size ? loadStore : loadDownloads)();
 }, 1000);
 loadDownloads();  // a download started earlier (or in the TiinyOS app) shows from the start
 
@@ -82,7 +118,7 @@ function dlBadge() {
 
 /* ---------- drawer: tabs, downloads strip ---------- */
 function mmTabs() {
-  const tab = (id, label) => el("button", { role: "tab", id: "mmTab-" + id, "aria-selected": S.mtab === id, "aria-controls": "drawerBody",
+  const tab = (id, label) => el("button", { role: "tab", id: "mmTab-" + id, "aria-selected": S.mtab === id, "aria-controls": "mmPanel",
     tabindex: S.mtab === id ? 0 : -1, onclick: () => setMtab(id) }, label);
   const updates = S.store?.updates || 0;
   const list = el("div", { class: "mm-tabs", role: "tablist", "aria-label": "Models" },
@@ -118,11 +154,11 @@ function progressBar(d, label) {
 function downloadControls(d) {
   const busy = !!S.mmBusy[d.id];
   if (d.status === "error") return [el("button", { class: "btn-sm accent", disabled: busy || (nowDownloading() && nowDownloading() !== d.id), onclick: () => startDownload(d.id) }, "Try again"),
-    el("button", { class: "btn-sm ghost", disabled: busy, onclick: () => mmPost("cancel", d.id, "Download dropped") }, "Dismiss")];
+    el("button", { class: "btn-sm ghost", disabled: busy, onclick: () => cancelDownload(d.id, "Download dropped") }, "Dismiss")];
   return [d.status === "paused"
     ? el("button", { class: "btn-sm accent", disabled: busy || !!nowDownloading(), title: nowDownloading() ? "Another download is running" : "", onclick: () => startDownload(d.id) }, "Resume")
     : el("button", { class: "btn-sm", disabled: busy, onclick: () => mmPost("pause", d.id, "Paused") }, "Pause"),
-    el("button", { class: "btn-sm ghost", disabled: busy, onclick: () => confirmFor("cancel", d.id) }, "Cancel")];
+    el("button", { class: "btn-sm ghost", disabled: busy, onclick: () => confirmFor("cancel", d.id, "strip") }, "Cancel")];
 }
 function downloadsStrip() {
   if (!S.downloads.length) return null;
@@ -142,8 +178,8 @@ function updatesArea() {
   if (!S.store) return [el("div", { class: "hint-line mm-uptodate" }, "Checking for model updates…")];
   const waiting = S.store.models.filter((m) => m.need_update), out = [];
   for (const id of S.missing) {
-    out.push(el("div", { class: "confirm mm-missing" }, el("b", {}, mmName(id)), " is missing: its update's download didn't start.",
-      el("div", { class: "row" }, el("button", { class: "btn-sm ghost", onclick: () => { S.missing = S.missing.filter((x) => x !== id); store.set("missingModels", S.missing); renderDrawer(); } }, "Dismiss"),
+    out.push(el("div", { class: "confirm mm-missing" }, el("b", {}, mmName(id)), " is missing: its old build was deleted for an update that didn't finish.",
+      el("div", { class: "row" }, el("button", { class: "btn-sm ghost", onclick: () => { S.missing = S.missing.filter((x) => x !== id); saveMissing(); renderDrawer(); } }, "Dismiss"),
         el("button", { class: "btn-sm accent", disabled: !!nowDownloading(), onclick: () => startDownload(id) }, `Download again · ${GB(storeModel(id)?.size)}`))));
   }
   if (!waiting.length) {
@@ -154,12 +190,12 @@ function updatesArea() {
   const total = waiting.reduce((a, m) => a + (m.size || 0), 0), free = waiting.filter((m) => !busyOnDevice(m.id) && !jobOn(m.id));
   out.push(el("div", { class: "npu mm-updates" },
     el("div", { class: "npu-top" }, el("span", {}, el("b", {}, `${waiting.length}`), ` update${waiting.length === 1 ? "" : "s"} waiting · ${GB(total)}`),
-      waiting.length > 1 ? el("button", { class: "btn-sm accent", disabled: !free.length || !!nowDownloading() || S.updateQueue.length > 0,
-        title: free.length < waiting.length ? "Loaded or busy models are skipped: unload them first" : "", onclick: () => confirmFor("updateAll", "all") }, `Update all (${free.length})`) : null),
+      waiting.length > 1 ? el("button", { class: "btn-sm accent", disabled: !free.length || !!nowDownloading() || updateRunning(),
+        title: free.length < waiting.length ? "Loaded or busy models are skipped: unload them first" : "", onclick: () => confirmFor("updateAll", "all", "updates") }, `Update all (${free.length})`) : null),
     S.mconfirm?.kind === "updateAll" ? confirmBox("all") : null,
-    ...waiting.map((m) => el("div", { class: "other-row" },
+    ...waiting.map((m) => confirmHere("update", m.id, "updates") ? confirmBox(m.id) : el("div", { class: "other-row" },
       el("div", { class: "grow" }, el("div", {}, m.name || shortName(m.id)), el("small", {}, [GB(m.size), m.update_title].filter(Boolean).join(" · "))),
-      updateButton(m)))));
+      updateButton(m, "updates")))));
   return out;
 }
 function blockedReason(id) {
@@ -167,24 +203,26 @@ function blockedReason(id) {
   if (busyOnDevice(id)) return "Unload it first";
   return "";
 }
-function updateButton(m) {
-  const why = blockedReason(m.id) || (nowDownloading() ? "One download at a time" : "");
-  return el("button", { class: "btn-sm", disabled: !!why || !!S.mmBusy[m.id], title: why, onclick: () => confirmFor("update", m.id) }, why ? `Update · ${why.toLowerCase()}` : "Update");
+function updateButton(m, where) {
+  const why = blockedReason(m.id) || (updateRunning() ? "Another update is running" : nowDownloading() ? "One download at a time" : "");
+  return el("button", { class: "btn-sm", disabled: !!why || !!S.mmBusy[m.id], title: why, onclick: () => confirmFor("update", m.id, where) }, why ? `Update · ${why.toLowerCase()}` : "Update");
 }
+/** Is this confirm open here? A model's Update/Delete can be asked for in its card, the updates list or the Store tab. */
+const confirmHere = (kinds, id, where) => !!(S.mconfirm && S.mconfirm.id === id && S.mconfirm.where === where && [].concat(kinds).includes(S.mconfirm.kind));
 /** The Manage row in an installed model's card (studio.js's modelCard calls this). */
 function manageRow(m) {
   const sm = storeModel(m.id);
   if (!sm) return null;
-  if (S.mconfirm && S.mconfirm.id === m.id && ["delete", "update"].includes(S.mconfirm.kind)) return confirmBox(m.id);
+  if (confirmHere(["delete", "update"], m.id, "card")) return confirmBox(m.id);
   const facts = [GB(sm.size) + " download", sm.version != null && `build ${sm.version}`].filter(Boolean).join(" · ");
   return el("div", { class: "mcard-actions mm-manage" }, el("span", { class: "meta" }, facts),
-    sm.need_update ? updateButton(sm) : null,
-    deleteButton(m.id));
+    sm.need_update ? updateButton(sm, "card") : null,
+    deleteButton(m.id, "card"));
 }
-function deleteButton(id) {
+function deleteButton(id, where) {
   const why = blockedReason(id);
   return el("button", { class: "btn-sm danger-btn", disabled: !!why || !!S.mmBusy[id], title: why || `Delete ${mmName(id)} from the Tiiny`,
-    "aria-label": `Delete ${mmName(id)}`, onclick: () => confirmFor("delete", id) }, "Delete…");
+    "aria-label": `Delete ${mmName(id)}`, onclick: () => confirmFor("delete", id, where) }, "Delete…");
 }
 /** Extra badge on an installed card. */
 const updateBadge = (m) => (storeModel(m.id)?.need_update ? el("span", { class: "badge-cap on mm-badge" }, "Update available") : null);
@@ -192,7 +230,7 @@ const updateBadge = (m) => (storeModel(m.id)?.need_update ? el("span", { class: 
 /* ---------- Store tab ---------- */
 const WS_NAMES = { all: "All", image: "Image", audio: "Audio", "3d": "3D", video: "Video", text: "Chat", other: "Other" };
 function storeView() {
-  if (!S.store) return [el("div", { class: "empty", style: "margin:40px auto" }, el("p", {}, "Reading the Model Store…"))];
+  if (!S.store) return [el("div", { class: "empty", style: "margin:40px auto" }, el("p", {}, S.storeErr ? `Can't read the Model Store: ${S.storeErr}` : "Reading the Model Store…"))];
   const q = S.storeQuery.trim().toLowerCase();
   const list = S.store.models.filter((m) => m.in_store
     && (S.storeWs === "all" || m.workspace === S.storeWs)
@@ -207,6 +245,7 @@ function storeView() {
     onchange: (e) => { S.hideInstalled = e.target.checked; store.set("storeHideInstalled", S.hideInstalled); renderDrawer(); } }), " Hide installed");
   const disk = S.store.disk;
   return [
+    S.store.store_error ? el("div", { class: "hint-line warn" }, `${S.store.store_error} Installed models can still be updated and deleted.`) : null,
     el("div", { class: "mm-filters" }, search, ws, hide),
     el("div", { class: "hint-line" }, disk ? `Storage on the Tiiny: ${Math.round(disk.free_gb)} GB free of ${Math.round(disk.total_gb)} GB. ` : "",
       "The Tiiny downloads over its own Wi-Fi, even when the studio is connected by USB."),
@@ -215,15 +254,15 @@ function storeView() {
   ];
 }
 function storeAction(m) {
-  if (S.mconfirm && S.mconfirm.id === m.id && S.mconfirm.kind === "download") return confirmBox(m.id);
+  if (confirmHere("download", m.id, "store")) return confirmBox(m.id);
   if (UNDER_WAY.includes(m.status)) {
     const d = S.downloads.find((x) => x.id === m.id) || m;
     return m.status === "error" ? el("div", { class: "hint-line warn" }, "The download failed. See the top of this list.") : progressBar(d, m.status === "paused" ? "Paused" : "Downloading");
   }
   if (m.installed) {  // every installed model can be updated or deleted here, the "Other models" rows' too
-    if (S.mconfirm && S.mconfirm.id === m.id && ["delete", "update"].includes(S.mconfirm.kind)) return confirmBox(m.id);
+    if (confirmHere(["delete", "update"], m.id, "store")) return confirmBox(m.id);
     return el("div", { class: "mcard-actions" }, el("span", { class: "meta" }, m.need_update ? "Installed · update available" : "Installed"),
-      m.need_update ? updateButton(m) : null, deleteButton(m.id));
+      m.need_update ? updateButton(m, "store") : null, deleteButton(m.id, "store"));
   }
   const disk = S.store.disk, need = (m.size || 0) / 1e9 + SPACE_FLOOR_GB;
   if (disk && need > disk.free_gb)
@@ -231,7 +270,7 @@ function storeAction(m) {
   const other = nowDownloading();
   return el("div", { class: "mcard-actions" }, el("span", { class: "meta" }, other ? `One download at a time: ${mmName(other)} is downloading` : ""),
     el("button", { class: "btn-sm accent", disabled: !!other || !!S.mmBusy[m.id], "aria-label": `Download · ${GB(m.size)}, ${m.name || shortName(m.id)}`,
-      onclick: () => confirmFor("download", m.id) }, `Download · ${GB(m.size)}`));
+      onclick: () => confirmFor("download", m.id, "store") }, `Download · ${GB(m.size)}`));
 }
 const when = (t) => (typeof t === "number" && t > 0 ? new Date(t * 1000).toLocaleDateString() : null);
 function factsList(m) {
@@ -268,8 +307,8 @@ function storeCard(m) {
 }
 
 /* ---------- confirms (inline, focus on Cancel) and actions ---------- */
-function confirmFor(kind, id) {
-  S.mconfirm = { kind, id }; renderDrawer();
+function confirmFor(kind, id, where = "card") {
+  S.mconfirm = { kind, id, where }; renderDrawer();
   $("#drawer .mm-confirm [data-cancel]")?.focus();
 }
 function closeConfirm() { S.mconfirm = null; renderDrawer(); }
@@ -282,12 +321,15 @@ function confirmBox(id) {
     update: [`Update `, el("b", {}, name), `? The studio deletes the installed build, then downloads the new one (${size} over the Tiiny's Wi-Fi). If the download fails, ${name} is missing until you download it again.`,
       m.update_title || m.update_desc ? el("div", { class: "mm-notes" }, [m.update_title, m.update_desc].filter(Boolean).join(": ")) : null],
     updateAll: [`Update ${waiting.length} model${waiting.length === 1 ? "" : "s"}, ${GB(waiting.reduce((a, x) => a + (x.size || 0), 0))} of downloads, one after another? Each is deleted first, so a failed download leaves it missing until you download it again. Keep the studio open until they're done.`],
-    cancel: [`Stop downloading `, el("b", {}, name), `? What's downloaded so far is deleted; downloading it later starts from the beginning.`],
+    cancel: S.updateIds.has(id)
+      ? [`Stop downloading `, el("b", {}, name), `? Its old build was already deleted for this update, so ${name} stays missing until you download it again.`]
+      : [`Stop downloading `, el("b", {}, name), `? What's downloaded so far is deleted; downloading it later starts from the beginning.`],
   }[kind];
   const go = { download: ["Download", () => startDownload(id)], delete: [`Delete ${name}`, () => deleteModel(id)], update: ["Delete and update", () => updateModel(id)],
-    updateAll: ["Update all", () => updateAll(waiting.map((x) => x.id))], cancel: ["Stop the download", () => mmPost("cancel", id, "Download stopped")] }[kind];
+    updateAll: ["Update all", () => updateAll(waiting.map((x) => x.id))], cancel: ["Stop the download", () => cancelDownload(id, "Download stopped")] }[kind];
   // a second guard behind the disabled buttons (the servers refuse these too)
-  const blocked = ["delete", "update"].includes(kind) ? blockedReason(id) : ["download", "updateAll"].includes(kind) && nowDownloading() ? "One download at a time" : "";
+  const blocked = ["delete", "update"].includes(kind) ? blockedReason(id) || (kind === "update" && updateRunning() ? "Another update is running" : "")
+    : ["download", "updateAll"].includes(kind) && nowDownloading() ? "One download at a time" : kind === "updateAll" && updateRunning() ? "Another update is running" : "";
   const box = el("div", { class: "confirm mm-confirm", role: "group", "aria-label": go[0] }, ...text,
     blocked ? el("div", { class: "hint-line warn" }, `${blocked}.`) : null,
     el("div", { class: "row" },
@@ -303,7 +345,7 @@ async function mmPost(action, id, done, body = {}) {
     if (done) toast(`${done}: ${mmName(id)}`);
     return true;
   } catch (e) {
-    if (e.type === "update_missing" && !S.missing.includes(id)) { S.missing.push(id); store.set("missingModels", S.missing); }
+    if (e.type === "update_missing" && !S.missing.includes(id)) { S.missing.push(id); saveMissing(); }
     toast(e.message, "err");
     return false;
   } finally {
@@ -314,10 +356,20 @@ async function mmPost(action, id, done, body = {}) {
 }
 async function startDownload(id) { await mmPost("download", id, "Downloading"); }
 async function deleteModel(id) { await mmPost("delete", id, "Deleted", { confirm: id }); }
+async function cancelDownload(id, done) {
+  S.cancelled.add(id);  // when it leaves the list, it wasn't a finished download
+  const wasUpdate = S.updateIds.has(id);
+  if (wasUpdate) stopQueue();  // first: the poll that sees it gone must not start the next update
+  if (!(await mmPost("cancel", id, done))) { S.cancelled.delete(id); return; }
+  if (wasUpdate && !S.missing.includes(id)) { S.missing.push(id); saveMissing(); }  // its old build is gone
+  if (S.updating?.id === id) S.updating = null;
+  renderDrawer();
+}
 async function updateModel(id) {
-  S.updating = { id, since: Date.now() };
+  S.updateInFlight = true;  // no other update starts while this request runs (the servers would refuse it anyway)
   const ok = await mmPost("update", id, "Updating", { confirm: id });
-  if (!ok) S.updating = null;
+  S.updateInFlight = false;
+  if (ok) { S.updating = { id, since: Date.now() }; S.updateIds.add(id); }
   return ok;
 }
 /** Update all: one at a time from here; each is a single safe request, so closing the studio just stops the next. */
@@ -326,8 +378,8 @@ async function updateAll(ids) {
   await nextUpdate();
 }
 async function nextUpdate() {
-  if (!S.updateQueue.length || nowDownloading() || S.updating) return;
+  if (!S.updateQueue.length || nowDownloading() || S.updating || S.updateInFlight) return;
   const id = S.updateQueue.shift();
-  if (!(await updateModel(id))) { S.updateQueue = []; toast("Update all stopped; the rest were left as they were.", "err"); }
+  if (!(await updateModel(id))) stopQueue();
   renderDrawer();
 }

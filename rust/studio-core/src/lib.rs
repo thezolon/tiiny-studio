@@ -57,8 +57,8 @@ pub struct AppState {
     pub(crate) update_cache: Arc<tokio::sync::Mutex<Option<(Instant, serde_json::Value)>>>,
     /// The Model Store's entries, cached 60 s per device; see downloads::store_facts
     pub(crate) store_cache: Arc<Mutex<Option<downloads::StoreCache>>>,
-    /// One download at a time: the check and the start happen under this lock
-    pub(crate) download_lock: Arc<tokio::sync::Mutex<()>>,
+    /// Every model download, pause, cancel, delete and update: its checks and its device calls run under this lock
+    pub(crate) change_lock: Arc<tokio::sync::Mutex<()>>,
 }
 
 impl AppState {
@@ -85,7 +85,7 @@ impl AppState {
             search_cache: Arc::default(),
             update_cache: Arc::default(),
             store_cache: Arc::default(),
-            download_lock: Arc::default(),
+            change_lock: Arc::default(),
         }
     }
 

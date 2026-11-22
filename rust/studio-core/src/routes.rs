@@ -795,7 +795,17 @@ async fn model_change(
         return not_found().await;
     }
     match read_json(&body) {
-        Ok(b) => reply(crate::downloads::model_change(&state, &action, &b).await),
+        // in its own task: a closed browser tab must not stop an update between its delete and its download
+        Ok(b) => {
+            let task =
+                tokio::spawn(
+                    async move { crate::downloads::model_change(&state, &action, &b).await },
+                );
+            match task.await {
+                Ok(answer) => reply(answer),
+                Err(_) => error(StatusCode::INTERNAL_SERVER_ERROR, "The change failed."),
+            }
+        }
         Err(e) => error(StatusCode::BAD_REQUEST, &e),
     }
 }

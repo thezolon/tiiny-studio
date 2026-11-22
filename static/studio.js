@@ -246,7 +246,9 @@ function drawDrawer() {
   const mm = typeof mmTabs === "function";  // models.js: the Store tab, downloads and updates
   const head = mm ? [mmTabs(), downloadsStrip()] : [];
   const installed = [...(mm ? updatesArea() : []), npu, typeof statsCard === "function" ? statsCard() : null, ...sections, otherBox];
-  body.replaceChildren(...[...head, ...(mm && S.mtab === "store" ? storeView() : installed)].filter(Boolean));
+  const content = (mm && S.mtab === "store" ? storeView() : installed).filter(Boolean);
+  body.replaceChildren(...head.filter(Boolean),
+    ...(mm ? [el("div", { role: "tabpanel", id: "mmPanel", "aria-labelledby": "mmTab-" + S.mtab }, ...content)] : content));
 }
 
 function modelCard(m) {

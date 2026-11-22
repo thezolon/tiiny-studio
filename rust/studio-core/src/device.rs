@@ -174,6 +174,10 @@ pub async fn catalog(state: &AppState) -> (u16, Value) {
         .into_iter()
         .flatten()
     {
+        // a download under way (or a status we don't know) is never loadable
+        if crate::downloads::live_status(m) != "downloaded" {
+            continue;
+        }
         let mid = m.get("id").and_then(Value::as_str).unwrap_or("");
         let mut row = serde_json::Map::new();
         for k in KEEP {

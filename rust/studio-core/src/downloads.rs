@@ -49,17 +49,23 @@ fn fail(code: u16, message: &str) -> Answer {
 }
 
 /// A device row's state, normalised: downloading, paused, error, or downloaded (installed, loaded or not).
-fn live_status(row: &Value) -> &'static str {
-    let s = row.get("status").and_then(Value::as_str).unwrap_or("");
-    // a paused download reads "download_stop" on 0.1.39 (tested 2026-11-21)
-    if s == "download_stop" || s.contains("pause") {
-        "paused"
-    } else if s == "downloading" {
-        "downloading"
-    } else if s == "error" {
-        "error"
-    } else {
-        "downloaded"
+/// A device row's state, normalised: downloaded (installed, loaded or not), downloading, paused, error, or "absent"
+/// (not on the Tiiny; device_rows drops those). A paused download reads "download_stop" on 0.1.39 (tested
+/// 2026-11-21). A status this studio doesn't know counts as a download under way: never installed, loadable or
+/// deletable.
+pub(crate) fn live_status(row: &Value) -> &'static str {
+    let s = match row.get("status") {
+        None | Some(Value::Null) => "",
+        Some(Value::String(s)) => s.as_str(),
+        Some(_) => "?",
+    };
+    match s {
+        "downloaded" | "running" | "stopped" | "" => "downloaded",
+        "not_downloaded" => "absent",
+        "download_stop" => "paused",
+        "error" => "error",
+        s if s.contains("pause") => "paused",
+        _ => "downloading",
     }
 }
 
@@ -120,7 +126,9 @@ async fn device_rows(state: &AppState) -> Result<Vec<(String, Value)>, Answer> {
             .and_then(Value::as_str)
             .filter(|s| !s.is_empty())
         {
-            put(&mut out, id, r.clone());
+            if live_status(r) != "absent" {
+                put(&mut out, id, r.clone());
+            }
         }
     }
     Ok(out)
@@ -138,13 +146,17 @@ fn find<'a>(list: &'a [(String, Value)], id: &str) -> Option<&'a Value> {
     list.iter().find(|(k, _)| k == id).map(|(_, v)| v)
 }
 
-/// The Model Store's entries, cached 60 s per device.
+/// The Model Store's entries, cached STUDIO_STORE_TTL seconds (60; the contract tests set 0) per device.
 async fn store_facts(state: &AppState) -> Result<Vec<(String, Value)>, Answer> {
     let url = state.settings.current().url;
+    let ttl = std::env::var("STUDIO_STORE_TTL")
+        .ok()
+        .and_then(|v| v.parse::<f64>().ok())
+        .map_or(STORE_TTL, |s| Duration::from_secs_f64(s.max(0.0)));
     {
         let c = state.store_cache.lock().unwrap_or_else(|e| e.into_inner());
         if let Some((t, u, v)) = &*c {
-            if *u == url && t.elapsed() < STORE_TTL {
+            if *u == url && t.elapsed() < ttl {
                 return Ok(v.clone());
             }
         }
@@ -176,6 +188,24 @@ async fn store_facts(state: &AppState) -> Result<Vec<(String, Value)>, Answer> {
     *state.store_cache.lock().unwrap_or_else(|e| e.into_inner()) =
         Some((Instant::now(), url, data.clone()));
     Ok(data)
+}
+
+/// What the store said last for this device (names and sizes), when it can't be read now.
+fn stale_facts(state: &AppState) -> Vec<(String, Value)> {
+    let url = state.settings.current().url;
+    state
+        .store_cache
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .as_ref()
+        .filter(|(_, u, _)| *u == url)
+        .map(|(_, _, v)| v.clone())
+        .unwrap_or_default()
+}
+
+/// The next disk_space() reads the device again (after something was downloaded, deleted or cancelled).
+fn forget_disk(state: &AppState) {
+    *state.disk_cache.lock().unwrap_or_else(|e| e.into_inner()) = None;
 }
 
 /// The tag with the biggest download (the first of equals), or none.
@@ -287,9 +317,16 @@ pub async fn model_store(state: &AppState) -> Answer {
         Ok(r) => r,
         Err(e) => return e,
     };
-    let facts = match store_facts(state).await {
-        Ok(f) => f,
-        Err(e) => return e,
+    // the installed models can still be managed when the store can't be read; say why it's missing
+    let (facts, store_error) = match store_facts(state).await {
+        Ok(f) => (f, Value::Null),
+        Err((code, res)) => (
+            vec![],
+            json!(format!(
+                "The Model Store can't be read right now: {}",
+                reason(&res, code)
+            )),
+        ),
     };
     let mut models: Vec<Value> = facts
         .iter()
@@ -311,7 +348,8 @@ pub async fn model_store(state: &AppState) -> Answer {
     );
     (
         200,
-        json!({"models": models, "downloading": downloading, "updates": updates, "disk": disk}),
+        json!({"models": models, "downloading": downloading, "updates": updates, "store_error": store_error,
+               "disk": disk}),
     )
 }
 
@@ -321,13 +359,7 @@ pub async fn downloads(state: &AppState) -> Answer {
         Ok(r) => r,
         Err(e) => return e,
     };
-    let facts = state
-        .store_cache
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .as_ref()
-        .map(|(_, _, v)| v.clone())
-        .unwrap_or_default();
+    let facts = stale_facts(state);
     let list: Vec<Value> = rows
         .iter()
         .filter(|(_, r)| under_way(live_status(r)))
@@ -350,7 +382,7 @@ fn name_of(mid: &str, facts: &[(String, Value)]) -> String {
         )
 }
 
-/// Like server.py's MODEL_ID: org/name, letters, digits, _ . - only, and no "." or ".." parts.
+/// Like server.py's MODEL_ID: org/name, ASCII letters, digits, _ . - only, and no "." or ".." parts.
 fn valid_id(mid: &str) -> bool {
     let parts: Vec<&str> = mid.split('/').collect();
     parts.len() == 2
@@ -359,7 +391,7 @@ fn valid_id(mid: &str) -> bool {
                 && *p != "."
                 && *p != ".."
                 && p.chars()
-                    .all(|c| c.is_alphanumeric() || matches!(c, '_' | '.' | '-'))
+                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '-'))
         })
 }
 
@@ -402,17 +434,34 @@ async fn model_busy(state: &AppState, mid: &str, name: &str) -> Option<String> {
     None
 }
 
-async fn space_problem(state: &AppState, name: &str, size: f64) -> Option<String> {
+/// Refuse when `need` more bytes (plus the floor) don't fit. Read fresh: a delete a moment ago may have freed room.
+async fn space_problem(state: &AppState, name: &str, need: f64) -> Option<String> {
+    forget_disk(state);
     let space = disk_space(state).await?;
-    let need = size / 1e9 + SPACE_FLOOR_GB;
-    (space.0 < need).then(|| {
+    (space.0 < need / 1e9 + SPACE_FLOOR_GB).then(|| {
         format!(
             "Not enough space on the Tiiny: {name} needs {:.1} GB plus {SPACE_FLOOR_GB} GB to spare, and {:.1} GB \
              is free. Delete a model you don't use first.",
-            size / 1e9,
+            need / 1e9,
             space.0
         )
     })
+}
+
+/// Bytes a download still needs: all of it, or what's left of a paused one (the fetched part is already on disk).
+fn still_to_fetch(row: Option<&Value>, size: f64) -> f64 {
+    match row {
+        Some(r) if matches!(live_status(r), "paused" | "error") => {
+            let p = num(r.get("progress")).min(100.0);
+            size * (1.0 - p / 100.0).max(0.0)
+        }
+        _ => size,
+    }
+}
+
+/// A number the device sent (not a bool), else 0.
+fn num(v: Option<&Value>) -> f64 {
+    v.and_then(Value::as_f64).unwrap_or(0.0)
 }
 
 fn other_download(
@@ -430,54 +479,8 @@ fn other_download(
         })
 }
 
-/// Checks, then POST …/download; the caller holds the download lock.
-async fn start_download(state: &AppState, mid: &str) -> Answer {
-    let rows = match device_rows(state).await {
-        Ok(r) => r,
-        Err(e) => return e,
-    };
-    let facts = match store_facts(state).await {
-        Ok(f) => f,
-        Err(e) => return e,
-    };
-    let Some(entry) = find(&facts, mid) else {
-        return fail(404, &format!("{mid} isn't in the Model Store."));
-    };
-    let name = name_of(mid, &facts);
-    match find(&rows, mid).map(live_status) {
-        Some("downloaded") => return fail(409, &format!("{name} is already on your Tiiny.")),
-        Some("downloading") => return fail(409, &format!("{name} is already downloading.")),
-        _ => {}
-    }
-    let why = match other_download(&rows, &facts, mid) {
-        Some(w) => Some(w),
-        None => space_problem(state, &name, size_bytes(Some(entry))).await,
-    };
-    if let Some(w) = why {
-        return fail(409, &w);
-    }
-    let (code, res) = call(
-        state,
-        "POST",
-        &format!("/api/v1/models/{mid}/download"),
-        None,
-        60,
-        None,
-    )
-    .await;
-    if code >= 300 {
-        return fail(
-            502,
-            &format!(
-                "The Tiiny didn't start the download of {name}: {}",
-                reason(&res, code)
-            ),
-        );
-    }
-    (200, json!({"ok": true, "started": mid}))
-}
-
-/// POST /api/model/{download,pause,cancel,delete,update}. Ids are checked before they go into a device path.
+/// POST /api/model/{download,pause,cancel,delete,update}. Ids are checked before they go into a device path. Every
+/// change runs its checks and its device calls under one lock, so nothing changes between a check and the change.
 pub async fn model_change(state: &AppState, action: &str, body: &Value) -> Answer {
     let Some(mid) = body
         .get("id")
@@ -497,72 +500,116 @@ pub async fn model_change(state: &AppState, action: &str, body: &Value) -> Answe
             &format!("Confirm the {action}: send the model's id again as \"confirm\"."),
         );
     }
-    if action == "download" {
-        let _guard = state.download_lock.lock().await;
-        return start_download(state, mid).await;
+    let answer = {
+        let _guard = state.change_lock.lock().await;
+        change_model(state, action, mid).await
+    };
+    if answer.0 == 200 {
+        forget_disk(state); // the Store tab's free space shows the change at once
     }
+    answer
+}
+
+async fn device_answer(state: &AppState, method: &str, path: String, timeout: u64) -> (u16, Value) {
+    call(state, method, &path, None, timeout, None).await
+}
+
+async fn change_model(state: &AppState, action: &str, mid: &str) -> Answer {
     let rows = match device_rows(state).await {
         Ok(r) => r,
         Err(e) => return e,
     };
     let facts = match store_facts(state).await {
         Ok(f) => f,
-        Err(e) => return e,
+        Err(e) if action == "download" => return e,
+        Err(_) => stale_facts(state), // pause, cancel, delete and update only need the name from it
     };
     let name = name_of(mid, &facts);
     let row = find(&rows, mid);
     let status = row.map(live_status);
-    let device_step = |path: String, method: &'static str, done: Value, what: &'static str| {
-        let name = name.clone();
-        async move {
-            let (code, res) = call(state, method, &path, None, 120, None).await;
-            if code < 300 {
-                (200, done)
-            } else {
-                fail(
-                    502,
-                    &format!("The Tiiny didn't {what} {name}: {}", reason(&res, code)),
-                )
-            }
-        }
+    let refused = |what: &str, res: &Value, code: u16| {
+        fail(
+            502,
+            &format!("The Tiiny didn't {what} {name}: {}", reason(res, code)),
+        )
     };
     match action {
+        "download" => {
+            let Some(entry) = find(&facts, mid) else {
+                return fail(404, &format!("{mid} isn't in the Model Store."));
+            };
+            match status {
+                Some("downloaded") => {
+                    return fail(409, &format!("{name} is already on your Tiiny."))
+                }
+                Some("downloading") => {
+                    return fail(409, &format!("{name} is already downloading."))
+                }
+                _ => {}
+            }
+            let why = match other_download(&rows, &facts, mid) {
+                Some(w) => Some(w),
+                None => {
+                    let need = still_to_fetch(row, size_bytes(Some(entry)));
+                    space_problem(state, &name, need).await
+                }
+            };
+            if let Some(w) = why {
+                return fail(409, &w);
+            }
+            let (code, res) =
+                device_answer(state, "POST", format!("/api/v1/models/{mid}/download"), 60).await;
+            if code >= 300 {
+                return refused("start the download of", &res, code);
+            }
+            return (200, json!({"ok": true, "started": mid}));
+        }
         "pause" => {
             if status != Some("downloading") {
                 return fail(409, &format!("{name} isn't downloading."));
             }
-            return device_step(
-                format!("/api/v1/models/{mid}/pause_download"),
+            let (code, res) = device_answer(
+                state,
                 "POST",
-                json!({"ok": true}),
-                "pause",
+                format!("/api/v1/models/{mid}/pause_download"),
+                30,
             )
             .await;
+            return if code < 300 {
+                (200, json!({"ok": true}))
+            } else {
+                refused("pause", &res, code)
+            };
         }
         "cancel" => {
             if !status.is_some_and(under_way) {
                 return fail(409, &format!("{name} isn't downloading."));
             }
-            // /interrupt only stops chat replies (tested 2026-11-21). Cancel = pause, then delete what was fetched.
+            // a model the Tiiny reports oddly may still be in use
+            if let Some(why) = model_busy(state, mid, &name).await {
+                return fail(409, &why);
+            }
+            // /interrupt only stops chat replies (tested 2026-11-21). Cancel = pause, then delete what was fetched
+            // (tested).
             if status == Some("downloading") {
-                let paused = device_step(
-                    format!("/api/v1/models/{mid}/pause_download"),
+                let (code, res) = device_answer(
+                    state,
                     "POST",
-                    json!({"ok": true}),
-                    "stop",
+                    format!("/api/v1/models/{mid}/pause_download"),
+                    30,
                 )
                 .await;
-                if paused.0 != 200 {
-                    return paused;
+                if code >= 300 {
+                    return refused("stop", &res, code);
                 }
             }
-            return device_step(
-                format!("/api/v1/models/{mid}"),
-                "DELETE",
-                json!({"ok": true}),
-                "stop",
-            )
-            .await;
+            let (code, res) =
+                device_answer(state, "DELETE", format!("/api/v1/models/{mid}"), 120).await;
+            return if code < 300 {
+                (200, json!({"ok": true}))
+            } else {
+                refused("stop", &res, code)
+            };
         }
         "delete" | "update" => {}
         _ => return fail(404, "not found"),
@@ -576,66 +623,55 @@ pub async fn model_change(state: &AppState, action: &str, body: &Value) -> Answe
             &format!("{name} is still downloading. Cancel the download instead."),
         );
     }
-    if action == "update" && !truthy(row.and_then(|r| r.get("need_update"))) {
-        return fail(
-            409,
-            &format!(
-                "No update is waiting for {name}. (The Tiiny reports none while it has no internet.)"
-            ),
-        );
+    if action == "update" {
+        if !truthy(row.and_then(|r| r.get("need_update"))) {
+            return fail(
+                409,
+                &format!(
+                    "No update is waiting for {name}. (The Tiiny reports none while it has no internet.)"
+                ),
+            );
+        }
+        let new = size_bytes(find(&facts, mid));
+        let old = match num(row.and_then(|r| r.get("size"))) {
+            0.0 => new,
+            n => n,
+        };
+        let why = match other_download(&rows, &facts, mid) {
+            Some(w) => Some(w),
+            None => space_problem(state, &name, (new - old).max(0.0)).await,
+        };
+        if let Some(w) = why {
+            return fail(409, &w);
+        }
     }
+    // last, right before the change
     if let Some(why) = model_busy(state, mid, &name).await {
         return fail(409, &why);
     }
+    let (code, res) = device_answer(state, "DELETE", format!("/api/v1/models/{mid}"), 120).await;
     if action == "delete" {
-        return device_step(
-            format!("/api/v1/models/{mid}"),
-            "DELETE",
-            json!({"ok": true, "deleted": mid}),
-            "delete",
-        )
-        .await;
+        return if code < 300 {
+            (200, json!({"ok": true, "deleted": mid}))
+        } else {
+            refused("delete", &res, code)
+        };
     }
-    // update: delete the old build, then download the new one, in this one request
-    let _guard = state.download_lock.lock().await;
-    let rows = match device_rows(state).await {
-        Ok(r) => r, // again, under the lock: a download may have started meanwhile
-        Err(e) => return e,
-    };
-    let why = match other_download(&rows, &facts, mid) {
-        Some(w) => Some(w),
-        None => space_problem(state, &name, 0.0).await,
-    };
-    if let Some(w) = why {
-        return fail(409, &w);
-    }
-    let (code, res) = call(
-        state,
-        "DELETE",
-        &format!("/api/v1/models/{mid}"),
-        None,
-        120,
-        None,
-    )
-    .await;
     if code >= 300 {
-        return fail(
-            502,
-            &format!(
-                "Couldn't delete the old build of {name} ({}); it's left as it was.",
-                reason(&res, code)
-            ),
-        );
+        // an update: did the delete happen anyway (an answer lost on the way back)?
+        let gone = matches!(device_rows(state).await, Ok(r) if find(&r, mid).is_none());
+        if !gone {
+            return fail(
+                502,
+                &format!(
+                    "Couldn't delete the old build of {name} ({}); it's left as it was.",
+                    reason(&res, code)
+                ),
+            );
+        }
     }
-    let (code, res) = call(
-        state,
-        "POST",
-        &format!("/api/v1/models/{mid}/download"),
-        None,
-        60,
-        None,
-    )
-    .await;
+    let (code, res) =
+        device_answer(state, "POST", format!("/api/v1/models/{mid}/download"), 60).await;
     if code >= 300 {
         return (
             502,
@@ -669,6 +705,9 @@ mod tests {
             ("paused", "paused"),
             ("download_paused", "paused"),
             ("download_stop", "paused"),
+            ("not_downloaded", "absent"),
+            ("verifying", "downloading"),
+            ("", "downloaded"),
             ("error", "error"),
             ("downloaded", "downloaded"),
             ("running", "downloaded"),
