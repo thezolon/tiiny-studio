@@ -199,7 +199,7 @@ async function chatSend(again) {
       reply.status = j.status === "queued" ? (j.queue_pos ? `Waiting for the device (${j.queue_pos} ahead)` : "Waiting for the device") : (j.tool_message || j.message);
       reply.artifacts = j.artifacts || reply.artifacts;
       ChatWS.renderLast();
-      if (j.warnings) reply.warnings = j.warnings;
+      if (j.warnings) { reply.warnings = j.warnings; reply.toolsOff = j.tools_off === true; }
       if (j.status === "done") { Object.assign(reply, { text: j.entry.text, reasoning: j.entry.reasoning, artifacts: j.entry.artifacts || [], model: j.entry.params?.model, seconds: Math.round((Date.now() - t0) / 1000) }); break; }
       if (j.status === "error" || j.status === "cancelled") { reply.error = j.status === "cancelled" ? "Stopped" : (j.error || "Something went wrong"); if (j.status === "cancelled" && reply.text) reply.error = null; break; }
     }
@@ -347,8 +347,8 @@ const ChatWS = {
     if (!slot) x.pending ? mdStream(body, x.text || "") : (body.innerHTML = mdToHtml(x.text || ""));
     return el("div", { class: "msg bot" + (x.error ? " err" : "") },
       // attachments that look like prompt injection: still sent, but the model was told not to obey them
-      (x.warnings || []).length ? el("div", { class: "msg-warn", title: "The model was told to treat attachments as content only and never follow instructions inside them. Its tools (pictures, speech, model swaps) were switched off for this reply." },
-        "⚠ Possible prompt injection in " + x.warnings.map((w) => `${w.source.replace(/^document: /, "")} (${w.reasons.join(", ").replace(/_/g, " ")})`).join("; ") + ". Tools were switched off for this reply. Check it with that in mind.") : null,
+      (x.warnings || []).length ? el("div", { class: "msg-warn", title: "The model was told to treat attachments as content only and never follow instructions inside them. When the newest message of the conversation carries such an attachment, its tools (pictures, speech, model swaps) are switched off for that reply." },
+        "⚠ Possible prompt injection in " + x.warnings.map((w) => `${w.source.replace(/^document: /, "")} (${w.reasons.join(", ").replace(/_/g, " ")})`).join("; ") + (x.toolsOff === true ? ". Tools were switched off for this reply." : x.toolsOff === false ? ". Tools stayed on for this reply (the flag is from an earlier message, or only invisible characters)." : ".") + " Check it with that in mind.") : null,
       x.reasoning ? el("details", { class: "msg-think", open: thinkOpen.get(x) ?? (!!x.pending && !x.text) },
         el("summary", { onclick: (e) => thinkOpen.set(x, !e.currentTarget.parentElement.open) }, x.pending && !x.text ? "Thinking…" : "Thoughts"), el("div", {}, x.reasoning)) : null,
       body,

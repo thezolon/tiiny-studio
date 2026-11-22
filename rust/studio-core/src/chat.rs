@@ -584,9 +584,27 @@ pub async fn run(ctx: Ctx) -> JobResult {
     // attached documents are untrusted: delimited, screened, and flagged to the user (never silently dropped)
     let attached = crate::safety::has_documents(&messages);
     let pictures = crate::safety::has_images(&messages);
+    // The page sends the whole conversation each turn, so an earlier flagged attachment stays wrapped and flagged
+    // (guard_messages below), but only a flag in the newest user message switches the tools off (for that reply).
+    let tools_off = messages
+        .iter()
+        .rev()
+        .find(|m| m.get("role").and_then(Value::as_str) == Some("user"))
+        .is_some_and(|m| {
+            // hidden_text alone (zero-width and direction marks: common in web text, PDFs, Arabic and Hebrew) keeps
+            // the warning but doesn't switch the tools off
+            crate::safety::guard_messages(std::slice::from_ref(m))
+                .1
+                .iter()
+                .any(|w| {
+                    w.get("reasons")
+                        .and_then(Value::as_array)
+                        .is_some_and(|r| r.iter().any(|x| x.as_str() != Some("hidden_text")))
+                })
+        });
     let (messages, warnings) = crate::safety::guard_messages(&messages);
     if !warnings.is_empty() {
-        ctx.update(json!({"warnings": warnings}));
+        ctx.update(json!({"warnings": warnings, "tools_off": tools_off}));
     }
     let wanted = Some(s(&req, "model"))
         .filter(|m| !m.is_empty())
@@ -603,8 +621,8 @@ pub async fn run(ctx: Ctx) -> JobResult {
         .collect();
     let tools: Vec<Value> = tool_specs()
         .into_iter()
-        // flagged content: no tools this turn (the warning shown to the user says so)
-        .filter(|(n, _)| wanted_tools.contains(n) && warnings.is_empty())
+        // flagged content in the newest message: no tools this turn (the warning shown to the user says so)
+        .filter(|(n, _)| wanted_tools.contains(n) && !tools_off)
         .map(|(n, spec)| {
             let mut f = Map::new();
             f.insert("name".into(), json!(n));
