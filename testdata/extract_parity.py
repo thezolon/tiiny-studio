@@ -86,6 +86,11 @@ EXTRA = {
         "ppt/_rels/presentation.xml.rels": '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Target="slides/slide1.xml"/><Relationship Id="rId2" Target="slides/slide2.xml"/></Relationships>',
         "ppt/slides/slide1.xml": '<p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><p:cSld><p:spTree><p:sp><p:txBody><a:p><a:r><a:t>FIRSTFILE</a:t></a:r></a:p></p:txBody></p:sp></p:spTree></p:cSld></p:sld>',
         "ppt/slides/slide2.xml": '<p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><p:cSld><p:spTree><p:sp><p:txBody><a:p><a:r><a:t>SECONDFILE</a:t></a:r></a:p></p:txBody></p:sp></p:spTree></p:cSld></p:sld>'}),
+    "pct.epub": zipped({
+        "META-INF/container.xml": '<container><rootfiles><rootfile full-path="OEBPS/content.opf"/></rootfiles></container>',
+        "OEBPS/content.opf": '<package xmlns="http://www.idpf.org/2007/opf"><manifest><item id="c1" href="My%20Chapter.xhtml#top"/><item id="c2" href="plain.xhtml"/></manifest><spine><itemref idref="c1"/><itemref idref="c2"/></spine></package>',
+        "OEBPS/My Chapter.xhtml": "<html><body><p>PERCENTCHAPTER</p></body></html>",
+        "OEBPS/plain.xhtml": "<html><body><p>PLAINCHAPTER</p></body></html>"}),
     "messy.html": (b"<!DOCTYPE html><html><head><title>T</title><style>p{color:red}</style></head><body>"
                    b"<h1>Head &amp; <em>tail</em></h1><p>Para one<br>line two &copy; &#x41;&#66; &bogus; &lt;b&gt;</p>"
                    b"<div>div text</div><ul><li>a<ul><li>nested</li></ul></li><li>b</li></ul>"
