@@ -28,9 +28,12 @@ jobs:
     name: Version check
     runs-on: ubuntu-24.04
     timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read   # to list the Rust workflow's runs
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
-        with: { persist-credentials: false }
+        with: { persist-credentials: false, fetch-depth: 0 }   # full history: is the tag's commit on main?
       - name: VERSION, Cargo.toml, tauri.conf.json and the tag agree
         shell: bash
         run: |
@@ -45,6 +48,24 @@ jobs:
             echo "::error::tag $GITHUB_REF_NAME doesn't match VERSION ($v)"; ok=
           fi
           [ -n "$ok" ]
+      - name: A release tag is on main, and its commit passed the Rust checks
+        # test tags (v<VERSION>-<anything>) and manual runs are for trying a branch out, so they skip this
+        if: github.ref_type == 'tag' && !contains(github.ref_name, '-')
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git fetch --no-tags origin main
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error::$GITHUB_REF_NAME ($GITHUB_SHA) is not on main. Merge the release PR first and tag the merge commit."
+            exit 1
+          fi
+          # rust.yml runs on main for every change that touches rust/ (a release PR always changes rust/Cargo.toml)
+          ok=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow rust.yml --commit "$GITHUB_SHA" --json conclusion --jq '[.[] | select(.conclusion == "success")] | length')
+          if [ "${ok:-0}" -lt 1 ]; then
+            echo "::error::The Rust workflow has no successful run for $GITHUB_SHA. Wait for it to finish (or fix it) before tagging."
+            exit 1
+          fi
 
   apps:
     name: Desktop app for ${{ matrix.name }}

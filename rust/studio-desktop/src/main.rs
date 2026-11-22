@@ -12,6 +12,36 @@ use tauri_plugin_autostart::ManagerExt;
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 use tauri_plugin_opener::OpenerExt;
 
+/// STUDIO_PASSWORD as the app's server sees it; the app's own calls to that server send it (no loopback exemption
+/// on the server: a proxy in front of it is loopback too).
+static PASSWORD: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
+/// `Authorization` header value for the studio's HTTP basic auth (any username), if a password is set.
+fn basic_auth(password: &str) -> Option<String> {
+    use base64::Engine;
+    (!password.is_empty()).then(|| {
+        format!(
+            "Basic {}",
+            base64::engine::general_purpose::STANDARD.encode(format!("tiiny:{password}"))
+        )
+    })
+}
+
+/// HTTP client for the app's own calls to its server, with the password when one is set.
+fn own_client() -> reqwest::Client {
+    let mut headers = reqwest::header::HeaderMap::new();
+    if let Some(mut v) = basic_auth(PASSWORD.get().map_or("", String::as_str))
+        .and_then(|v| reqwest::header::HeaderValue::from_str(&v).ok())
+    {
+        v.set_sensitive(true);
+        headers.insert(reqwest::header::AUTHORIZATION, v);
+    }
+    reqwest::Client::builder()
+        .default_headers(headers)
+        .build()
+        .unwrap_or_default()
+}
+
 fn show_main(app: &AppHandle) {
     if let Some(w) = app.get_webview_window("main") {
         let _ = w.unminimize();
@@ -33,7 +63,7 @@ fn power_off(app: &AppHandle, port: u16) {
                 return;
             }
             tauri::async_runtime::spawn(async move {
-                let res = reqwest::Client::new().post(format!("http://127.0.0.1:{port}/api/device/shutdown")).send().await;
+                let res = own_client().post(format!("http://127.0.0.1:{port}/api/device/shutdown")).send().await;
                 let msg = match res {
                     Ok(r) if r.status().is_success() => {
                         if device_goes_off(port).await {
@@ -56,7 +86,7 @@ fn power_off(app: &AppHandle, port: u16) {
 /// The device answers "ok" even when its shutdown fails (TiinyOS 0.1.36), so check it actually went away:
 /// true once it stops answering, false if it's still up after a minute.
 async fn device_goes_off(port: u16) -> bool {
-    let http = reqwest::Client::new();
+    let http = own_client();
     let until = std::time::Instant::now() + std::time::Duration::from_secs(60);
     while std::time::Instant::now() < until {
         tokio::time::sleep(std::time::Duration::from_secs(5)).await;
@@ -136,6 +166,7 @@ fn main() {
 
     let mut config = Config::from_env(user_data_dir());
     config.host = "127.0.0.1".into();
+    let _ = PASSWORD.set(config.password.clone());
     config.port = port;
     config.lan_access = false; // LAN sharing is opt-in (Stage 7)
     config.app = true;
@@ -309,7 +340,7 @@ fn keep_awake(port: u16) {
     else {
         return;
     };
-    let http = reqwest::Client::new();
+    let http = own_client();
     let mut awake = Awake::default();
     loop {
         let busy = rt.block_on(async {
@@ -392,7 +423,7 @@ impl Awake {
 /// jobs go first: once the running one lets go of the device, the next queued job would otherwise start just before exit.
 async fn stop_running_jobs(port: u16) {
     let base = format!("http://127.0.0.1:{port}");
-    let http = reqwest::Client::new();
+    let http = own_client();
     let running = |jobs: &serde_json::Value| -> Vec<String> {
         let with = |status: &str| -> Vec<String> {
             jobs.as_array()
@@ -442,6 +473,13 @@ mod tests {
 
     fn u(s: &str) -> tauri::Url {
         s.parse().unwrap()
+    }
+
+    #[test]
+    fn own_calls_carry_the_password() {
+        assert_eq!(basic_auth(""), None);
+        // "tiiny:pw" in base64; the server ignores the user name
+        assert_eq!(basic_auth("pw").as_deref(), Some("Basic dGlpbnk6cHc="));
     }
 
     #[test]

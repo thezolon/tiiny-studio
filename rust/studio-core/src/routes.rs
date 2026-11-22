@@ -261,13 +261,18 @@ async fn authorized(
                 .map(|(_, p)| p.to_string())
                 .unwrap_or_default()
         });
-    if given.is_some_and(|g| constant_time_eq(g.as_bytes(), password.as_bytes())) {
+    if given
+        .as_deref()
+        .is_some_and(|g| constant_time_eq(g.as_bytes(), password.as_bytes()))
+    {
         guards.password.succeeded(ip);
         return next.run(req).await;
     }
     if sent {
         // a browser's first request has no credentials yet (that is the prompt, not a guess)
-        guards.password.failed(ip, "password");
+        guards
+            .password
+            .failed(ip, "password", given.as_deref().unwrap_or(""));
     }
     (
         StatusCode::UNAUTHORIZED,
@@ -284,8 +289,10 @@ async fn authorized(
 /// attempts are refused for a time that doubles with each further failure (1 s, 2 s, 4 s ... up to a minute), and
 /// a good attempt, or ten quiet minutes, starts over. At most `MAX_CLIENTS` addresses are remembered (the one
 /// quiet longest is dropped first). Behind a reverse proxy every client has the proxy's address, so they share
-/// one count there.
-pub(crate) struct AuthGuard(Mutex<Vec<(IpAddr, u32, Instant)>>);
+/// one count there. Repeating the very same wrong credential counts once (a tab left open across a password change
+/// keeps polling with the old one and must not lock the address out); only a keyed fingerprint of the last wrong
+/// credential is kept, never the credential itself.
+pub(crate) struct AuthGuard(Mutex<Vec<(IpAddr, u32, Instant, u64)>>);
 
 const FREE_FAILURES: u32 = 10;
 const MAX_LOCKOUT_SECS: u64 = 60;
@@ -293,6 +300,14 @@ const FORGET_AFTER: Duration = Duration::from_secs(600);
 const MAX_CLIENTS: usize = 256;
 
 pub(crate) static MCP_GUARD: AuthGuard = AuthGuard::new();
+
+/// A hash (keyed randomly per process) to tell a repeated credential from a new guess without keeping the text.
+fn fingerprint(credential: &str) -> u64 {
+    use std::hash::BuildHasher;
+    static KEY: std::sync::OnceLock<std::collections::hash_map::RandomState> =
+        std::sync::OnceLock::new();
+    KEY.get_or_init(Default::default).hash_one(credential)
+}
 
 /// Who is asking: the connection's address (the unspecified address when the server wasn't given it, as in tests).
 pub(crate) fn client_ip(ext: &axum::http::Extensions) -> IpAddr {
@@ -306,7 +321,7 @@ impl AuthGuard {
         AuthGuard(Mutex::new(Vec::new()))
     }
 
-    fn lock(&self) -> std::sync::MutexGuard<'_, Vec<(IpAddr, u32, Instant)>> {
+    fn lock(&self) -> std::sync::MutexGuard<'_, Vec<(IpAddr, u32, Instant, u64)>> {
         self.0.lock().unwrap_or_else(|e| e.into_inner())
     }
 
@@ -316,7 +331,7 @@ impl AuthGuard {
     }
 
     fn wait_at(&self, ip: IpAddr, now: Instant) -> Option<u64> {
-        let (_, n, last) = *self.lock().iter().find(|(a, _, _)| *a == ip)?;
+        let (_, n, last, _) = *self.lock().iter().find(|e| e.0 == ip)?;
         if n < FREE_FAILURES {
             return None;
         }
@@ -327,13 +342,14 @@ impl AuthGuard {
             .map(|left| left.as_secs() + 1)
     }
 
-    pub(crate) fn failed(&self, ip: IpAddr, what: &str) {
-        self.failed_at(ip, Instant::now(), what);
+    pub(crate) fn failed(&self, ip: IpAddr, what: &str, credential: &str) {
+        self.failed_at(ip, Instant::now(), what, credential);
     }
 
-    fn failed_at(&self, ip: IpAddr, now: Instant, what: &str) {
+    fn failed_at(&self, ip: IpAddr, now: Instant, what: &str, credential: &str) {
+        let print = fingerprint(credential);
         let mut g = self.lock();
-        let i = match g.iter().position(|(a, _, _)| *a == ip) {
+        let i = match g.iter().position(|e| e.0 == ip) {
             Some(i) => i,
             None => {
                 if g.len() >= MAX_CLIENTS {
@@ -342,7 +358,7 @@ impl AuthGuard {
                         g.swap_remove(old);
                     }
                 }
-                g.push((ip, 0, now));
+                g.push((ip, 0, now, print));
                 g.len() - 1
             }
         };
@@ -350,6 +366,10 @@ impl AuthGuard {
         if now.saturating_duration_since(e.2) > FORGET_AFTER {
             e.1 = 0;
         }
+        if e.1 > 0 && e.3 == print {
+            return; // the same wrong credential again: nothing new was guessed
+        }
+        e.3 = print;
         e.1 = e.1.saturating_add(1);
         e.2 = now;
         if e.1 == FREE_FAILURES {
@@ -360,7 +380,7 @@ impl AuthGuard {
     }
 
     pub(crate) fn succeeded(&self, ip: IpAddr) {
-        self.lock().retain(|(a, _, _)| *a != ip);
+        self.lock().retain(|e| e.0 != ip);
     }
 }
 
@@ -1583,17 +1603,22 @@ mod tests {
         let g = AuthGuard::new();
         let ip: IpAddr = "192.168.1.20".parse().unwrap();
         let t0 = Instant::now();
-        for _ in 0..FREE_FAILURES - 1 {
-            g.failed_at(ip, t0, "password");
+        for n in 0..FREE_FAILURES - 1 {
+            g.failed_at(ip, t0, "password", &n.to_string());
             assert_eq!(g.wait_at(ip, t0), None);
         }
-        g.failed_at(ip, t0, "password");
+        g.failed_at(ip, t0, "password", "last");
         assert_eq!(g.wait_at(ip, t0), Some(2)); // a 1 s lockout, rounded up
         assert_eq!(g.wait_at(ip, t0 + Duration::from_secs(2)), None);
-        g.failed_at(ip, t0 + Duration::from_secs(2), "password");
+        g.failed_at(ip, t0 + Duration::from_secs(2), "password", "two");
         assert!(g.wait_at(ip, t0 + Duration::from_secs(3)).is_some()); // 2 s now
         for i in 0..20 {
-            g.failed_at(ip, t0 + Duration::from_secs(10 + i), "password");
+            g.failed_at(
+                ip,
+                t0 + Duration::from_secs(10 + i),
+                "password",
+                &format!("x{i}"),
+            );
         }
         let t = t0 + Duration::from_secs(30);
         assert!(g.wait_at(ip, t).is_some_and(|w| w <= MAX_LOCKOUT_SECS + 1));
@@ -1627,13 +1652,31 @@ mod tests {
     }
 
     #[test]
+    fn a_repeated_wrong_credential_counts_once() {
+        let g = AuthGuard::new();
+        let t0 = Instant::now();
+        let ip: IpAddr = "192.168.1.20".parse().unwrap();
+        // a stale tab polling with the old password must not lock the address out
+        for _ in 0..50 {
+            g.failed_at(ip, t0, "password", "old-password");
+        }
+        assert_eq!(g.wait_at(ip, t0), None);
+        // different wrong ones still add up: 10 free, then a wait
+        let other: IpAddr = "192.168.1.21".parse().unwrap();
+        for n in 0..FREE_FAILURES {
+            g.failed_at(other, t0, "password", &format!("guess{n}"));
+        }
+        assert!(g.wait_at(other, t0).is_some());
+    }
+
+    #[test]
     fn one_clients_failures_do_not_lock_out_another() {
         let g = AuthGuard::new();
         let t0 = Instant::now();
         let guesser: IpAddr = "192.168.1.66".parse().unwrap();
         let user: IpAddr = "192.168.1.20".parse().unwrap();
-        for _ in 0..FREE_FAILURES + 3 {
-            g.failed_at(guesser, t0, "password");
+        for n in 0..FREE_FAILURES + 3 {
+            g.failed_at(guesser, t0, "password", &n.to_string());
         }
         assert!(g.wait_at(guesser, t0).is_some());
         assert_eq!(g.wait_at(user, t0), None);
@@ -1642,7 +1685,12 @@ mod tests {
         // the table stays bounded, dropping the address quiet the longest
         for i in 0..(MAX_CLIENTS as u32 + 50) {
             let ip = IpAddr::from(std::net::Ipv4Addr::from(0x0a00_0000 + i));
-            g.failed_at(ip, t0 + Duration::from_secs(1 + u64::from(i)), "password");
+            g.failed_at(
+                ip,
+                t0 + Duration::from_secs(1 + u64::from(i)),
+                "password",
+                "p",
+            );
         }
         assert!(g.0.lock().unwrap().len() <= MAX_CLIENTS);
         assert_eq!(g.wait_at(guesser, t0), None, "the oldest was dropped");
@@ -1665,8 +1713,13 @@ mod tests {
                 .unwrap()
         };
         let mut last = StatusCode::OK;
-        for _ in 0..FREE_FAILURES + 1 {
-            last = a.clone().oneshot(req("wrong")).await.unwrap().status();
+        for n in 0..FREE_FAILURES + 1 {
+            last = a
+                .clone()
+                .oneshot(req(&format!("wrong{n}")))
+                .await
+                .unwrap()
+                .status();
         }
         assert_eq!(last, StatusCode::TOO_MANY_REQUESTS);
         // even the right password waits while the lockout lasts
