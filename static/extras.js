@@ -141,6 +141,9 @@ function statsCard() {
   const fmt = (v, unit, d = 0) => (typeof v === "number" ? `${v.toFixed(d)}${unit}` : "—");
   const bar = (v) => el("div", { class: "bar stat-bar" }, el("i", { style: `width:${Math.max(0, Math.min(100, v || 0))}%` }));
   const memPct = s.npu_mem_used_mb && s.npu_mem_total_mb ? s.npu_mem_used_mb / s.npu_mem_total_mb * 100 : null;
+  // nothing to show (no readings at all): one line, so the model list isn't pushed down the panel
+  const none = !["npu_util", "npu_power_w", "npu_temp_c", "cpu_pct", "mem_pct", "disk_free_gb"].some((k) => typeof s[k] === "number") && !memPct;
+  if (none) return el("div", { class: "hint-line", id: "statsCard" }, "Device activity: no readings yet. Power and temperature need the optional community dashboard on the Tiiny; NPU activity shows while a model is loaded.");
   return el("div", { class: "npu stats", id: "statsCard" },
     el("div", { class: "npu-top" }, el("span", {}, "Device activity"), el("span", {}, el("b", {}, fmt(s.npu_util, "%")), " NPU busy")),
     bar(s.npu_util),
@@ -151,7 +154,7 @@ function statsCard() {
       el("div", {}, el("small", {}, "CPU / RAM"), el("b", {}, `${fmt(s.cpu_pct, "%")} / ${fmt(s.mem_pct, "%")}`))),
     typeof s.disk_free_gb === "number" && typeof s.disk_total_gb === "number"
       ? el("div", { class: "hint-line", style: s.disk_free_gb < 10 ? "color:var(--warn)" : "" }, `Storage: ${Math.round(s.disk_free_gb)} GB free of ${Math.round(s.disk_total_gb)} GB`) : null,
-    (s.source || []).includes("dashboard") ? null : el("div", { class: "hint-line" }, "Power and temperature need the on-device dashboard (port 9109); NPU activity shows while a model is loaded."));
+    (s.source || []).includes("dashboard") ? null : el("div", { class: "hint-line" }, "Power and temperature need the optional community dashboard on the Tiiny; NPU activity shows while a model is loaded."));
 }
 
 /* ---------- OCR ---------- */

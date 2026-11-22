@@ -46,10 +46,10 @@ const STYLE_REF_MAX = 30;
 for (const k of ["audio.text", "audio.caption", "audio.lyrics"]) { try { localStorage.removeItem("tiiny." + k); } catch {} }
 const AUDIO_KINDS = new Set(["speech", "loop", "song", "transcript"]);
 const TOOLS = [
-  { id: "speech", label: "Voice", icon: "i-voice", what: "text-to-speech" },
-  { id: "loop", label: "Loop", icon: "i-wave", what: "loop" },
-  { id: "song", label: "Song", icon: "i-music", what: "song" },
-  { id: "transcribe", label: "Transcribe", icon: "i-text", what: "speech-recognition" },
+  { id: "speech", label: "Voice", icon: "i-voice", what: "text-to-speech", blurb: "Speak text, or clone a voice" },
+  { id: "loop", label: "Loop", icon: "i-wave", what: "loop", blurb: "A few bars at your tempo and key" },
+  { id: "song", label: "Song", icon: "i-music", what: "song", blurb: "A full song from a style and lyrics" },
+  { id: "transcribe", label: "Transcribe", icon: "i-text", what: "speech-recognition", blurb: "Speech or a song to text" },
 ];
 
 const A = {
@@ -101,6 +101,7 @@ const AudioWS = {
     $("#aGoLabel").textContent = loads ? `Queue (loads ${shortName(loads.id)})` : labels[A.tool];
     $("#aGoEst").textContent = p.ok ? "~" + fmtSec(p.est + (loads ? LOAD_EST : 0)) : "";
     $("#aGo").disabled = !ready || !p.ok;
+    this.setWhy(ready ? p.why : "");
     $("#aGo").title = !ready ? "Load the model first" : p.why || (loads ? `${shortName(loads.id)} is loaded when this job's turn comes` : "");
   },
 
@@ -558,7 +559,7 @@ const AudioWS = {
       el("div", { class: "art" }, icon("i-wave")),
       el("h2", {}, "Voices, loops, songs and transcripts"),
       el("p", {}, "Clone a voice from a few seconds of audio, build tempo-locked loops, write a full song, or turn speech into text — all on the Tiiny."),
-      el("div", { class: "tool-tiles" }, TOOLS.map((t) => el("button", { class: "tile", onclick: () => { A.tool = t.id; store.set("audio.tool", t.id); this.render(); } }, icon(t.icon), el("b", {}, t.label), el("small", {}, mediaBadges(modelForTool(t.id) || { type: TOOL_TYPES[t.id] }).slice(0, 2).join(" · ")))))));
+      el("div", { class: "tool-tiles" }, TOOLS.map((t) => el("button", { class: "tile", onclick: () => { A.tool = t.id; store.set("audio.tool", t.id); this.render(); } }, icon(t.icon), el("b", {}, t.label), el("small", {}, t.blurb))))));
   },
 
   /* ---------- actions ---------- */

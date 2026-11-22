@@ -163,6 +163,7 @@ function queueList() {
   return el("div", { class: "mm-queue" },
     el("div", { class: "npu-top" }, el("span", {}, el("b", {}, `Queue · ${items.length}`), items.length ? ` · ${GB(total)}, one after another` : ""),
       items.length ? el("button", { class: "btn-sm ghost", onclick: () => queuePost("dequeue", { all: true }, "Queue cleared") }, "Clear queue") : null),
+    items.length && S.downloads.some((d) => d.status === "paused") ? el("div", { class: "hint-line" }, "A download is paused, so the queue is waiting. Resume it or cancel it and the next one starts.") : null,
     q.stopped ? el("div", { class: "confirm mm-stopped" }, el("b", {}, "The queue stopped. "), q.stopped,
       el("div", { class: "row" }, el("button", { class: "btn-sm accent", onclick: () => queuePost("resume", {}, "Queue resumed") }, "Resume the queue"))) : null,
     items.length ? el("ol", { class: "mm-queue-list", "aria-label": "Waiting to download" }, items.map((i) => el("li", { class: "other-row" },

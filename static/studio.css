@@ -219,6 +219,7 @@ textarea.lyrics:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(-
 .dev-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--faint); flex: none; }
 .dev-dot.ok { background: var(--ok); box-shadow: 0 0 0 3px var(--ok-soft); }
 .dev-dot.bad { background: var(--err); }
+.dev-dot.warn { background: var(--warn); box-shadow: 0 0 0 3px var(--warn-soft); }
 .icon-btn.sm { width: 26px; height: 26px; font-size: 13px; }
 .dev-del:hover { color: var(--err); }
 .dev-auto { font-size: 12px; }
@@ -265,7 +266,7 @@ textarea.lyrics:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(-
 
 /* OCR result */
 .ocr-text { width: 100%; min-height: 220px; max-height: 55vh; resize: vertical; margin-top: 12px; padding: 12px; border-radius: 10px; border: 1px solid var(--edge); background: var(--panel-2); color: var(--text); font: 13.5px/1.55 ui-monospace, Menlo, monospace; }
-.btn-sm.toggle[aria-pressed="true"] { border-color: var(--accent); color: var(--text); background: var(--accent-soft); }
+.btn-sm.toggle.on, .btn-sm.toggle[aria-pressed="true"] { border-color: var(--accent); color: var(--text); background: var(--accent-soft); }
 .ocr-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .ocr-meta { color: var(--faint); min-width: 0; }
 .ocr-progress { height: 4px; margin-top: 12px; border-radius: 4px; background: var(--panel-2); overflow: hidden; }
@@ -346,7 +347,7 @@ textarea.lyrics:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(-
 .chat-attach .att { position: relative; display: flex; align-items: center; gap: 6px; padding: 4px 26px 4px 6px; border: 1px solid var(--line); border-radius: 8px; font-size: 12.5px; background: var(--panel-2); }
 .chat-attach .att img { height: 40px; border-radius: 5px; }
 .chat-attach .att .x { position: absolute; right: 4px; top: 50%; transform: translateY(-50%); border: 0; background: none; color: var(--faint); cursor: pointer; }
-@media (max-width: 900px) { #wsChat.main { grid-template-columns: 1fr; } .chat-side { display: none; } }
+@media (max-width: 900px) { #wsChat.main { grid-template-columns: 1fr; } }
 
 /* shown only where the server can open the results folder (this computer, not Docker) */
 .gal-open-folder, .show-in-folder { display: none; }
@@ -891,4 +892,40 @@ span.pick-use { opacity: .85; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; scroll-behavior: auto !important; }
   .thumb:hover, .thumb-cell:hover { transform: none; }
+}
+
+/* ---------- 0.7.1 UX review (#145) ---------- */
+/* why the main button is dimmed, in words (a tooltip on a disabled button never shows on touch) */
+.go-why { margin-top: 8px; color: var(--warn); font-size: 12.5px; text-align: center; }
+.go-why:empty { display: none; }
+.chat-side-top { display: flex; align-items: center; gap: 8px; }
+.chat-side-top .chat-new { flex: 1; width: auto; }
+.chat-sheet-btn, .chat-sheet-close, .chat-scrim { display: none; }
+.toast { cursor: pointer; }
+.jobs-menu { max-width: min(420px, calc(100vw - 16px)); }
+.jobs-menu-row > .btn-sm { flex: none; }
+.msg-error .btn-sm { margin-left: 10px; }
+@media (hover: none) { .chat-item .x { opacity: 1; } .key-hint { display: none; } }
+@media (max-width: 900px) {
+  /* the chat list is a sheet over the chat (the Chats button in its head opens it) */
+  .chat-sheet-btn, .chat-sheet-close { display: inline-flex; }
+  .chat-side { position: fixed; z-index: 45; top: 0; bottom: 0; left: 0; width: min(320px, 88vw); visibility: hidden; transform: translateX(-102%);
+    transition: transform .18s ease, visibility .18s; box-shadow: var(--shadow); border-right: 1px solid var(--line-2); }
+  .chat-side.open { visibility: visible; transform: none; }
+  .chat-side.open + .chat-scrim { display: block; position: fixed; inset: 0; z-index: 44; background: rgba(0,0,0,.5); }
+  .chat-head { padding: 10px 14px; }
+  .chat-composer { padding: 10px 14px 12px; }
+  .key-hint { display: none; }
+  /* errors and notes show under the top bar, clear of the sticky action buttons at the bottom */
+  .toasts { top: 8px; bottom: auto; left: 8px; right: 8px; }
+  .toast { max-width: none; }
+  .strip-head > .hint { display: none; }
+  .gal-btn { min-height: 32px; padding: 4px 10px; }
+  .jobs-pill { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-right: 0; }
+}
+@media (max-width: 520px) {
+  /* pill, model button and gear stay on one row: the model button drops its second line and its arrow */
+  .model-btn { max-width: 150px; padding-right: 8px; }
+  .model-btn .cp, .model-btn > svg { display: none; }
+  .jobs-pill { max-width: 130px; }
 }
