@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.7.0 (2026-11-21)
+
+Install, update and remove models from the studio: the Tiiny's Model Store is now in the Models panel, so you no
+longer need the TiinyOS app for it (requested on the Tiiny Discord).
+
+- **Model Store:** a new tab in the Models panel lists every model the Tiiny's store offers, with all of its details
+  (context length, NPU share, download size, features, thinking, image sizes, store dates and more than TiinyOS shows),
+  plus search, a filter per workspace and "Hide installed". Download asks first, with the size, and says the Tiiny
+  downloads over its own Wi-Fi (even when the studio is connected by USB).
+- **Downloads and the download queue:** a download shows its progress and time left, and can be paused, resumed or
+  cancelled. Start more while one runs and they wait in a queue, one after another; remove any of them or clear the
+  queue. It keeps going with the window closed, and stops with the reason (for example no internet, or not enough
+  space) instead of carrying on.
+- **Updates:** the Installed tab shows which models have an update, with Update or Update all (through the queue). An
+  update deletes the old build and downloads the new one; if that download fails or is cancelled, the model is listed
+  as missing with a button to download it again. "No updates" also says the Tiiny can't see updates while offline.
+- **Delete** any installed model, with a confirm naming the model and its size. A model that's loaded, loading or
+  busy with a job is never deleted or updated.
+- When a tab has no model of its kind installed, it now offers **Open the Model Store** instead of sending you to the
+  TiinyOS app.
+- Technical: new routes `GET /api/store` and `/api/downloads`, and `POST /api/model/{download,pause,cancel,delete,update,
+  queue,dequeue,resume,dismiss}`, in both servers. Every change runs its checks and its device calls under one lock.
+  Free space is read fresh for each check; an update needs only its growth plus 2 GB. Agents (MCP) can't download,
+  update or delete. Device behaviour checked on TiinyOS 0.1.39: a paused download reads `download_stop`, downloading
+  again resumes it, `/interrupt` doesn't cancel downloads (pause + DELETE does). `docs/DEVICE-API.md` is updated. Tests:
+  24 contract tests for the store and the queue, a browser click-through in CI, and `testdata/model_store_test.py`,
+  which passed 24 of 24 through the studio on a real Tiiny.
+
 ## 0.6.6 (2026-11-21)
 
 Songs can borrow the feel of a piece of music, Fedora gets its own package, and long chat replies are lighter on the

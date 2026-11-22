@@ -1,7 +1,7 @@
 # Roadmap
 
-Where Tiiny Studio stands, what's next, and what doesn't work yet. Version **0.6.6**, checked against TiinyOS
-0.1.35 to 0.1.38 on a Tiiny Pocket.
+Where Tiiny Studio stands, what's next, and what doesn't work yet. Version **0.7.0**, checked against TiinyOS
+0.1.35 to 0.1.39 on a Tiiny Pocket.
 
 ## Works now
 
