@@ -606,13 +606,57 @@ function thumbDel(onDelete) {
   b.addEventListener("click", act);
   return b;
 }
+/* Video thumbnails are still frames, not <video> elements: each <video> keeps a decoder and its open files alive, and the
+   strip is redrawn every second while a job runs, so WebKitGTK ran out of file handles ("Too many open files") and its
+   web process crashed (reported 2026-11-22). One clip at a time is opened, a frame is drawn into an image, the decoder
+   is released, and the frame is kept per file. The placeholder icon stays when a clip can't be read. */
+const VIDEO_FRAMES = new Map(), FRAME_WAIT = new Map();  // file -> image data URI ("" = unreadable); file -> placeholder
+let frameBusy = false;
+function videoFrame(src, ph) {
+  const got = VIDEO_FRAMES.get(src);
+  if (got) return ph.replaceWith(frameImg(got));
+  if (got === "") return;
+  FRAME_WAIT.delete(src); FRAME_WAIT.set(src, ph);  // the newest placeholder for this file is the one on screen
+  nextFrame();
+}
+/** Stops the <video> players under root and frees their decoders before root is redrawn. */
+function releaseVideos(root) { for (const v of root?.querySelectorAll("video") || []) { v.pause(); v.removeAttribute("src"); v.load(); } }
+function frameImg(uri) { return el("img", { src: uri, alt: "", class: "video-still" }); }
+function nextFrame() {
+  if (frameBusy || !FRAME_WAIT.size) return;
+  const [src] = FRAME_WAIT.keys();
+  frameBusy = true;
+  const v = document.createElement("video");
+  let timer = 0;
+  const done = (uri) => {
+    clearTimeout(timer);
+    v.onloadedmetadata = v.onseeked = v.onerror = null;
+    v.removeAttribute("src"); v.load();  // frees the decoder now instead of at garbage collection
+    VIDEO_FRAMES.set(src, uri);
+    const ph = FRAME_WAIT.get(src); FRAME_WAIT.delete(src);
+    if (uri && ph?.isConnected) ph.replaceWith(frameImg(uri));
+    frameBusy = false; nextFrame();
+  };
+  v.muted = true; v.preload = "auto";
+  v.onloadedmetadata = () => { v.currentTime = Math.min(0.5, (v.duration || 1) / 2); };
+  v.onseeked = () => {
+    try {
+      const w = 240, h = Math.round(w * (v.videoHeight || 9) / (v.videoWidth || 16)), c = document.createElement("canvas");
+      c.width = w; c.height = h; c.getContext("2d").drawImage(v, 0, 0, w, h);
+      done(c.toDataURL("image/jpeg", 0.8));
+    } catch { done(""); }
+  };
+  v.onerror = () => done("");
+  timer = setTimeout(() => done(""), 15000);
+  v.src = src;
+}
 function mediaThumb(e, current, onclick) {
   const icons = { speech: "i-voice", loop: "i-wave", song: "i-music", transcript: "i-text", mesh: "i-cube", video: "i-film" };
   const labels = { speech: "VOICE", loop: "LOOP", song: "SONG", transcript: "TEXT", mesh: "3D", video: "VIDEO" };
   const title = e.params?.text || e.params?.prompt || e.params?.caption || e.text || "";
   const t = el("button", { class: "thumb media-thumb", "aria-current": current, title, "aria-label": `${labels[e.kind] || e.kind} ${title}`.trim(), onclick });
   if (e.kind === "mesh" && e.sources?.[0]) t.append(el("img", { src: "/images/" + e.sources[0], alt: "", loading: "lazy" }));
-  else if (e.kind === "video") t.append(el("video", { src: "/images/" + e.outputs[0] + "#t=0.5", muted: true, preload: "metadata" }));
+  else if (e.kind === "video") { const ph = icon("i-film"); t.append(ph); videoFrame("/images/" + e.outputs[0], ph); }
   else t.append(icon(icons[e.kind] || "i-wave"));
   t.append(el("span", { class: "badge" }, labels[e.kind] || e.kind));
   if (e.duration) t.append(el("span", { class: "multi" }, fmtSec(e.duration)));

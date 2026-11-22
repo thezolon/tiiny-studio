@@ -5,6 +5,10 @@
 **Fixed**
 - **Models:** a model that is being loaded is no longer shown as a download; a model that isn't in the Model Store no
   longer shows its progress twice ("41% · 41%"); "No updates found" no longer sounds as if the Tiiny were offline.
+- **Video (Linux):** the app no longer crashes while a video renders when the gallery already holds clips. Each video
+  thumbnail was a live video player, rebuilt every second while a render ran, until WebKit ran out of open files
+  ("Too many open files"). Thumbnails are now still frames, read one clip at a time; replaced players are released.
+  (Reported on the Tiiny Discord.)
 
 ## 0.7.1 (2026-11-22)
 
