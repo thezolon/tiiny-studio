@@ -135,7 +135,36 @@ pub fn cp1252(b: u8) -> char {
     }
 }
 
-/// extract.py's decode(): UTF-8 (BOM dropped), then UTF-16, then cp1252.
+/// Whether BOM-less bytes look like UTF-16: a good share of the sampled bytes are NUL, nearly all of them in
+/// the high byte of each pair. Returns true for big-endian. Latin-1/cp1252 text has no NULs, however its
+/// bytes happen to pair up.
+fn utf16_without_bom(raw: &[u8]) -> Option<bool> {
+    let sample = &raw[..raw.len().min(4096) & !1];
+    let (mut even, mut odd) = (0usize, 0usize);
+    for (i, &b) in sample.iter().enumerate() {
+        if b == 0 {
+            if i % 2 == 0 {
+                even += 1;
+            } else {
+                odd += 1;
+            }
+        }
+    }
+    let pairs = sample.len() / 2;
+    if pairs == 0 || even + odd < pairs / 4 {
+        return None;
+    }
+    if odd >= even * 4 {
+        Some(false)
+    } else if even >= odd * 4 {
+        Some(true)
+    } else {
+        None
+    }
+}
+
+/// extract.py's decode(): UTF-8 (BOM dropped), then UTF-16 (with a BOM, or BOM-less when it clearly is),
+/// then cp1252.
 pub fn decode(raw: &[u8]) -> String {
     let bom16 = raw.starts_with(&[0xff, 0xfe]) || raw.starts_with(&[0xfe, 0xff]);
     if !bom16 {
@@ -143,13 +172,14 @@ pub fn decode(raw: &[u8]) -> String {
             return s.strip_prefix('\u{feff}').unwrap_or(s).to_string();
         }
     }
-    if raw.len().is_multiple_of(2) {
+    let guess = if bom16 { None } else { utf16_without_bom(raw) };
+    if raw.len().is_multiple_of(2) && (bom16 || guess.is_some()) {
         let (be, body) = if raw.starts_with(&[0xfe, 0xff]) {
             (true, &raw[2..])
         } else if raw.starts_with(&[0xff, 0xfe]) {
             (false, &raw[2..])
         } else {
-            (false, raw)
+            (guess == Some(true), raw)
         };
         let units: Vec<u16> = body
             .chunks(2)
@@ -170,24 +200,32 @@ pub fn decode(raw: &[u8]) -> String {
 
 /// Plain text: paragraphs split at blank lines (`\n\s*\n`), line breaks kept.
 pub fn text_blocks(doc: &mut Doc, text: &str) {
-    let text = text.replace("\r\n", "\n").replace('\r', "\n");
-    let ch: Vec<(usize, char)> = text.char_indices().collect();
-    let (mut start, mut i) = (0, 0);
-    let mut paras = Vec::new();
-    while i < ch.len() {
-        if ch[i].1 == '\n' {
-            let mut j = i + 1;
-            while j < ch.len() && is_space(ch[j].1) {
-                j += 1;
-            }
-            if let Some(k) = (i + 1..j).rev().find(|&k| ch[k].1 == '\n') {
-                paras.push(&text[start..ch[i].0]);
-                start = ch[k].0 + 1;
-                i = k + 1;
-                continue;
-            }
+    let text = if text.contains('\r') {
+        text.replace("\r\n", "\n").replace('\r', "\n")
+    } else {
+        text.to_string()
+    };
+    let (mut start, mut paras) = (0, Vec::new());
+    let mut it = text.char_indices().peekable();
+    while let Some((i, c)) = it.next() {
+        if c != '\n' {
+            continue;
         }
-        i += 1;
+        // the whitespace after this newline: a paragraph break when it holds another newline (the last one wins)
+        let mut last_nl = None;
+        while let Some(&(k, w)) = it.peek() {
+            if !is_space(w) {
+                break;
+            }
+            if w == '\n' {
+                last_nl = Some(k);
+            }
+            it.next();
+        }
+        if let Some(k) = last_nl {
+            paras.push(&text[start..i]);
+            start = k + 1;
+        }
     }
     paras.push(&text[start..]);
     for p in paras {
@@ -202,17 +240,16 @@ pub fn json_text(data: &[u8]) -> String {
     super::json::pretty(&text).unwrap_or(text)
 }
 
-/// CSV/TSV into one table block (at most MAX_ROWS rows).
-pub fn csv_table(doc: &mut Doc, data: &[u8], tab: bool) -> R<()> {
+/// The rows of a CSV/TSV text (at most MAX_ROWS), by Python's csv rules.
+fn csv_rows(text: &str, tab: bool) -> R<Vec<Vec<String>>> {
     use super::csv::{sniff, Dialect, Reader};
-    let text = decode(data);
     let dialect = if tab {
         Dialect::excel_tab()
     } else {
         let sample: String = text.chars().take(4096).collect();
         sniff(&sample, ",;\t|")?.unwrap_or_else(Dialect::excel)
     };
-    let mut reader = Reader::new(&text, dialect);
+    let mut reader = Reader::new(text, dialect);
     let mut rows = Vec::new();
     while rows.len() < super::MAX_ROWS {
         match reader.next_row()? {
@@ -223,6 +260,17 @@ pub fn csv_table(doc: &mut Doc, data: &[u8], tab: bool) -> R<()> {
     if rows.len() == super::MAX_ROWS {
         reader.next_row()?; // Python's zip() pulls one more row before it stops, and can fail on it
     }
-    doc.add(Block::Table(rows));
+    Ok(rows)
+}
+
+/// CSV/TSV into one table block (at most MAX_ROWS rows). Line ends are normalised first (a file with bare
+/// CRs is one line to Python's reader); a file the reader refuses (an unclosed quote swallows the rest, or a
+/// cell is over the field limit) is shown as plain text instead of failing.
+pub fn csv_table(doc: &mut Doc, data: &[u8], tab: bool) -> R<()> {
+    let text = decode(data).replace("\r\n", "\n").replace('\r', "\n");
+    match csv_rows(&text, tab) {
+        Ok(rows) => doc.add(Block::Table(rows)),
+        Err(_) => text_blocks(doc, strip(&text)),
+    }
     Ok(())
 }

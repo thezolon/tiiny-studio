@@ -5,7 +5,12 @@ use std::collections::HashMap;
 use super::render::Block;
 use super::text::{py_int, strip};
 use super::xml::{draw, office, pres, style, table, text, xlink, Elem};
-use super::{Doc, Fail, MAX_ROWS, R};
+use super::{Doc, Fail, MAX_CELLS, MAX_COLS, MAX_ROWS, R};
+
+/// Longest run of spaces one `text:s` stands for, and the most text one paragraph keeps; a file can claim
+/// any count, and 100 billion spaces would be one allocation.
+const MAX_SPACES: i64 = 1000;
+const MAX_INLINE: usize = 16 << 20;
 
 /// List style name -> {level: numbered?}
 type Styles = HashMap<Option<String>, HashMap<i64, bool>>;
@@ -18,9 +23,12 @@ fn int(v: Option<&str>, default: &str) -> R<i64> {
 fn inline(el: &Elem) -> R<String> {
     let mut out = el.text.clone();
     for c in &el.kids {
+        if out.len() > MAX_INLINE {
+            break;
+        }
         let t = c.tag.as_str();
         if t == text!("s") {
-            out.push_str(&" ".repeat(int(c.get(text!("c")), "1")?.max(0) as usize));
+            out.push_str(&" ".repeat(int(c.get(text!("c")), "1")?.clamp(0, MAX_SPACES) as usize));
         } else if t == text!("tab") {
             out.push('\t');
         } else if t == text!("line-break") {
@@ -86,6 +94,11 @@ fn walk(
             images(doc, c, label)?;
         } else if t == text!("p") {
             doc.add(Block::P(inline(c)?));
+            // a text box anchored in the paragraph (`inline` leaves frames out): its text follows
+            let boxes = c.iter(Some(draw!("text-box")));
+            if !boxes.is_empty() {
+                walk(doc, &boxes, label, styles, depth, style)?;
+            }
             images(doc, c, label)?;
         } else if t == text!("list") {
             let st = c
@@ -175,15 +188,21 @@ pub fn odf(doc: &mut Doc) -> R<()> {
     } else if let Some(sheets) = body.child(office!("spreadsheet")) {
         for t in sheets.iter(Some(table!("table"))) {
             let mut rows: Vec<Vec<String>> = vec![];
+            let mut cell_count = 0usize;
+            doc.check()?;
             for row in t.iter(Some(table!("table-row"))) {
                 let mut cells: Vec<String> = vec![];
                 for c in row.kids.iter().filter(|k| {
                     k.tag == table!("table-cell") || k.tag == table!("covered-table-cell")
                 }) {
                     let val = paragraphs(c, false)?;
+                    // a gap of empty cells is one cell repeated: keep it, or what follows lands in the wrong column
                     let n = int(c.get(table!("number-columns-repeated")), "1")?
-                        .min(if val.is_empty() { 1 } else { 50 });
+                        .min(if val.is_empty() { 256 } else { 50 });
                     for _ in 0..n.max(0) {
+                        if cells.len() >= MAX_COLS {
+                            break;
+                        }
                         cells.push(val.clone());
                     }
                 }
@@ -191,9 +210,10 @@ pub fn odf(doc: &mut Doc) -> R<()> {
                     cells.pop();
                 }
                 if !cells.is_empty() {
+                    cell_count += cells.len();
                     rows.push(cells);
                 }
-                if rows.len() >= MAX_ROWS {
+                if rows.len() >= MAX_ROWS || cell_count >= MAX_CELLS {
                     break;
                 }
             }

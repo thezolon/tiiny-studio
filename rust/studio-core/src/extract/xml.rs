@@ -160,7 +160,14 @@ fn qname(ns: Option<&str>, local: &str) -> String {
     }
 }
 
-fn convert(n: Node) -> Elem {
+/// How deep elements may nest. Real documents stay far below this (nested tables and text boxes reach a few
+/// dozen); the readers recurse once per level, so the limit keeps a crafted file from overflowing the stack.
+pub const MAX_DEPTH: usize = 128;
+
+fn convert(n: Node, depth: usize) -> Result<Elem, ()> {
+    if depth > MAX_DEPTH {
+        return Err(());
+    }
     let tn = n.tag_name();
     let mut e = Elem {
         tag: qname(tn.namespace(), tn.name()),
@@ -172,7 +179,7 @@ fn convert(n: Node) -> Elem {
         .collect();
     for c in n.children() {
         if c.is_element() {
-            e.kids.push(convert(c));
+            e.kids.push(convert(c, depth + 1)?);
         } else if c.is_text() {
             let t = c.text().unwrap_or("");
             match e.kids.last_mut() {
@@ -181,7 +188,7 @@ fn convert(n: Node) -> Elem {
             }
         }
     }
-    e
+    Ok(e)
 }
 
 /// The document as text: UTF-8 (or UTF-16 with a BOM), else the encoding its XML declaration names.
@@ -219,13 +226,66 @@ fn to_text(b: &[u8]) -> Option<String> {
         .map(|c| c.into_owned())
 }
 
+/// Whether elements nest deeper than MAX_DEPTH, counted on the raw text before any parser sees it (the parser
+/// and everything that walks its tree recurse, so a file must not get that far). Comments, CDATA, processing
+/// instructions and declarations are skipped; quotes in tags are honoured.
+fn too_deep(text: &str) -> bool {
+    let b = text.as_bytes();
+    let (mut i, mut depth) = (0usize, 0usize);
+    let find = |from: usize, pat: &[u8]| {
+        b[from.min(b.len())..]
+            .windows(pat.len())
+            .position(|w| w == pat)
+            .map_or(b.len(), |p| from + p + pat.len())
+    };
+    while let Some(p) = b[i..].iter().position(|&c| c == b'<') {
+        i += p;
+        let rest = &b[i..];
+        if rest.starts_with(b"<!--") {
+            i = find(i + 4, b"-->");
+        } else if rest.starts_with(b"<![CDATA[") {
+            i = find(i + 9, b"]]>");
+        } else if rest.starts_with(b"<?") {
+            i = find(i + 2, b"?>");
+        } else if rest.starts_with(b"<!") {
+            i = find(i + 2, b">");
+        } else if rest.starts_with(b"</") {
+            depth = depth.saturating_sub(1);
+            i = find(i + 2, b">");
+        } else {
+            // a start tag: to its closing '>', outside quotes
+            let (mut j, mut quote) = (i + 1, 0u8);
+            while j < b.len() {
+                match (quote, b[j]) {
+                    (0, b'"' | b'\'') => quote = b[j],
+                    (q, c) if q != 0 && c == q => quote = 0,
+                    (0, b'>') => break,
+                    _ => {}
+                }
+                j += 1;
+            }
+            if !(j > i + 1 && b.get(j - 1) == Some(&b'/')) {
+                depth += 1;
+                if depth > MAX_DEPTH {
+                    return true;
+                }
+            }
+            i = j + 1;
+        }
+    }
+    false
+}
+
 /// `ET.fromstring`; Err(()) is a parse error.
 pub fn parse(bytes: &[u8]) -> Result<Elem, ()> {
     let text = to_text(bytes).ok_or(())?;
+    if too_deep(&text) {
+        return Err(());
+    }
     let opts = ParsingOptions {
         allow_dtd: true,
         ..ParsingOptions::default()
     };
     let doc = Document::parse_with_options(&text, opts).map_err(|_| ())?;
-    Ok(convert(doc.root_element()))
+    convert(doc.root_element(), 1)
 }

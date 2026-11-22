@@ -847,7 +847,9 @@ async fn read_document(state: &AppState, a: &Value) -> Out {
     let name = Some(arg(a, "name"))
         .filter(|n| !n.is_empty())
         .unwrap_or("document");
-    let parts = crate::extract::extract(name, &bytes).map_err(|e| e.0)?;
+    let parts = crate::extract::extract_isolated(name.to_string(), bytes)
+        .await
+        .map_err(|e| e.0)?;
     let parts = parts.as_array().cloned().unwrap_or_default();
     let body: Vec<String> = parts
         .iter()
