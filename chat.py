@@ -229,8 +229,8 @@ def run_chat(m, job, req):
         body = {"model": model, "messages": convo, "stream": True, "max_tokens": int(req.get("max_tokens") or 4096)}
         if mode == "always":  # reasons whatever it's sent
             body["reasoning_effort"] = "medium" if req.get("thinking") else "low"
-        elif mode == "switch":
-            body["chat_template_kwargs"] = {"enable_thinking": bool(req.get("thinking"))}
+        else:  # "switch", and "none" too (off): some models say they can't think yet reason until max_tokens
+            body["chat_template_kwargs"] = {"enable_thinking": mode == "switch" and bool(req.get("thinking"))}
         if tools and usage_rounds < MAX_TOOL_ROUNDS:
             body["tools"] = tools
         job["message"] = "Thinking" if think else "Replying"

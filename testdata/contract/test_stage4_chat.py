@@ -98,7 +98,7 @@ class Chat(ContractCase):
     # ---------- thinking follows the model's own "thinking" info (#23) ----------
     def test_thinking_follows_the_model(self):
         cases = [("Fake/Always-Thinks", "reasoning_effort", "chat_template_kwargs"),   # reasons anyway: never sent enable_thinking
-                 ("Fake/No-Thinking", None, "chat_template_kwargs"),                   # can't reason: sent nothing about it
+                 ("Fake/No-Thinking", "chat_template_kwargs", "reasoning_effort"),   # says it can't reason: told to be off anyway (K1)
                  (fake_tiiny.CHAT_MODEL, "chat_template_kwargs", "reasoning_effort")]  # a switch, as before
         for model, sent, not_sent in cases:
             req = {"kind": "chat", "model": model, "thinking": True, "messages": [{"role": "user", "content": "RUST TEST hi"}]}

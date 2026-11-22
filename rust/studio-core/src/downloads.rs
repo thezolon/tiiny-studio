@@ -90,15 +90,18 @@ fn reason(res: &Value, code: u16) -> String {
     msg.map_or_else(|| code.to_string(), String::from)
 }
 
+/// The device a request goes to: (url, key), or None for whichever is active now.
+type To<'a> = Option<(&'a str, &'a str)>;
+
 /// Every model on the Tiiny, downloads included, in the device's order; or the catalog's error.
-async fn device_rows(state: &AppState) -> Result<Vec<(String, Value)>, Answer> {
+async fn device_rows(state: &AppState, to: To<'_>) -> Result<Vec<(String, Value)>, Answer> {
     let (code, res) = call(
         state,
         "GET",
         "/api/v1/models/?including_downloading=true",
         None,
         15,
-        None,
+        to,
     )
     .await;
     let unreachable = res
@@ -314,7 +317,7 @@ fn round1(x: f64) -> f64 {
 
 /// GET /api/store
 pub async fn model_store(state: &AppState) -> Answer {
-    let rows = match device_rows(state).await {
+    let rows = match device_rows(state, None).await {
         Ok(r) => r,
         Err(e) => return e,
     };
@@ -329,7 +332,7 @@ pub async fn model_store(state: &AppState) -> Answer {
             )),
         ),
     };
-    let updating = queue_lock(state).updating.clone();
+    let updating = Queue::on(&queue_lock(state).updating, &state.settings.current().url);
     let mut models: Vec<Value> = facts
         .iter()
         .map(|(mid, m)| store_entry(mid, Some(m), find(&rows, mid), updating.contains(mid)))
@@ -363,13 +366,13 @@ pub async fn model_store(state: &AppState) -> Answer {
 
 /// GET /api/downloads: small, for polling (names and sizes from the cached store, never fetched here).
 pub async fn downloads(state: &AppState) -> Answer {
-    let rows = match device_rows(state).await {
+    let rows = match device_rows(state, None).await {
         Ok(r) => r,
         Err(e) => return e,
     };
     let facts = stale_facts(state);
     let (queue, missing) = queue_view(state, &facts);
-    let updating = queue_lock(state).updating.clone();
+    let updating = Queue::on(&queue_lock(state).updating, &state.settings.current().url);
     let list: Vec<Value> = rows
         .iter()
         .filter(|(_, r)| under_way(live_status(r)))
@@ -410,13 +413,13 @@ fn valid_id(mid: &str) -> bool {
 }
 
 /// Why a model can't be deleted or updated now (loaded, loading, a job on it), or None.
-async fn model_busy(state: &AppState, mid: &str, name: &str) -> Option<String> {
+async fn model_busy(state: &AppState, mid: &str, name: &str, to: To<'_>) -> Option<String> {
     if state.jobs.active_on(mid) {
         return Some(format!(
             "{name} has a job queued or running. Wait for it to finish first."
         ));
     }
-    let (code, run) = call(state, "GET", "/api/v1/models/running", None, 15, None).await;
+    let (code, run) = call(state, "GET", "/api/v1/models/running", None, 15, to).await;
     if code != 200 {
         return Some(format!(
             "Couldn't check whether {name} is loaded: {}",
@@ -524,12 +527,24 @@ pub async fn model_change(state: &AppState, action: &str, body: &Value) -> Answe
     answer
 }
 
-async fn device_answer(state: &AppState, method: &str, path: String, timeout: u64) -> (u16, Value) {
-    call(state, method, &path, None, timeout, None).await
+async fn device_answer(
+    state: &AppState,
+    method: &str,
+    path: String,
+    timeout: u64,
+    to: To<'_>,
+) -> (u16, Value) {
+    call(state, method, &path, None, timeout, to).await
 }
 
 async fn change_model(state: &AppState, action: &str, mid: &str) -> Answer {
-    let rows = match device_rows(state).await {
+    // One device for the whole change: an auto-switch between two of its calls (an update's delete and its download)
+    // must not send the second to another Tiiny. The store's names and sizes and the free-space check still read the
+    // active device; they only decide whether to go on.
+    let target = state.settings.current();
+    let to: To = Some((target.url.as_str(), target.key.as_str()));
+    let url = target.url.as_str();
+    let rows = match device_rows(state, to).await {
         Ok(r) => r,
         Err(e) => return e,
     };
@@ -571,8 +586,14 @@ async fn change_model(state: &AppState, action: &str, mid: &str) -> Answer {
             if let Some(w) = why {
                 return fail(409, &w);
             }
-            let (code, res) =
-                device_answer(state, "POST", format!("/api/v1/models/{mid}/download"), 60).await;
+            let (code, res) = device_answer(
+                state,
+                "POST",
+                format!("/api/v1/models/{mid}/download"),
+                60,
+                to,
+            )
+            .await;
             if code >= 300 {
                 return refused("start the download of", &res, code);
             }
@@ -587,6 +608,7 @@ async fn change_model(state: &AppState, action: &str, mid: &str) -> Answer {
                 "POST",
                 format!("/api/v1/models/{mid}/pause_download"),
                 30,
+                to,
             )
             .await;
             return if code < 300 {
@@ -600,7 +622,7 @@ async fn change_model(state: &AppState, action: &str, mid: &str) -> Answer {
                 return fail(409, &format!("{name} isn't downloading."));
             }
             // a model the Tiiny reports oddly may still be in use
-            if let Some(why) = model_busy(state, mid, &name).await {
+            if let Some(why) = model_busy(state, mid, &name, to).await {
                 return fail(409, &why);
             }
             // /interrupt only stops chat replies (tested 2026-11-21). Cancel = pause, then delete what was fetched
@@ -611,6 +633,7 @@ async fn change_model(state: &AppState, action: &str, mid: &str) -> Answer {
                     "POST",
                     format!("/api/v1/models/{mid}/pause_download"),
                     30,
+                    to,
                 )
                 .await;
                 if code >= 300 {
@@ -618,14 +641,14 @@ async fn change_model(state: &AppState, action: &str, mid: &str) -> Answer {
                 }
             }
             let (code, res) =
-                device_answer(state, "DELETE", format!("/api/v1/models/{mid}"), 120).await;
+                device_answer(state, "DELETE", format!("/api/v1/models/{mid}"), 120, to).await;
             if code >= 300 {
                 return refused("stop", &res, code);
             }
             let mut q = queue_lock(state);
-            if q.updating.remove(mid) {
+            if q.updating.remove(&(url.to_string(), mid.to_string())) {
                 // its old build was deleted for the update: now it's missing
-                q.missing.insert(mid.to_string());
+                q.missing.insert((url.to_string(), mid.to_string()));
             }
             return (200, json!({"ok": true}));
         }
@@ -664,10 +687,11 @@ async fn change_model(state: &AppState, action: &str, mid: &str) -> Answer {
         }
     }
     // last, right before the change
-    if let Some(why) = model_busy(state, mid, &name).await {
+    if let Some(why) = model_busy(state, mid, &name, to).await {
         return fail(409, &why);
     }
-    let (code, res) = device_answer(state, "DELETE", format!("/api/v1/models/{mid}"), 120).await;
+    let (code, res) =
+        device_answer(state, "DELETE", format!("/api/v1/models/{mid}"), 120, to).await;
     if action == "delete" {
         return if code < 300 {
             (200, json!({"ok": true, "deleted": mid}))
@@ -677,7 +701,7 @@ async fn change_model(state: &AppState, action: &str, mid: &str) -> Answer {
     }
     if code >= 300 {
         // an update: did the delete happen anyway (an answer lost on the way back)?
-        let gone = matches!(device_rows(state).await, Ok(r) if find(&r, mid).is_none());
+        let gone = matches!(device_rows(state, to).await, Ok(r) if find(&r, mid).is_none());
         if !gone {
             return fail(
                 502,
@@ -688,14 +712,21 @@ async fn change_model(state: &AppState, action: &str, mid: &str) -> Answer {
             );
         }
     }
-    let (code, res) =
-        device_answer(state, "POST", format!("/api/v1/models/{mid}/download"), 60).await;
+    let (code, res) = device_answer(
+        state,
+        "POST",
+        format!("/api/v1/models/{mid}/download"),
+        60,
+        to,
+    )
+    .await;
     {
         let mut q = queue_lock(state);
+        let key = (url.to_string(), mid.to_string()); // the Tiiny the old build was deleted from
         if code < 300 {
-            q.updating.insert(mid.to_string());
+            q.updating.insert(key);
         } else {
-            q.missing.insert(mid.to_string());
+            q.missing.insert(key);
         }
     }
     if code >= 300 {
@@ -729,10 +760,25 @@ pub(crate) struct Queue {
     stopped: Option<String>,
     url: Option<String>,
     seq: u64,
-    /// updates whose old build is deleted and whose download is under way
-    updating: std::collections::BTreeSet<String>,
-    /// deleted for an update that didn't finish: the UI offers to download them again
-    missing: std::collections::BTreeSet<String>,
+    /// (device url, model id) of updates whose old build is deleted and whose download is under way
+    updating: std::collections::BTreeSet<(String, String)>,
+    /// (device url, model id) deleted for an update that didn't finish: the UI offers to download them again
+    missing: std::collections::BTreeSet<(String, String)>,
+    /// An update item the queue stopped at because no update shows for it any more (see queue_tick): Resume skips it.
+    skip: Option<u64>,
+}
+
+impl Queue {
+    /// The ids on one device (the one the page is showing).
+    fn on(
+        set: &std::collections::BTreeSet<(String, String)>,
+        url: &str,
+    ) -> std::collections::BTreeSet<String> {
+        set.iter()
+            .filter(|(u, _)| u == url)
+            .map(|(_, m)| m.clone())
+            .collect()
+    }
 }
 
 fn queue_lock(state: &AppState) -> std::sync::MutexGuard<'_, Queue> {
@@ -751,7 +797,7 @@ fn queue_view(state: &AppState, facts: &[(String, Value)]) -> (Value, Value) {
         .collect();
     (
         json!({"items": items, "stopped": q.stopped}),
-        json!(q.missing.iter().collect::<Vec<_>>()),
+        json!(Queue::on(&q.missing, &state.settings.current().url)),
     )
 }
 
@@ -759,7 +805,15 @@ fn queue_view(state: &AppState, facts: &[(String, Value)]) -> (Value, Value) {
 /// resume, dismiss {id}.
 pub async fn queue_change(state: &AppState, action: &str, body: &Value) -> Answer {
     if action == "resume" {
-        queue_lock(state).stopped = None;
+        let mut q = queue_lock(state);
+        if let Some(seq) = q.skip.take() {
+            // the update it stopped at (no update showed for it): the user says go on without it
+            if q.items.first().is_some_and(|i| i.seq == seq) {
+                q.items.remove(0);
+            }
+        }
+        q.stopped = None;
+        drop(q);
         state.queue_wake.notify_one();
         return (200, json!({"ok": true}));
     }
@@ -779,7 +833,8 @@ pub async fn queue_change(state: &AppState, action: &str, body: &Value) -> Answe
         };
         let mut q = queue_lock(state);
         if action == "dismiss" {
-            q.missing.remove(mid);
+            q.missing
+                .remove(&(state.settings.current().url, mid.to_string()));
         } else {
             q.items.retain(|i| i.id != mid);
             if q.items.is_empty() {
@@ -807,7 +862,7 @@ pub async fn queue_change(state: &AppState, action: &str, body: &Value) -> Answe
             "Confirm the updates: send the same ids again as \"confirm\".",
         );
     }
-    let rows = match device_rows(state).await {
+    let rows = match device_rows(state, None).await {
         Ok(r) => r,
         Err(e) => return e,
     };
@@ -863,30 +918,33 @@ pub async fn queue_change(state: &AppState, action: &str, body: &Value) -> Answe
 
 /// One look at the Tiiny: settle updates, then start the next queued item if nothing else is under way.
 async fn queue_tick(state: &AppState) {
+    let url = state.settings.current().url;
     {
         let q = queue_lock(state);
-        if q.items.is_empty() && q.updating.is_empty() && q.missing.is_empty() {
+        let here =
+            |set: &std::collections::BTreeSet<(String, String)>| set.iter().any(|(u, _)| *u == url);
+        if q.items.is_empty() && !here(&q.updating) && !here(&q.missing) {
             return;
         }
     }
-    let Ok(rows) = device_rows(state).await else {
+    let Ok(rows) = device_rows(state, None).await else {
         return;
     };
-    let url = state.settings.current().url;
     let item = {
         let mut q = queue_lock(state);
-        let updating: Vec<String> = q.updating.iter().cloned().collect();
-        for mid in updating {
+        // only this Tiiny's entries are settled against its rows; another Tiiny's wait until it is active again
+        for mid in Queue::on(&q.updating, &url) {
             let status = find(&rows, &mid).map(live_status);
             if !status.is_some_and(under_way) {
                 // installed, or gone
-                q.updating.remove(&mid);
+                q.updating.remove(&(url.clone(), mid.clone()));
                 if status.is_none() {
-                    q.missing.insert(mid);
+                    q.missing.insert((url.clone(), mid));
                 }
             }
         }
-        q.missing.retain(|mid| find(&rows, mid).is_none());
+        q.missing
+            .retain(|(u, mid)| *u != url || find(&rows, mid).is_none());
         if q.items.is_empty() || q.stopped.is_some() {
             return;
         }
@@ -896,11 +954,12 @@ async fn queue_tick(state: &AppState) {
             );
             return;
         }
-        if rows.iter().any(|(_, r)| live_status(r) == "error") {
-            q.stopped = Some(
-                "A download failed. Does the Tiiny have internet (Wi-Fi)? Resume the queue when it does."
-                    .into(),
-            );
+        if let Some((bad, _)) = rows.iter().find(|(_, r)| live_status(r) == "error") {
+            // the failed download isn't in the queue any more: Resume alone would stop here again
+            q.stopped = Some(format!(
+                "The download of {} failed. Does the Tiiny have internet (Wi-Fi)? Try it again, or stop it, on its row; then resume the queue.",
+                name_of(bad, &stale_facts(state))
+            ));
             return;
         }
         if rows
@@ -912,17 +971,25 @@ async fn queue_tick(state: &AppState) {
         let item = q.items[0].clone();
         let row = find(&rows, &item.id);
         let status = row.map(live_status);
-        let done = if item.kind == "download" {
-            status == Some("downloaded")
-        } else {
-            !(status == Some("downloaded") && truthy(row.and_then(|r| r.get("need_update"))))
-        };
-        if done {
-            // nothing left to do for it (installed meanwhile, or the update went in elsewhere)
+        let waiting =
+            status == Some("downloaded") && truthy(row.and_then(|r| r.get("need_update")));
+        if item.kind == "download" && status == Some("downloaded") {
+            // installed meanwhile
             q.items.remove(0);
             state.queue_wake.notify_one();
             return;
         }
+        if item.kind == "update" && !waiting {
+            // The Tiiny reads need_update false for every model while it has no internet, so "no update showing" can't be
+            // told from "already installed elsewhere": ask, don't drop it. Resume skips it.
+            q.skip = Some(item.seq);
+            q.stopped = Some(format!(
+                "No update shows for {} any more. It may have been installed elsewhere, or the Tiiny may have no internet (it reports none then). Resume to skip it, or clear the queue.",
+                name_of(&item.id, &stale_facts(state))
+            ));
+            return;
+        }
+        q.skip = None;
         item
     };
     let (code, res) = model_change(
@@ -1021,5 +1088,167 @@ mod tests {
         assert_eq!(e["workspace"], "text");
         assert_eq!(e["installed"], true);
         assert_eq!(e["npu_usage"], 9);
+    }
+
+    use axum::extract::{Request, State};
+    use axum::response::{IntoResponse, Response};
+    use std::sync::{Arc, Mutex};
+
+    /// A Tiiny with one model; `rows` is what its model list says, `on_delete` runs when the model is deleted.
+    #[derive(Clone)]
+    struct Dev {
+        name: &'static str,
+        rows: Arc<Mutex<Value>>,
+        log: Arc<Mutex<Vec<String>>>,
+        on_delete: Arc<dyn Fn() + Send + Sync>,
+    }
+
+    async fn dev_answer(State(d): State<Dev>, req: Request) -> Response {
+        let (m, p) = (req.method().to_string(), req.uri().path().to_string());
+        d.log.lock().unwrap().push(format!("{} {m} {p}", d.name));
+        let j = |c: u16, v: Value| {
+            (axum::http::StatusCode::from_u16(c).unwrap(), axum::Json(v)).into_response()
+        };
+        match (m.as_str(), p.as_str()) {
+            ("GET", "/api/v1/models/") => j(200, json!({"data": d.rows.lock().unwrap().clone()})),
+            ("GET", "/api/v1/models/online_models") => j(
+                200,
+                json!({"data": [{"model_id": "org/m", "name": "M"}, {"model_id": "org/bad", "name": "Bad"}]}),
+            ),
+            ("GET", "/api/v1/models/running") => {
+                j(200, json!({"instances": {"running": [], "pending": []}}))
+            }
+            ("DELETE", "/api/v1/models/org/m") => {
+                (d.on_delete)();
+                j(200, json!({"message": "deleted"}))
+            }
+            ("POST", "/api/v1/models/org/m/download") => j(200, json!({"status": "ok"})),
+            _ => j(404, json!({"detail": "Not Found"})),
+        }
+    }
+
+    async fn serve_dev(d: Dev) -> String {
+        let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", l.local_addr().unwrap());
+        let app = axum::Router::new().fallback(dev_answer).with_state(d);
+        tokio::spawn(async move { axum::serve(l, app).await.unwrap() });
+        url
+    }
+
+    fn state() -> AppState {
+        AppState::new(crate::Config {
+            port: 0,
+            host: "127.0.0.1".into(),
+            password: String::new(),
+            lan_access: false,
+            app: false,
+            data_dir: std::env::temp_dir()
+                .join(format!("studio-dl-{}", uuid::Uuid::new_v4().simple())),
+        })
+    }
+
+    fn row(status: &str, need_update: bool) -> Value {
+        json!([{"id": "org/m", "status": status, "need_update": need_update, "size": 1}])
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn an_update_stays_on_the_tiiny_it_started_on() {
+        let s = state();
+        let log: Arc<Mutex<Vec<String>>> = Arc::default();
+        let rows = Arc::new(Mutex::new(row("stopped", true)));
+        let switch: Arc<Mutex<Option<(AppState, String)>>> = Arc::default();
+        let on_delete: Arc<dyn Fn() + Send + Sync> = {
+            let switch = switch.clone();
+            Arc::new(move || {
+                // the auto-switch lands between the update's delete and its download
+                if let Some((st, id)) = &*switch.lock().unwrap() {
+                    st.settings.activate(id, Some("A isn't answering".into()));
+                }
+            })
+        };
+        let mk = |name| Dev {
+            name,
+            rows: rows.clone(),
+            log: log.clone(),
+            on_delete: on_delete.clone(),
+        };
+        let (url_a, url_b) = (serve_dev(mk("A")).await, serve_dev(mk("B")).await);
+        let a = s.settings.upsert(None, "A", &url_a, "key-a").unwrap();
+        let b = s.settings.upsert(None, "B", &url_b, "key-b").unwrap();
+        s.settings.activate(&a, None);
+        *switch.lock().unwrap() = Some((s.clone(), b));
+        let (code, res) =
+            model_change(&s, "update", &json!({"id": "org/m", "confirm": "org/m"})).await;
+        assert_eq!(code, 200, "{res}");
+        let log = log.lock().unwrap().clone();
+        assert!(
+            log.contains(&"A DELETE /api/v1/models/org/m".to_string()),
+            "{log:?}"
+        );
+        assert!(
+            log.contains(&"A POST /api/v1/models/org/m/download".to_string()),
+            "the download went to the other Tiiny: {log:?}"
+        );
+        assert!(
+            !log.iter()
+                .any(|l| l.starts_with("B DELETE") || l.starts_with("B POST")),
+            "{log:?}"
+        );
+        // it is "updating" on A: invisible while B is active, back when A is
+        let q = queue_lock(&s);
+        assert!(Queue::on(&q.updating, &url_a).contains("org/m"));
+        assert!(Queue::on(&q.updating, &url_b).is_empty());
+    }
+
+    async fn stopped_queue(rows: Value, kind: &str) -> (AppState, Arc<Mutex<Vec<String>>>) {
+        let s = state();
+        let log: Arc<Mutex<Vec<String>>> = Arc::default();
+        let url = serve_dev(Dev {
+            name: "A",
+            rows: Arc::new(Mutex::new(rows)),
+            log: log.clone(),
+            on_delete: Arc::new(|| {}),
+        })
+        .await;
+        let a = s.settings.upsert(None, "A", &url, "k").unwrap();
+        s.settings.activate(&a, None);
+        {
+            let mut q = queue_lock(&s);
+            q.url = Some(url);
+            q.seq = 1;
+            q.items.push(QueueItem {
+                id: "org/m".into(),
+                kind: kind.into(),
+                seq: 1,
+            });
+        }
+        queue_tick(&s).await;
+        (s, log)
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_queued_update_that_no_longer_shows_is_asked_about_not_dropped() {
+        // need_update reads false for every model while the Tiiny has no internet
+        let (s, log) = stopped_queue(row("stopped", false), "update").await;
+        {
+            let q = queue_lock(&s);
+            assert_eq!(q.items.len(), 1);
+            assert!(q.stopped.as_deref().unwrap().contains("No update shows"));
+        }
+        assert!(!log.lock().unwrap().iter().any(|l| l.contains("DELETE")));
+        // Resume skips that item instead of stopping at it again
+        assert_eq!(queue_change(&s, "resume", &json!({})).await.0, 200);
+        let q = queue_lock(&s);
+        assert!(q.items.is_empty() && q.stopped.is_none());
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_failed_download_is_named_when_it_stops_the_queue() {
+        let rows = json!([{"id": "org/bad", "status": "error", "size": 1}, {"id": "org/m", "status": "not_downloaded"}]);
+        let (s, _) = stopped_queue(rows, "download").await;
+        let q = queue_lock(&s);
+        let why = q.stopped.as_deref().unwrap();
+        assert!(why.contains("bad") && why.contains("failed"), "{why}");
+        assert_eq!(q.items.len(), 1);
     }
 }

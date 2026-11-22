@@ -39,6 +39,16 @@ struct Job {
     remote_task: Option<String>,
     /// The device this job runs on (its cancel and halt go there, whatever is active by then).
     target: Target,
+    /// The task that stops the device's work after a cancel (see halt_device); the job waits for it before it lets go
+    /// of the device lock, so the next job doesn't start while a model is still being reloaded.
+    halt: Option<tokio::task::JoinHandle<()>>,
+}
+
+/// What a cancel has to tell the device: the job's remote task, and the kind and model to halt (a running job only).
+struct CancelPlan {
+    remote: Option<String>,
+    halt: Option<(String, String)>,
+    target: Target,
 }
 
 #[derive(Default)]
@@ -219,7 +229,18 @@ impl Jobs {
     }
 
     pub fn get(&self, id: &str) -> Option<Value> {
-        self.lock().get(id).map(view)
+        let map = self.lock();
+        let j = map.get(id)?;
+        let mut v = view(j);
+        if Self::status_of(j) == "queued" {
+            let created = |j: &Job| j.data.get("created").and_then(Value::as_f64).unwrap_or(0.0);
+            let ahead = map
+                .values()
+                .filter(|o| Self::status_of(o) == "queued" && created(o) < created(j))
+                .count();
+            v["queue_pos"] = json!(ahead + 1); // the same place Jobs::list shows
+        }
+        Some(v)
     }
 
     pub fn update(&self, id: &str, fields: Value) {
@@ -289,9 +310,14 @@ impl Jobs {
             cancel: cancel.clone(),
             remote_task: None,
             target: target.clone(),
+            halt: None,
         };
         let out = view(&job);
-        self.lock().insert(id.clone(), job);
+        {
+            let mut map = self.lock();
+            Self::prune(&mut map);
+            map.insert(id.clone(), job);
+        }
         let ctx = Ctx {
             state: state.clone(),
             id,
@@ -306,9 +332,9 @@ impl Jobs {
         Ok(out)
     }
 
-    pub fn list(&self) -> Vec<Value> {
+    /// Forget jobs that finished more than ten minutes ago.
+    fn prune(map: &mut HashMap<String, Job>) {
         let cutoff = now() - 600.0;
-        let mut map = self.lock();
         map.retain(|_, j| {
             let done = matches!(Self::status_of(j), "done" | "error" | "cancelled");
             let t = j
@@ -319,6 +345,11 @@ impl Jobs {
                 .unwrap_or(0.0);
             !(done && t < cutoff)
         });
+    }
+
+    pub fn list(&self) -> Vec<Value> {
+        let mut map = self.lock();
+        Self::prune(&mut map);
         let mut jobs: Vec<&Job> = map.values().collect();
         jobs.sort_by(|a, b| {
             let c = |j: &Job| j.data.get("created").and_then(Value::as_f64).unwrap_or(0.0);
@@ -337,77 +368,96 @@ impl Jobs {
             .collect()
     }
 
+    /// Mark a job cancelled and say what the device has to be told; None for an unknown id. A queued job is finished
+    /// off at once; a running one is told to stop (its result is thrown away when the device answers).
+    fn begin_cancel(&self, id: &str) -> Option<CancelPlan> {
+        let mut map = self.lock();
+        let j = map.get_mut(id)?;
+        j.cancel.store(true, Ordering::Relaxed);
+        let running = Self::status_of(j) == "running";
+        let first = running && !j.data.contains_key("stopping");
+        if running {
+            j.data.insert("stopping".into(), json!(true));
+        }
+        let s = |k: &str| {
+            j.data
+                .get(k)
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string()
+        };
+        let halt = first.then(|| (s("kind"), s("model"))); // once, however often Stop is pressed
+        if Self::status_of(j) == "queued" {
+            j.data.insert("status".into(), json!("cancelled"));
+            j.data.insert("message".into(), json!("Cancelled"));
+        }
+        Some(CancelPlan {
+            remote: j.remote_task.clone(),
+            halt,
+            target: j.target.clone(),
+        })
+    }
+
     /// Ask a job to stop; returns false for an unknown id.
     pub async fn cancel(&self, state: &AppState, id: &str) -> bool {
-        let (remote, halt, target) = {
-            let mut map = self.lock();
-            let Some(j) = map.get_mut(id) else {
-                return false;
-            };
-            j.cancel.store(true, Ordering::Relaxed);
-            let running = Self::status_of(j) == "running";
-            if running {
-                j.data.insert("stopping".into(), json!(true)); // the result is thrown away when the device answers
-            }
-            let s = |k: &str| {
-                j.data
-                    .get(k)
-                    .and_then(Value::as_str)
-                    .unwrap_or("")
-                    .to_string()
-            };
-            let halt = running.then(|| (s("kind"), s("model")));
-            if Self::status_of(j) == "queued" {
-                j.data.insert("status".into(), json!("cancelled"));
-                j.data.insert("message".into(), json!("Cancelled"));
-            }
-            (j.remote_task.clone(), halt, j.target.clone())
+        let Some(plan) = self.begin_cancel(id) else {
+            return false;
         };
-        if let Some(task) = remote {
-            // POSTed to, or "DELETE <url>" (a video)
-            let req = match task.strip_prefix("DELETE ") {
-                Some(url) => state.http.delete(url),
-                None => state.http.post(task).body(Vec::new()),
-            };
-            let _ = req
-                .bearer_auth(&target.key)
-                .timeout(std::time::Duration::from_secs(15))
-                .send()
-                .await;
-        }
-        if let Some((kind, model)) = halt {
-            tokio::spawn(halt_device(state.clone(), target, kind, model));
+        cancel_remote(state, &plan).await;
+        if let Some((kind, model)) = plan.halt {
+            let task = tokio::spawn(halt_device(state.clone(), plan.target, kind, model));
+            // kept on the job: it waits for the halt before the next job gets the device
+            if let Some(j) = self.lock().get_mut(id) {
+                j.halt = Some(task);
+            }
         }
         true
+    }
+
+    /// The halt task a cancel started for this job, if any (taken, so it is awaited once).
+    fn take_halt(&self, id: &str) -> Option<tokio::task::JoinHandle<()>> {
+        self.lock().get_mut(id).and_then(|j| j.halt.take())
+    }
+}
+
+/// POST to the job's remote task, or "DELETE <url>" (a video): a 3D task or video the device is working on.
+async fn cancel_remote(state: &AppState, plan: &CancelPlan) {
+    if let Some(task) = &plan.remote {
+        let req = match task.strip_prefix("DELETE ") {
+            Some(url) => state.http.delete(url),
+            None => state.http.post(task).body(Vec::new()),
+        };
+        let _ = req
+            .bearer_auth(&plan.target.key)
+            .timeout(std::time::Duration::from_secs(15))
+            .send()
+            .await;
     }
 }
 
 impl Jobs {
-    /// On shutdown: cancel every running job and wait (up to `wait`) until the device has been told to stop, so a
-    /// render doesn't carry on invisibly after the studio is gone (the Tiiny ignores a dropped connection).
+    /// On shutdown: stop every job and wait (up to `wait`) until the device has been told, so a render doesn't carry
+    /// on invisibly after the studio is gone (the Tiiny ignores a dropped connection) and a queued job doesn't start
+    /// the moment the running one lets go. Queued jobs are finished first; the running one is stopped like Stop does it,
+    /// remote task (3D, video) included.
     pub async fn cancel_running(&self, state: &AppState, wait: std::time::Duration) {
-        let running: Vec<(String, String, String, Target)> = self
+        let ids: Vec<String> = self
             .lock()
             .iter()
-            .filter(|(_, j)| Self::status_of(j) == "running")
-            .map(|(id, j)| {
-                let s = |k: &str| {
-                    j.data
-                        .get(k)
-                        .and_then(Value::as_str)
-                        .unwrap_or("")
-                        .to_string()
-                };
-                (id.clone(), s("kind"), s("model"), j.target.clone())
-            })
+            .filter(|(_, j)| matches!(Self::status_of(j), "queued" | "running"))
+            .map(|(id, _)| id.clone())
             .collect();
-        for (id, kind, model, target) in running {
-            if let Some(j) = self.lock().get_mut(&id) {
-                j.cancel.store(true, Ordering::Relaxed);
+        // every flag is set before anything is awaited: a job that gets the device lock now sees its cancel
+        let plans: Vec<CancelPlan> = ids.iter().filter_map(|id| self.begin_cancel(id)).collect();
+        let _ = tokio::time::timeout(wait, async {
+            for plan in plans {
+                cancel_remote(state, &plan).await;
+                if let Some((kind, model)) = plan.halt {
+                    halt_device(state.clone(), plan.target, kind, model).await;
+                }
             }
-            let _ =
-                tokio::time::timeout(wait, halt_device(state.clone(), target, kind, model)).await;
-        }
+        })
+        .await;
     }
 }
 
@@ -450,15 +500,7 @@ async fn halt_device(state: AppState, target: Target, kind: String, model: Strin
                 to,
             )
             .await;
-            crate::device::call(
-                &state,
-                "POST",
-                &format!("/api/v1/models/{q}/launch"),
-                Some(json!({"model_id": model})),
-                120,
-                to,
-            )
-            .await;
+            crate::media::launch_on(&state, (&target.url, &target.key), &model, || false).await;
         }
         _ => {}
     }
@@ -535,6 +577,7 @@ async fn work(ctx: Ctx, kind: String, run: KindFn) {
                         state
                             .jobs
                             .update(&id, json!({"status": "cancelled", "message": "Cancelled"}));
+                        halted(&state, &id).await;
                         state.jobs.update(&id, json!({"finished": now()}));
                         return;
                     }
@@ -552,6 +595,7 @@ async fn work(ctx: Ctx, kind: String, run: KindFn) {
                                 &id,
                                 json!({"status": "error", "error": msg, "message": msg}),
                             );
+                            halted(&state, &id).await;
                             state.jobs.update(&id, json!({"finished": now()}));
                             return;
                         }
@@ -578,9 +622,18 @@ async fn work(ctx: Ctx, kind: String, run: KindFn) {
                     state.jobs.update(&id, json!({"status": "error", "error": format!("panic: {msg}"), "message": msg}));
                 }
             }
+            halted(&state, &id).await;
         }
     }
     state.jobs.update(&id, json!({"finished": now()}));
+}
+
+/// Wait for the halt a cancel started (an image model being unloaded and loaded back), while the job still holds the
+/// device lock: the next job must not start against a model that is still loading.
+async fn halted(state: &AppState, id: &str) {
+    if let Some(task) = state.jobs.take_halt(id) {
+        let _ = task.await;
+    }
 }
 
 #[cfg(test)]
@@ -742,5 +795,97 @@ mod tests {
             (Some("error"), Some("it failed"))
         );
         assert!(s.store.load_history().is_empty());
+    }
+
+    async fn wait_status(s: &AppState, id: &str, status: &str) {
+        for _ in 0..500 {
+            if s.jobs.get(id).unwrap()["status"] == json!(status) {
+                return;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        panic!("job {id} never became {status}");
+    }
+
+    #[tokio::test]
+    async fn shutdown_stops_the_queue_and_the_remote_task() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/tasks/1", l.local_addr().unwrap());
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<String>();
+        tokio::spawn(async move {
+            loop {
+                let (mut sock, _) = l.accept().await.unwrap();
+                let mut buf = vec![0u8; 2048];
+                let n = sock.read(&mut buf).await.unwrap_or(0);
+                let _ = tx.send(String::from_utf8_lossy(&buf[..n]).to_string());
+                let _ = sock
+                    .write_all(b"HTTP/1.1 200 OK\r\ncontent-length: 0\r\nconnection: close\r\n\r\n")
+                    .await;
+            }
+        });
+        let s = state();
+        let a = s.jobs.submit(&s, "test", json!({"ms": 1000})).unwrap();
+        let b = s.jobs.submit(&s, "test", json!({"ms": 20})).unwrap();
+        let c = s.jobs.submit(&s, "test", json!({"ms": 20})).unwrap();
+        let (a, b, c) = (
+            a["id"].as_str().unwrap(),
+            b["id"].as_str().unwrap(),
+            c["id"].as_str().unwrap(),
+        );
+        wait_status(&s, a, "running").await;
+        s.jobs.lock().get_mut(a).unwrap().remote_task = Some(format!("DELETE {url}"));
+        s.jobs
+            .cancel_running(&s, std::time::Duration::from_secs(5))
+            .await;
+        for id in [a, b, c] {
+            assert_eq!(
+                wait_done(&s, id).await["status"],
+                json!("cancelled"),
+                "{id}"
+            );
+        }
+        // the queued ones never reached the device
+        assert!(s.jobs.get(b).unwrap()["started"].is_null());
+        assert!(s.jobs.get(c).unwrap()["started"].is_null());
+        // the running one's remote task (a video or 3D render) was cancelled too
+        let req = rx.recv().await.unwrap();
+        assert!(req.starts_with("DELETE /tasks/1 "), "{req}");
+    }
+
+    #[tokio::test]
+    async fn a_single_job_lookup_shows_its_place_in_the_queue() {
+        let s = state();
+        let a = s.jobs.submit(&s, "test", json!({"ms": 200})).unwrap();
+        let b = s.jobs.submit(&s, "test", json!({"ms": 10})).unwrap();
+        let c = s.jobs.submit(&s, "test", json!({"ms": 10})).unwrap();
+        let (a, b, c) = (
+            a["id"].as_str().unwrap(),
+            b["id"].as_str().unwrap(),
+            c["id"].as_str().unwrap(),
+        );
+        wait_status(&s, a, "running").await;
+        assert!(s.jobs.get(a).unwrap().get("queue_pos").is_none());
+        assert_eq!(s.jobs.get(b).unwrap()["queue_pos"], json!(1));
+        assert_eq!(s.jobs.get(c).unwrap()["queue_pos"], json!(2));
+        wait_done(&s, c).await;
+    }
+
+    #[tokio::test]
+    async fn a_job_waits_for_its_halt_before_it_lets_go_of_the_device() {
+        let s = state();
+        let job = s.jobs.submit(&s, "test", json!({"ms": 10})).unwrap();
+        let id = job["id"].as_str().unwrap();
+        wait_done(&s, id).await;
+        let flag = Arc::new(AtomicBool::new(false));
+        let f = flag.clone();
+        let task = tokio::spawn(async move {
+            tokio::task::yield_now().await;
+            f.store(true, Ordering::SeqCst);
+        });
+        s.jobs.lock().get_mut(id).unwrap().halt = Some(task);
+        halted(&s, id).await;
+        assert!(flag.load(Ordering::SeqCst));
+        assert!(s.jobs.take_halt(id).is_none()); // awaited once
     }
 }
