@@ -455,6 +455,7 @@ pub async fn run(ctx: Ctx) -> JobResult {
     }
     // attached documents are untrusted: delimited, screened, and flagged to the user (never silently dropped)
     let attached = crate::safety::has_documents(&messages);
+    let pictures = crate::safety::has_images(&messages);
     let (messages, warnings) = crate::safety::guard_messages(&messages);
     if !warnings.is_empty() {
         ctx.update(json!({"warnings": warnings}));
@@ -474,7 +475,8 @@ pub async fn run(ctx: Ctx) -> JobResult {
         .collect();
     let tools: Vec<Value> = tool_specs()
         .into_iter()
-        .filter(|(n, _)| wanted_tools.contains(n))
+        // flagged content: no tools this turn (the warning shown to the user says so)
+        .filter(|(n, _)| wanted_tools.contains(n) && warnings.is_empty())
         .map(|(n, spec)| {
             let mut f = Map::new();
             f.insert("name".into(), json!(n));
@@ -483,11 +485,13 @@ pub async fn run(ctx: Ctx) -> JobResult {
         })
         .collect();
     let extra = s(&req, "system").trim();
-    let rule = if attached {
-        format!(" {}", crate::safety::RULE)
-    } else {
-        String::new()
-    };
+    let mut rule = String::new();
+    if attached {
+        rule.push_str(&format!(" {}", crate::safety::RULE));
+    }
+    if pictures {
+        rule.push_str(&format!(" {}", crate::safety::IMAGE_RULE));
+    }
     let system = if extra.is_empty() {
         format!("{SYSTEM}{rule}")
     } else {
