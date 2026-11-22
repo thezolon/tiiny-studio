@@ -17,8 +17,8 @@ Showcase and discussion: [Tiiny Studio on TiinyVerse](https://tiinyverse.com/pos
 | **Image**: create and edit on the Tiiny (HiDream here) | **3D**: the same dog as a textured GLB, made in 6 minutes |
 | ![3D: a model being built, with its stages and a Cancel button](docs/screenshots/3d-building.webp) | ![Audio: a recording transcribed, with voice cloning on the left](docs/screenshots/audio.webp) |
 | **3D** while it builds: shape → simplify → texture → export | **Audio**: voices, loops, songs and transcription |
-| ![Models panel: NPU memory shared by two models, live device activity, load buttons](docs/screenshots/models.webp) | ![Song: a one-minute instrumental made on the Tiiny, with save, MP3 and vary](docs/screenshots/song.webp) |
-| **Models**: what's loaded, NPU memory and device activity | **Songs**: lyrics or instrumental, saved as WAV or MP3 |
+| ![Models panel on the Model Store tab: models the Tiiny can download, each with its size, NPU share, features and a Download button](docs/screenshots/models.webp) | ![Song: a one-minute instrumental made on the Tiiny, with save, MP3 and vary](docs/screenshots/song.webp) |
+| **Models**: the Model Store (download, queue, update, delete), plus loading and NPU memory | **Songs**: lyrics or instrumental, saved as WAV or MP3 |
 
 - **Image**: create from a prompt, or a new picture that uses up to 10 of yours as references
   ("the mug from image 1 in a cafe", in any shape); edit with plain-language instructions; circle an area to change;
