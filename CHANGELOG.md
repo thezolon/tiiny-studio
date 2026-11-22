@@ -40,11 +40,15 @@ app, a studio that's harder to misuse on a network, clearer messages, and a bett
 - **Songs, 3D and video:** a finished song is no longer lost when the Tiiny's clean-up fails; the style reference is
   checked before sending; 3D and video notice when a task is gone; speech works without a voice on models that have
   their own.
+- **Chat and Image:** with two chat models loaded you can pick which one answers; a picture run that made fewer images
+  than asked says so on the result.
+- **Passwords:** a tab left open after the password changed no longer locks your address out; the desktop app works
+  with `STUDIO_PASSWORD` set.
 - Security hardening: stricter checks on file names, on which address the device key may go to, and on requests from
   other web pages; security headers on every page; a hardened `compose.yaml` (read-only, no extra privileges).
-- Technical: nine fix packages (#139-#147, tracked in #138), each with tests: 130+ Rust tests, 162 contract tests, the
+- Technical: fix packages #139-#150 (tracked in #138), each with tests: 130+ Rust tests, 163 contract tests, the
   browser checks now run against the Rust server that ships, and CI builds and starts the Docker image before it is
-  published. `server.py` remains the behaviour reference for the tests, not meant for LAN use.
+  published; a release tag must be on `main` with its Rust checks passed. `server.py` remains the behaviour reference for the tests, not meant for LAN use.
 
 ## 0.7.0 (2026-11-21)
 
