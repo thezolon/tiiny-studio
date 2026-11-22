@@ -276,6 +276,15 @@ fn too_deep(text: &str) -> bool {
     false
 }
 
+/// The part as text for the streaming reader (sax.rs), after the checks `parse` makes before it parses.
+pub fn checked_text(bytes: &[u8]) -> Result<String, ()> {
+    let text = to_text(bytes).ok_or(())?;
+    if too_deep(&text) {
+        return Err(());
+    }
+    Ok(text)
+}
+
 /// `ET.fromstring`; Err(()) is a parse error.
 pub fn parse(bytes: &[u8]) -> Result<Elem, ()> {
     let text = to_text(bytes).ok_or(())?;

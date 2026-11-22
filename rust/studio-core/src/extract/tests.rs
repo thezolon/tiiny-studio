@@ -294,3 +294,64 @@ fn slides_follow_the_decks_own_order() {
     assert_eq!(parts[0]["label"], "Slide 1");
     assert_eq!(parts[1]["text"], "FIRSTFILE");
 }
+
+/// An xlsx with a shared-strings part next to its one sheet.
+fn xlsx_shared(shared: &str, sheet_rows: &str) -> Vec<u8> {
+    zipped(&[
+        (
+            "xl/workbook.xml",
+            &format!(
+                r#"<workbook xmlns="{S}" xmlns:r="{R}"><sheets><sheet name="S" r:id="rId1"/></sheets></workbook>"#
+            ),
+        ),
+        (
+            "xl/_rels/workbook.xml.rels",
+            &format!(
+                r#"<Relationships xmlns="{REL}"><Relationship Id="rId1" Target="worksheets/sheet1.xml"/></Relationships>"#
+            ),
+        ),
+        (
+            "xl/sharedStrings.xml",
+            &format!(r#"<sst xmlns="{S}">{shared}</sst>"#),
+        ),
+        (
+            "xl/worksheets/sheet1.xml",
+            &format!(r#"<worksheet xmlns="{S}"><sheetData>{sheet_rows}</sheetData></worksheet>"#),
+        ),
+    ])
+}
+
+#[test]
+fn xlsx_shared_inline_and_empty_cells() {
+    let shared = "<si><t>plain</t></si>\
+        <si><r><t>rich </t></r><r><rPr><b/></rPr><t>text</t></r><rPh><t>ignored</t></rPh></si>\
+        <si/><si><t xml:space=\"preserve\"> a &amp; b &#233; </t></si>";
+    let rows = r#"<row r="1"><c r="A1" t="s"><v>0</v></c><c r="B1" t="s"><v>1</v></c><c r="C1" t="s"><v>2</v></c><c r="D1" t="s"><v>3</v></c></row>
+        <row r="2"><c r="A2" t="inlineStr"><is><r><t>in</t></r><r><t>line</t></r></is></c><c r="B2"/><c r="C2"><v>7</v></c><c r="D2" t="s"><v>99</v></c></row>
+        <row r="3"><c r="A3"><v></v></c></row><row r="4"/>
+        <row r="5"><c r="B5" t="s"><v>0</v></c></row>"#;
+    assert_eq!(
+        text("a.xlsx", &xlsx_shared(shared, rows)),
+        "plain\trich text\t\t a & b é \ninline\t\t7\t99\n\tplain"
+    );
+}
+
+#[test]
+fn big_xlsx_sheet_is_clamped_and_read_quickly() {
+    // 200 000 rows built in memory (about 14 MB of XML); only MAX_ROWS are kept, the rest is counted
+    let rows: String = (1..=200_000)
+        .map(|i| format!(r#"<row r="{i}"><c r="A{i}"><v>{i}</v></c><c r="B{i}" t="inlineStr"><is><t>row {i}</t></is></c></row>"#))
+        .collect();
+    let data = xlsx(&rows);
+    let start = Instant::now();
+    let t = text("a.xlsx", &data);
+    let took = start.elapsed();
+    assert!(
+        t.ends_with(&format!("[… {} more rows not shown]", 200_000 - MAX_ROWS)),
+        "{}",
+        &t[t.len() - 40..]
+    );
+    assert_eq!(t.lines().count(), MAX_ROWS + 1);
+    assert!(t.starts_with("1\trow 1\n2\trow 2\n"));
+    assert!(took < Duration::from_secs(30), "{took:?}");
+}

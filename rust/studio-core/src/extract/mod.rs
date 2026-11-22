@@ -15,6 +15,7 @@ mod odf;
 mod ooxml;
 mod render;
 mod rtf;
+mod sax;
 mod text;
 mod xml;
 
