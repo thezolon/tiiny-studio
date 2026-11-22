@@ -566,11 +566,12 @@ async function improvePrompt() {
   const p = $("#prompt"), before = p.value, edit = S.mode === "edit", btn = $("#improveBtn");
   if (!before.trim()) return toast(edit ? "Describe the change first" : "Type an idea first");
   btn.disabled = true; btn.lastChild.textContent = "Improving…";
+  const by = helperFor(edit ? "edit" : "prompt")?.id;  // the model that rewrites it, for the "Rewritten by" line
   const text = await assist(edit ? "edit" : "prompt", { text: before.trim() }, $("#improveSlot"), edit ? "Improving instruction" : "Improving prompt");
   btn.disabled = false; btn.lastChild.textContent = "Improve prompt";
   if (text == null) return;
   p.value = text; autoGrow(); renderComposer();
-  assistUndo($("#improveSlot"), "Rewritten", () => { p.value = before; autoGrow(); renderComposer(); });
+  assistUndo($("#improveSlot"), "Rewritten", by, () => { p.value = before; autoGrow(); renderComposer(); });
 }
 async function describeImage(entry, idx) {
   const file = entry.outputs[idx];

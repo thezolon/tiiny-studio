@@ -122,6 +122,10 @@ class Media(ContractCase):
         self.assertEqual(job["entry"]["text"], "Fake reply.")
         self.check_job({"kind": "assist", "model": model, "task": "edit", "text": "hat", "context": "a duck"}, entry=assist_entry("edit"), calls=CHAT_CALLS)
         self.check_job({"kind": "assist", "model": model, "task": "describe", "image": PNG}, entry=assist_entry("describe"), calls=CHAT_CALLS)
+        # Qwen-Image-2.1-PE-I2I answers an edit as a JSON object: only its description goes back (reported on the Tiiny Discord)
+        pe = '```json\n{"action": "modify", "description": "RUST TEST give the duck a red hat"}\n```'
+        self.check_job({"kind": "assist", "model": model, "task": "edit", "text": "hat", "flags": {"chat_reply": pe}},
+                       entry={**assist_entry("edit"), "text": "RUST TEST give the duck a red hat"}, calls=CHAT_CALLS)
         # the fake's reply has no sections: an error
         self.check_job({"kind": "assist", "model": model, "task": "lyrics", "text": "rain"}, "error", calls=CHAT_CALLS,
                        error="The model didn't return lyrics with [verse]/[chorus] sections. Try again.")

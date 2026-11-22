@@ -42,6 +42,24 @@ pub fn clean_reply(text: &str) -> String {
         .to_string()
 }
 
+/// Qwen-Image-2.1-PE-I2I answers an edit request as a small JSON object (`{"action": "modify", "description": ...}`,
+/// TiinyOS 0.1.39) instead of plain text: keep only the text. Anything else comes back unchanged.
+pub fn unwrap_enhancer(text: &str) -> String {
+    if let Ok(Value::Object(o)) = serde_json::from_str::<Value>(text) {
+        for key in ["description", "prompt", "instruction", "text"] {
+            if let Some(t) = o
+                .get(key)
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|t| !t.is_empty())
+            {
+                return t.to_string();
+            }
+        }
+    }
+    text.to_string()
+}
+
 /// Normalise section tags to [verse]/[chorus]/[bridge] lines; error when there are no sections at all.
 pub fn clean_lyrics(text: &str) -> Result<String, JobError> {
     let tag_re = Regex::new(
@@ -226,7 +244,7 @@ async fn call(
     let mut out = if task == "lyrics" {
         clean_lyrics(reply)?
     } else {
-        clean_reply(reply)
+        unwrap_enhancer(&clean_reply(reply))
     };
     if task == "tags" {
         out = Regex::new(r"\s*\n\s*")
@@ -263,6 +281,22 @@ mod tests {
             "A fox"
         );
         assert_eq!(clean_reply("“quoted”"), "quoted");
+    }
+
+    #[test]
+    fn enhancer_json_is_unwrapped() {
+        let raw = "```json
+{\"action\": \"modify\", \"description\": \"Give the duck a red hat.\"}
+```";
+        assert_eq!(
+            unwrap_enhancer(&clean_reply(raw)),
+            "Give the duck a red hat."
+        );
+        assert_eq!(
+            unwrap_enhancer("{\"action\": \"keep\"}"),
+            "{\"action\": \"keep\"}"
+        );
+        assert_eq!(unwrap_enhancer("A duck in a hat"), "A duck in a hat");
     }
 
     #[test]

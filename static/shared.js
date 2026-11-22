@@ -419,12 +419,13 @@ S.assistBusy = {};
 /** Run a helper on the chat model as a queued device job. Resolves to the reply text, or null if it failed or a
     model has to be loaded first (the gate card then shows in `slot` and updates itself as the model loads). */
 /** The "load this model" card for a helper, or null when it can run: its model is loaded, or the server may swap it in. */
-/** The model a helper runs on. Improve prompt uses a loaded text-to-image prompt enhancer (made for exactly that) unless
- *  Settings names a helper model; everything else uses the chat model. */
+/** The model a helper runs on. Improve prompt uses a loaded prompt enhancer (made for exactly that: -PE-T2I for a new
+ *  picture, -PE-I2I for an edit) unless Settings names a helper model; everything else uses the chat model. */
 function helperFor(task) {
   if (task === "describe") return modelForTool("vision");
-  if (task === "prompt" && !SET.info?.helper_model) {
-    const pe = (S.allModels || []).find((m) => m.status === "running" && /-PE-T2I$/i.test(m.id) && CHAT_TYPES.includes(m.type));
+  const kind = { prompt: "T2I", edit: "I2I" }[task];
+  if (kind && !SET.info?.helper_model) {
+    const pe = (S.allModels || []).find((m) => m.status === "running" && new RegExp(`-PE-${kind}$`, "i").test(m.id) && CHAT_TYPES.includes(m.type));
     if (pe) return pe;
   }
   return modelForTool("chat");
@@ -461,9 +462,11 @@ function renderAssistGates() {
     if (g) n.replaceChildren(g); else { n.replaceChildren(el("div", { class: "hint-line" }, `${shortName(modelForTool(n.dataset.tool).id)} is loaded — run the helper again.`)); n.classList.remove("assist-gate"); }
   }
 }
-/** A small "Undo" line after a helper replaced text the user wrote. */
-function assistUndo(slot, what, undo) {
-  slot.replaceChildren(el("div", { class: "assist-note" }, `${what} by ${shortName(modelForTool("chat")?.id || "")}`, el("span", { class: "spacer" }),
+/** A small "Undo" line after a helper replaced text the user wrote; `model` is the one that did it. */
+function assistUndo(slot, what, model, undo) {
+  slot.replaceChildren(el("div", { class: "assist-note" }, `${what} by ${shortName(model || "")}`,
+    el("button", { class: "linkish", title: "Choose the model helpers use, in Settings", onclick: () => openSettings(false, "helperPick") }, "Change"),
+    el("span", { class: "spacer" }),
     el("button", { class: "linkish", onclick: () => { undo(); slot.replaceChildren(); } }, "Undo"), el("button", { class: "linkish", "aria-label": "Dismiss", onclick: () => slot.replaceChildren() }, "✕")));
 }
 

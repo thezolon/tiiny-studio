@@ -9,6 +9,11 @@
   thumbnail was a live video player, rebuilt every second while a render ran, until WebKit ran out of open files
   ("Too many open files"). Thumbnails are now still frames, read one clip at a time; replaced players are released.
   (Reported on the Tiiny Discord.)
+- **Improve prompt with Qwen-Image's prompt enhancers:** in Edit mode it now uses a loaded Qwen-Image-2.1-PE-I2I
+  instead of loading a chat model, and the "Rewritten by" line names the model that actually did the rewrite (it
+  always named the chat model). PE-I2I answers with a small JSON object; only its text goes into the box. To use a
+  different model, that line now has a **Change** link to Settings > "Helpers use", which explains what Automatic picks
+  and that a model chosen there is used for every helper, even with an enhancer loaded. (Reported on the Tiiny Discord.)
 
 ## 0.7.1 (2026-11-22)
 

@@ -127,15 +127,18 @@ function swapSettings() {
   const box = (k, label) => el("label", { class: "auto" + (sw.on ? "" : " off") },
     el("input", { type: "checkbox", checked: sw[k] !== false, disabled: !sw.on, onchange: (e) => set({ swap: { [k]: e.target.checked } }) }), label);
   const chats = (S.allModels || []).filter((m) => CHAT_TYPES.includes(m.type));
-  const pick = el("select", { class: "input", onchange: (e) => set({ helper_model: e.target.value }) },
-    el("option", { value: "" }, "Automatic: a loaded chat model, else the smallest"),
+  const pick = el("select", { class: "input", id: "helperPick", "aria-describedby": "helperHint", onchange: (e) => set({ helper_model: e.target.value }) },
+    el("option", { value: "" }, "Automatic: a loaded prompt enhancer for Improve prompt, else a loaded chat model"),
     ...chats.map((m) => el("option", { value: m.id, selected: m.id === i.helper_model }, `${shortName(m.id)} · ${m.npu_usage ?? "?"}% NPU`)));
   return el("div", { class: "set-network set-swap" },
     el("b", {}, "Model swapping"),
     el("p", {}, "When a helper or a chat tool needs a model that isn't loaded, the studio unloads what's in the way, loads it, and puts your models back afterwards. Each swap takes about 30–60 seconds per model. Off: nothing is loaded or unloaded for you; you're asked to load the model instead."),
     el("label", { class: "auto" }, el("input", { type: "checkbox", checked: sw.on !== false, onchange: (e) => set({ swap: { on: e.target.checked } }) }), "Let the studio swap models for me"),
     el("div", { class: "swap-secs" }, box("chat", "Chat tools (images, speech, loops, songs from a chat)"), box("image", "Image helpers (Improve prompt, Describe)"), box("audio", "Audio helpers (Write lyrics, loop tags)"), box("mesh", "3D (cut out the subject with an image model)"), box("queue", "Queued jobs (Audio, 3D, Video): load the job's model when its turn comes")),
-    el("label", { class: "field" }, el("div", { class: "label" }, "Helpers use", el("span", { class: "hint" }, "a text model")), pick));
+    el("label", { class: "field" }, el("div", { class: "label" }, "Helpers use", el("span", { class: "hint" }, "a text model")), pick),
+    el("p", { class: "hint-line", id: "helperHint" }, "Helpers are Improve prompt, Write lyrics and loop tags. Automatic uses a loaded Qwen-Image "
+      + "prompt enhancer (PE-T2I for a new picture, PE-I2I for an edit) for Improve prompt, else a loaded chat model, else the "
+      + "smallest one. Pick a model here to use it for every helper instead, even when an enhancer is loaded."));
 }
 
 /** "Write prompts into files" (#58): on keeps today's behaviour; off leaves the prompt and spoken text out of the files
@@ -214,7 +217,8 @@ function settingsBody(firstRun) {
   ];
 }
 
-function openSettings(firstRun = false) {
+/** Opens Settings; `focus` names a field (an element id) to scroll to and focus, e.g. "helperPick". */
+function openSettings(firstRun = false, focus = null) {
   SET.editing = null; SET.onClose = null;
   SET.firstRun = firstRun;
   const card = el("div", { class: "modal-card set-card" },
@@ -224,6 +228,7 @@ function openSettings(firstRun = false) {
   $("#settingsModal").replaceChildren(card);
   $("#settingsModal").dataset.locked = firstRun ? "1" : "";
   openModal($("#settingsModal"));
+  if (focus) { const f = $("#" + focus); f?.scrollIntoView({ block: "center" }); f?.focus(); }
   if (!firstRun) api("/api/settings/check", { method: "POST", body: "{}" }).then((r) => { SET.info = r; if (!SET.editing) refreshSettings(); }).catch(() => {});
 }
 function refreshSettings() {

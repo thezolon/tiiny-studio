@@ -687,7 +687,8 @@ class Handler(BaseHTTPRequestHandler):
         text = last_user_text(b)
         tools = b.get("tools") or []
         if not b.get("stream"):
-            msg, finish = {"role": "assistant", "content": "Fake reply."}, "stop"
+            # chat_reply: a fixed answer, e.g. Qwen-Image-2.1-PE-I2I's JSON object for an edit request
+            msg, finish = {"role": "assistant", "content": self.st.flags.get("chat_reply") or "Fake reply."}, "stop"
             if b.get("model") == "Fake/Quiet-Thinker" and (b.get("chat_template_kwargs") or {}).get("enable_thinking", True) is not False:
                 msg, finish = {"role": "assistant", "content": "", "reasoning_content": "First I consider the subject..."}, "length"
             return self.send_json(200, {"id": "chatcmpl-fake", "object": "chat.completion", "created": int(time.time()), "model": b.get("model"),
