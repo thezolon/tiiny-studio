@@ -120,14 +120,14 @@ COMMON_SONG_KEYS = ["seconds_total", "steps", "llm_cfg_scale", "seed", "lyrics",
                     "temperature", "top_k", "top_p", "record_tokens", "record_window", "preview_seconds"]
 
 
-def song_info(service, steps, temperature, top_k, top_p, duration, max_steps):
+def song_info(service, steps, temperature, top_k, top_p, duration, max_steps, sources=()):
     return {"service_name": service, "config_schema": {"common": COMMON_SONG_KEYS},
             "default_config": {"generation_type": "mixed", "steps": steps, "temperature": temperature, "top_k": top_k, "top_p": top_p},
-            "model_info": {"model": {"codec_llm_duration": duration, "max_decoder_steps": max_steps}}}
+            "model_info": {"model": {"codec_llm_duration": duration, "max_decoder_steps": max_steps, "supported_prompt_sources": list(sources)}}}
 
 
-MUSIC_INFO = {"Fake/SongGeneration-v2": song_info("SongGenerationTTMService", 10, 1.0, 250, 0.0, 270, 512),
-              "ACE-Step/AceStep-Fake": song_info("AceStepTTMService", 8, 0.85, 0, 0.9, 480, 20),
+MUSIC_INFO = {"Fake/SongGeneration-v2": song_info("SongGenerationTTMService", 10, 1.0, 250, 0.0, 270, 512, ["reference_audio_base64"]),
+              "ACE-Step/AceStep-Fake": song_info("AceStepTTMService", 8, 0.85, 0, 0.9, 480, 20, ["reference_audio_base64", "source_audio_base64"]),
               "Fake/YuE2": song_info("YuE2TTMService", 32, 1.0, 100, 0.95, 0, 512),
               "Fake/Foundation-1": {"service_name": "FoundationTTMService", "model_info": {"audio": {"sample_rate": 44100}}}}
 PLAIN_SONG = ("ACE-Step/AceStep-Fake", "Fake/YuE2")  # only the gateway's plain /generate: no preview or resume
@@ -772,6 +772,11 @@ class Handler(BaseHTTPRequestHandler):
             self.close_connection = True
             return
         if method == "POST" and p in ("/v1/music/generate", "/v1/music/generate/preview", "/v1/music/generate/resume", "/v1/generate"):
+            cfg = self.body.get("config") if isinstance(self.body.get("config"), dict) else self.body
+            if cfg.get("reference_audio_base64") and self.body.get("model") == "Fake/SongGeneration-v2":
+                with wave.open(io.BytesIO(base64.b64decode(cfg["reference_audio_base64"]))) as ref:  # SongGeneration: 10 s at least
+                    if ref.getnframes() / ref.getframerate() < 10:
+                        return self.send_json(500, {"success": False, "audio_data": None, "error": "Request failed"})
             sid = self.body.get("session_id") or self.new_session("completed")
             st.sessions[sid] = "completed"
             st.session_meta.setdefault(sid, {"model_id": self.body.get("model"), "route": p.rsplit("/", 1)[-1] if p != "/v1/music/generate" else "generate", "created_at": time.time()})

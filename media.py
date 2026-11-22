@@ -531,9 +531,7 @@ def run_speech(m, job, req):
         body["voice"] = speaker
     elif design:
         body["instruct"] = design
-    else:
-        if not req.get("ref_audio"):
-            raise JobError("This model only speaks in a cloned voice: add a reference clip")
+    elif req.get("ref_audio"):
         if not (req.get("ref_text") or "").strip():
             raise JobError("Add what's said in the reference clip (its transcript) — voice cloning needs both")
         _, ref = m.decode_uri(req["ref_audio"])
@@ -541,6 +539,7 @@ def run_speech(m, job, req):
     for k in ("ref_text", "language", "instruct") if ref is not None else ("language",):
         if (req.get(k) or "").strip():
             body[k] = config[k] = req[k].strip()
+    no_voice = not speaker and not design and ref is None  # the model speaks in its default voice, if it has one
     m.ensure_running(job["model"])
     # Long text is voiced a few sentences at a time (the model has a context limit) and stitched together.
     chunks = split_for_speech(text)
@@ -557,6 +556,8 @@ def run_speech(m, job, req):
         if code != 200 or not isinstance(res, bytes) or res[:4] != b"RIFF":
             why = m.err(res if not isinstance(res, bytes) else res.decode("utf-8", "replace"))
             if "upstream TTS model failed" not in why and not direct:
+                if no_voice:
+                    why += " (No voice was chosen. If this model has no default voice, give it a speaker, a voice description or a reference clip.)"
                 raise JobError(why)
             # The gateway sends some containers the store id, which they don't know (Supertonic-3, 0.1.38): ask the
             # model's own port under its own name, where the link allows it.
@@ -734,7 +735,12 @@ def asr_parts(wav):
 
 def run_transcribe(m, job, req):
     ctype, audio = m.decode_uri(req.get("audio"))
-    asr_audio = to_asr_wav(audio) if "wav" in ctype else None
+    if "wav" not in ctype and not (audio[:4] == b"RIFF" and audio[8:12] == b"WAVE"):
+        raise JobError(f"Transcription needs a WAV file, and this one is {ctype}. Convert it to WAV (16 kHz mono is best) and try again.")
+    try:
+        asr_audio = to_asr_wav(audio)
+    except Exception:  # a WAV the reader can't make sense of goes to the device as it is
+        asr_audio = None
     ext = {"audio/wav": "wav", "audio/x-wav": "wav", "audio/mpeg": "mp3", "audio/mp4": "m4a", "audio/webm": "webm",
            "audio/ogg": "ogg", "audio/flac": "flac"}.get(ctype, "wav")
     fields = {"model": job["model"], "response_format": "json"}
@@ -751,7 +757,7 @@ def run_transcribe(m, job, req):
         if code != 200 or "text" not in res:
             raise JobError(m.err(res))
         texts.append((res["text"] or "").strip())
-        if job["cancel"]:
+        if i + 1 < len(parts) and job["cancel"]:
             raise JobError("Cancelled")
     src = None if req.get("ephemeral") else m.save(f"{job['id']}-audio.{ext}", audio)
     return {"kind": "transcript", "params": {"model": job["model"], "language": fields.get("language"), "name": req.get("name")},
@@ -1483,21 +1489,22 @@ def run_video(m, job, req):
     prompt = (req.get("prompt") or "").strip()
     if not prompt and not req.get("image"):
         raise JobError("Describe the clip, or give it a picture to start from.")
+    secs = req.get("seconds")
+    secs = secs if isinstance(secs, int) and not isinstance(secs, bool) else 2
+    if not 1 <= secs <= 7:  # MiniMax-H3-Turbo renders up to 7 s; 8 s and longer fail at once on the device
+        raise JobError(f"Videos can be 1 to 7 seconds long: the Tiiny's video model can't render {secs} s.")
     m.ensure_running(job["model"])
     url, auth = f"{m.settings.url}/v1/videos", m.gateway_headers()
-    secs = req.get("seconds")
-    secs = secs if isinstance(secs, int) and not isinstance(secs, bool) and 1 <= secs <= 20 else 2
     body = {"model": job["model"], "prompt": prompt or "Bring this picture to life", "size": str(req.get("size") or "832x480"), "seconds": str(secs)}
     for k in ("steps", "seed"):
         if isinstance(req.get(k), int) and not isinstance(req.get(k), bool):
             body[k] = req[k]
     body.setdefault("steps", 4)  # the device's own default (7) makes a 2 s clip take ~12 minutes instead of ~7
     sources = []
-    for i, k in enumerate(("image", "last_image")):
-        if req.get(k):
-            ctype, data = m.decode_uri(req[k])
-            sources.append(m.save(f"{job['id']}-frame{i}.png", data))
-            body[VIDEO_FRAME_FIELDS[i]] = f"data:{ctype};base64,{base64.b64encode(data).decode()}"
+    if req.get("image"):  # the start frame; the device ignores an end frame (0.1.38), so none is sent
+        ctype, data = m.decode_uri(req["image"])
+        sources.append(m.save(f"{job['id']}-frame0.png", data))
+        body["image"] = f"data:{ctype};base64,{base64.b64encode(data).decode()}"
     code, res = m.http("POST", url, body, headers=auth, timeout=120)
     if code >= 300:
         raise JobError(video_error(m.err(res)))
@@ -1560,7 +1567,6 @@ def video_error(e):
 
 
 VIDEO_LOST_POLLS = 100  # ~5 minutes of polls without an answer before a video job gives up
-VIDEO_FRAME_FIELDS = ("image", "last_image")  # first frame tested on 0.1.38; the last-frame name is a guess (max_keyframes 2)
 
 
 KINDS = {"image": run_image, "ocr": run_ocr, "speech": run_speech, "transcribe": run_transcribe, "loop": run_loop, "song": run_song, "mesh": run_mesh,

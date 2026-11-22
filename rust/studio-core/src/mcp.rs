@@ -339,7 +339,7 @@ fn tools() -> Vec<Value> {
             json!({
                 "prompt": {"type": "string", "description": "The motion and scene."},
                 "image": image_uri("Optional first frame"),
-                "seconds": {"type": "integer", "description": "Length, 1-20 s (default 2)."},
+                "seconds": {"type": "integer", "description": "Length, 1-7 s (default 2); the video model renders no more than 7 s."},
                 "size": {"type": "string", "description": "WxH, e.g. 832x480 (default)."},
                 "model": model,
             }),
@@ -414,6 +414,9 @@ fn required<'a>(a: &'a Value, k: &str) -> Result<&'a str, String> {
         .filter(|s| !s.is_empty())
         .ok_or_else(|| format!("{k} is required."))
 }
+
+/// The longest clip the video model renders (media/video.rs MAX_SECONDS; docs/DEVICE-API.md).
+const VIDEO_MAX_SECONDS: i64 = 7;
 
 fn int(a: &Value, k: &str) -> Option<i64> {
     a.get(k)
@@ -813,9 +816,13 @@ fn make(state: &AppState, models: &[Value], name: &str, a: &Value) -> Out {
         "make_video" => {
             let prompt = required(a, "prompt")?;
             let model = pick_model(models, "video", "make video", asked)?;
-            let seconds = int(a, "seconds")
-                .filter(|s| (1..=20).contains(s))
-                .unwrap_or(2);
+            let seconds = int(a, "seconds").unwrap_or(2);
+            if !(1..=VIDEO_MAX_SECONDS).contains(&seconds) {
+                return Err(format!(
+                    "seconds must be 1 to {} (the video model can't render longer clips).",
+                    VIDEO_MAX_SECONDS
+                ));
+            }
             let mut req = json!({"model": model, "prompt": prompt, "seconds": seconds,
                                  "size": Some(arg(a, "size")).filter(|s| !s.is_empty()).unwrap_or("832x480")});
             if !arg(a, "image").is_empty() {
