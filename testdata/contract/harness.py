@@ -303,20 +303,24 @@ class ContractCase(unittest.TestCase):
         return self.wait_until(check, what, timeout)
 
     def view(self, job):
-        """A job as a test compares it: without what differs per run (ids, times); a test class sets its own."""
-        return strip(job, IGNORE)
+        """A job as a test compares it: its outcome and result entry, without what differs per run (ids, times); a test
+        class sets its own."""
+        return strip({k: job.get(k) for k in ("status", "message", "error", "entry")}, IGNORE)
 
     def comparable(self, calls):
         """The device requests as a test compares them; a test class can drop what legitimately differs."""
         return calls
 
-    def check_job(self, req, job, calls=None, **kw):
-        """Run a job; its result (see view) must equal `job` and, if given, the requests it made to the fake (see
-        comparable) must equal `calls`. Returns (job, calls) as run_job does."""
+    def check_job(self, req, status="done", entry=None, error=None, message=None, calls=None, **kw):
+        """Run a job; its status, message, error and result entry (see view) must be these (message: "Done" for a done job,
+        the error for a failed one) and, if given, the requests it made to the fake must be these (method, path) pairs
+        (see comparable). Returns (job, requests) as run_job does."""
         got, made = self.run_job(req, **kw)
-        self.assertEqual(self.view(got), job)
+        if message is None:
+            message = "Done" if status == "done" else error
+        self.assertEqual(self.view(got), self.view({"status": status, "message": message, "error": error, "entry": entry}))
         if calls is not None:
-            self.assertEqual(self.comparable(made), calls)
+            self.assertEqual([c[:2] for c in self.comparable(made)], [tuple(c) for c in calls])
         return got, made
 
     def file_media(self, job, key="outputs"):
