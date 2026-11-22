@@ -106,6 +106,13 @@ try:
         page.wait_for_function("() => S.store && S.store.models.some((m) => m.id === 'Qwen/Qwen3-Embedding-0.6B' && m.need_update)", timeout=10000)
         page.locator(".mm-updates").get_by_role("button", name="Update", exact=True).click()
         check("update confirm opens in the updates list", page.locator(".mm-updates .mm-confirm").count() == 1 and page.evaluate("document.activeElement.textContent") == "Cancel")
+        # a tab with no model of its kind points to the store, filtered to it
+        page.keyboard.press("Escape")
+        page.evaluate("closeDrawer(); S.allModels = S.allModels.filter((m) => m.type !== 'Text-to-Speech'); document.body.append(modelGate('speech', 'voice'))")
+        page.get_by_role("button", name="Open the Model Store").click()
+        page.wait_for_timeout(500)
+        check("'no model installed' opens the store on that workspace",
+              page.evaluate("S.drawer && S.mtab === 'store' && S.storeWs === 'audio'") and "Get one from the Model Store" in page.locator(".gate").last.inner_text())
 finally:
     server.terminate()
     server.wait(timeout=10)

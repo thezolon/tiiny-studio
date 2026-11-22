@@ -129,6 +129,13 @@ function mmTabs() {
   });
   return list;
 }
+/** Open the Models drawer on the Model Store, filtered to a workspace (a tab's "no model installed" note uses this). */
+function openStore(ws) {
+  if (ws) { S.storeWs = ws; store.set("storeWs", ws); }
+  S.hideInstalled = false;
+  if (!S.drawer) openDrawer();
+  setMtab("store");
+}
 function setMtab(id) {
   S.mtab = id; S.mconfirm = null; store.set("modelsTab", id);
   $("#drawerBody").scrollTop = 0; renderDrawer();

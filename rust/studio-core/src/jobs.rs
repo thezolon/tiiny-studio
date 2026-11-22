@@ -499,7 +499,7 @@ async fn work(ctx: Ctx, kind: String, run: KindFn) {
             };
             let result = match full {
                 Some((free, _)) => Ok(Err(JobError(format!(
-                    "The Tiiny is almost out of space ({free:.1} GB free). Free some up (delete models or files in the TiinyOS app) and try again."
+                    "The Tiiny is almost out of space ({free:.1} GB free). Free some up (delete a model you don't use in Models → Installed, or files in the TiinyOS app) and try again."
                 )))),
                 None => {
                     // queued for a model that wasn't loaded (#78): load it now, unloading others only if it doesn't fit

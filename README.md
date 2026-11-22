@@ -181,7 +181,8 @@ once and 30 tool calls a minute.
 
 What an agent can and can't see: only the jobs it started itself. There is no tool that lists or reads your gallery,
 chats or vault, and `get_job` refuses job ids it didn't start. It can see which models are installed and the names of
-your saved voices (to speak with them). Text that comes back (transcripts, OCR, chat replies) is wrapped in
+your saved voices (to speak with them), but it can't download, update or delete models: that stays in the Models
+panel, behind a confirm. Text that comes back (transcripts, OCR, chat replies) is wrapped in
 `<untrusted>` tags and screened for prompt injection; a suspicious one is flagged in the result, never dropped. Links to
 result files use the address the agent called, and need the studio password if you set one. Like the rest of the
 studio, MCP only answers on this computer unless you open the studio to your network.

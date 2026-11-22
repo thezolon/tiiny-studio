@@ -83,7 +83,7 @@ class Media(ContractCase):
         py, _ = self.same_job({**job, "flags": {"disk_free_gb": 1.5}})
         self.assertEqual(py["status"], "error")
         self.assertEqual(py["error"], "The Tiiny is almost out of space (1.5 GB free). "
-                         "Free some up (delete models or files in the TiinyOS app) and try again.")
+                         "Free some up (delete a model you don't use in Models → Installed, or files in the TiinyOS app) and try again.")
         py, _ = self.same_job({**job, "flags": {"disk_free_gb": 50}})
         self.assertEqual(py["status"], "done")
         py, _ = self.same_job({**job, "flags": {"no_disk": True}})  # unknown free space never blocks
