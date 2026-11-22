@@ -147,15 +147,20 @@ class Settings:
         # "on" is the global switch; each section's switch only counts while it's on. All on by default.
         self.swap = {k: bool((saved.get("swap") or {}).get(k, True)) for k in SWAP_KEYS}
         self.helper_model = str(saved.get("helper_model") or "")  # the text model helpers use ("" = automatic)
-        # "Check for updates": None until the user decides, then the default applies (on, but off in Docker)
+        # "Check for updates": None until the user answers (counts as off)
         self.update_check = saved["update_check"] if isinstance(saved.get("update_check"), bool) else None
+        self.tag_prompts = saved["tag_prompts"] if isinstance(saved.get("tag_prompts"), bool) else None  # None = on
         self.status = {}        # device id -> {"ok": bool, "ms": int}
         self.pinned = None      # a device picked by hand stays in use while it answers
         self.last_switch = None  # {"to": name, "from": name, "t": epoch}
 
     @property
     def update_check_on(self):
-        return (not STUDIO_DOCKER) if self.update_check is None else self.update_check
+        return bool(self.update_check)
+
+    @property
+    def update_ask(self):
+        return (not STUDIO_DOCKER) and self.update_check is None
 
     def current(self):
         return next((d for d in self.devices if d["id"] == self.active), self.devices[0] if self.devices else None)
@@ -185,7 +190,8 @@ class Settings:
                 "active": cur.get("id"), "name": cur.get("name", ""), "url": self.url, "host": self.host, "auto": self.auto,
                 "key_set": bool(self.key), "key_hint": hint(self.key), "configured": self.configured, "source": self.source,
                 "lan_access": LAN_ACCESS, "password": bool(PASSWORD), "last_switch": self.last_switch, "version": VERSION,
-                "swap": self.swap, "helper_model": self.helper_model, "docker": STUDIO_DOCKER, "update_check": self.update_check_on,
+                "swap": self.swap, "helper_model": self.helper_model, "docker": STUDIO_DOCKER, "update_check": self.update_check_on, "update_ask": self.update_ask,
+                "tag_prompts": self.tag_prompts is not False,
                 "app": FROZEN}  # the standalone app: no .env to edit, so the UI words the network notes differently
 
     def _save(self):
@@ -193,6 +199,8 @@ class Settings:
         saved = {"devices": self.devices, "active": self.active, "auto": self.auto, "swap": self.swap, "helper_model": self.helper_model}
         if self.update_check is not None:
             saved["update_check"] = self.update_check
+        if self.tag_prompts is not None:
+            saved["tag_prompts"] = self.tag_prompts
         tmp.write_text(json.dumps(saved, indent=1), "utf-8")
         try:
             os.chmod(tmp, 0o600)
@@ -259,6 +267,11 @@ class Settings:
                     self.swap[k] = bool(v)
             if isinstance(req.get("helper_model"), str):
                 self.helper_model = req["helper_model"].strip()[:200]
+            self._save()
+
+    def set_tag_prompts(self, on):
+        with self.lock:
+            self.tag_prompts = bool(on)
             self._save()
 
     def set_update_check(self, on):
@@ -1275,7 +1288,7 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_json(200, {"ok": True})
         if self.path == "/api/settings/test":
             return self.test_settings()
-        m = re.fullmatch(r"/api/settings/(delete|move|activate|auto|swap|updates|check)", self.path)
+        m = re.fullmatch(r"/api/settings/(delete|move|activate|auto|swap|updates|tags|check)", self.path)
         if m:
             return self.device_action(m.group(1))
         if self.path == "/api/model/launch":
@@ -1377,6 +1390,8 @@ class Handler(BaseHTTPRequestHandler):
             SETTINGS.set_update_check(req.get("update_check"))
             with UPDATE_LOCK:
                 UPDATE["answer"] = None  # a fresh answer the next time it's on
+        elif action == "tags":
+            SETTINGS.set_tag_prompts(req.get("tag_prompts", True))
         elif action == "check":
             SETTINGS.check()
         self.send_json(200, SETTINGS.public())

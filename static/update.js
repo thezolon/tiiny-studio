@@ -7,6 +7,19 @@ const UPD = { info: null };
 const isNumericVersion = (v) => /^\d+(\.\d+)*$/.test(v);
 const safeLink = (u) => (/^https?:\/\//i.test(u || "") ? u : "");
 
+/** First launch (not Docker): ask once before GitHub is ever contacted. OK = Yes, Cancel = No; either answer is saved. */
+async function askUpdateCheck() {
+  let info;
+  try { info = await api("/api/settings"); } catch { return false; }
+  if (!info?.update_ask) return false;
+  const on = confirm("Check for updates automatically?\n\n" +
+    "Once a day the studio would ask GitHub whether a newer version is out. GitHub sees your IP address and the studio's " +
+    "version, nothing about you, your files or your Tiiny. It never downloads or installs anything. You can change this " +
+    "any time in Settings.\n\nOK = Yes, Cancel = No");
+  try { await api("/api/settings/updates", { method: "POST", body: JSON.stringify({ update_check: on }) }); } catch { return false; }
+  return on;
+}
+
 async function checkUpdate() {
   let r;
   try { r = await api("/api/update"); } catch { return; }  // offline, or an older server: say nothing
@@ -70,4 +83,4 @@ function updateSettings() {
 $("#updateOpen").onclick = openUpdate;
 $("#updateDismiss").onclick = dismissUpdate;
 document.addEventListener("keydown", (e) => { if (e.key === "Escape" && $("#updateModal").classList.contains("show")) { e.stopPropagation(); closeUpdate(); } }, true);
-document.addEventListener("DOMContentLoaded", checkUpdate);
+document.addEventListener("DOMContentLoaded", async () => { await askUpdateCheck(); checkUpdate(); });

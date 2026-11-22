@@ -135,7 +135,8 @@ network); use the desktop app, or move Docker's network as the connection guide 
 ### 3. From source
 
 The server: `cd rust && cargo run --release -p studio-server` (a current stable Rust), then open <http://localhost:7860>.
-The desktop app: `cd rust/studio-desktop && cargo tauri build` (needs the Tauri CLI; on Linux, WebKitGTK).
+The desktop app: `cd rust/studio-desktop && cargo tauri build` (needs the Tauri CLI; on Linux, WebKitGTK). It listens on
+`127.0.0.1:7861` (a free port instead if that one is taken).
 
 The original Python server still runs as well (`python server.py`, Python 3.10+, no packages); it's kept as the
 reference the Rust version is tested against. Data goes to `./data` either way.
@@ -165,10 +166,13 @@ The Rust studio (desktop app and Docker) can act as an [MCP](https://modelcontex
 (Claude, Cline, Hermes, your own scripts) can make images, speech, loops, songs, 3D models and video through it,
 using the studio's one job queue, model loading and gallery. **It is off by default.**
 
-1. **Settings → Agents (MCP)**, switch on *Let agents use the studio (MCP)*. The studio shows the endpoint
-   (`http://localhost:7860/mcp`) and a token of its own, separate from `STUDIO_PASSWORD`. *New token* replaces it and
-   locks out agents that have the old one.
-2. Give your agent the endpoint and the token (as `Authorization: Bearer <token>`). For Claude Code:
+1. **Settings → Agents (MCP)**, switch on *Let agents use the studio (MCP)*. The studio shows the endpoint and a
+   token of its own, separate from `STUDIO_PASSWORD`. The endpoint is `http://localhost:7860/mcp` with Docker (or
+   a native server) and `http://localhost:7861/mcp` in the desktop app, which keeps port 7861 from one start to the next
+   (it only takes another free port if 7861 is in use, and then the address shown in Settings is the one to use).
+   *New token* replaces the token and locks out agents that have the old one.
+2. Give your agent the endpoint and the token (as `Authorization: Bearer <token>`). For Claude Code (Docker; use
+   port 7861 for the desktop app):
 
    ```
    claude mcp add --transport http tiiny-studio http://localhost:7860/mcp --header "Authorization: Bearer <token>"
@@ -199,8 +203,10 @@ In chat, a message with a suspected prompt injection in an attachment is answere
 
 Everything the studio saves stays on your machine: results, prompts, sources and voices live only in
 `data/`, and requests go only to your Tiiny. The one exception: the studio may ask GitHub once a day which version
-is the latest (one anonymous request, nothing about you or your Tiiny); you can turn that off in Settings, and it is
-off by default in Docker.
+is the latest (one anonymous request, nothing about you or your Tiiny). Nothing is sent until you answer a one-time
+question ("Check for updates automatically?") on first launch; you can change the answer in Settings, and it is
+off in Docker. New pictures, songs and videos carry their prompt (or spoken text), model and seed inside the file;
+**Settings → Write prompts into files** turns that off for files made from then on (the model and seed are still written).
 
 - **Deleting a result removes all of it**: the gallery entry with its prompt and settings, the output
   and source files, the server's in-memory copy of the job, and the browser's copy (images are served

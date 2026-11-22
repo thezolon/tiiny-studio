@@ -126,6 +126,18 @@ class Update(ContractCase):
         pair = self.get("/api/settings")
         self.assertEqual([r.json["update_check"] for r in pair], [False, False])
 
+    def test_the_first_launch_question_is_not_asked_in_docker_and_prompt_tags_switch(self):
+        pair = self.get("/api/settings")
+        self.assertEqual([r.json["update_ask"] for r in pair], [False, False])  # Docker: never asked
+        self.assertEqual([r.json["tag_prompts"] for r in pair], [True, True])  # on unless switched off
+        try:
+            for base in self.servers():
+                self.assertEqual(request(base, "POST", "/api/settings/tags", {"tag_prompts": False}).status, 200)
+            self.assertEqual([r.json["tag_prompts"] for r in self.get("/api/settings")], [False, False])
+        finally:
+            self.post("/api/settings/tags", {"tag_prompts": True})
+        self.assertEqual([r.json["tag_prompts"] for r in self.get("/api/settings")], [True, True])
+
     def test_the_page_has_the_notice(self):
         for base in self.servers():
             page = request(base, "GET", "/").body.decode()

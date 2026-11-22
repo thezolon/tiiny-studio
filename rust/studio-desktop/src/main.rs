@@ -89,9 +89,48 @@ fn unique_path(dir: &std::path::Path, name: &str) -> std::path::PathBuf {
         .unwrap_or(first)
 }
 
+/// The app's fixed port (Docker keeps 7860): an agent's MCP address and the page's saved preferences (per origin)
+/// stay the same from one start to the next.
+const APP_PORT: u16 = 7861;
+
+/// 127.0.0.1:7861, or a random free port when something else has it (logged).
+fn bind_local() -> std::net::TcpListener {
+    bind_preferred(APP_PORT)
+}
+
+fn bind_preferred(preferred: u16) -> std::net::TcpListener {
+    match std::net::TcpListener::bind(("127.0.0.1", preferred)) {
+        Ok(l) => l,
+        Err(e) => {
+            let l = std::net::TcpListener::bind("127.0.0.1:0").expect("no free local port");
+            eprintln!(
+                "port {preferred} is taken ({e}); using {} instead, so the MCP address and saved page preferences differ this time",
+                l.local_addr().map(|a| a.port()).unwrap_or(0)
+            );
+            l
+        }
+    }
+}
+
+/// Only web links go to the system browser; anything else (file:, ms-settings:, custom schemes…) is ignored.
+fn is_web_url(url: &tauri::Url) -> bool {
+    matches!(url.scheme(), "http" | "https")
+}
+
+/// The studio's own pages (and blob: downloads it makes) may load in the window; everything else may not.
+fn is_studio_url(url: &tauri::Url, port: u16) -> bool {
+    let origin = format!("http://127.0.0.1:{port}");
+    let s = url.as_str();
+    (url.scheme() == "http"
+        && url.host_str() == Some("127.0.0.1")
+        && url.port_or_known_default() == Some(port))
+        || s.starts_with(&format!("blob:{origin}/"))
+        || s == "about:blank"
+}
+
 fn main() {
     // Bind before the window exists so the port is known; only this computer can reach it.
-    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("no free local port");
+    let listener = bind_local();
     listener.set_nonblocking(true).expect("listener setup");
     let port = listener.local_addr().expect("listener address").port();
 
@@ -126,11 +165,26 @@ fn main() {
                 .parse()
                 .expect("local url");
             let handle = app.handle().clone();
+            let nav_handle = app.handle().clone();
             WebviewWindowBuilder::new(app, "main", WebviewUrl::External(url))
-                // links that open a new window (the guide, the credit link) go to the system browser instead
+                // links that open a new window (the guide, the credit link) go to the system browser instead;
+                // only http(s) ones, any other scheme is dropped
                 .on_new_window(move |url, _features| {
-                    let _ = handle.opener().open_url(url.as_str(), None::<&str>);
+                    if is_web_url(&url) {
+                        let _ = handle.opener().open_url(url.as_str(), None::<&str>);
+                    }
                     tauri::webview::NewWindowResponse::Deny
+                })
+                // the window never leaves the studio's own address: a web link that would is opened in the
+                // system browser instead, anything else is refused
+                .on_navigation(move |url| {
+                    if is_studio_url(url, port) {
+                        return true;
+                    }
+                    if is_web_url(url) {
+                        let _ = nav_handle.opener().open_url(url.as_str(), None::<&str>);
+                    }
+                    false
                 })
                 // the page's Download/Export/Save buttons are <a download> links (files and blob: data); a webview
                 // drops them unless the app says where they go: the Downloads folder, never overwriting
@@ -373,5 +427,50 @@ async fn stop_running_jobs(port: u16) {
         if list().await.map(|j| running(&j).is_empty()).unwrap_or(true) {
             break;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn u(s: &str) -> tauri::Url {
+        s.parse().unwrap()
+    }
+
+    #[test]
+    fn only_web_links_open_externally() {
+        assert!(is_web_url(&u("https://github.com/thezolon")));
+        assert!(is_web_url(&u("http://example.com/")));
+        assert!(!is_web_url(&u("file:///tmp/x")));
+        assert!(!is_web_url(&u("ms-settings:privacy")));
+        assert!(!is_web_url(&u("javascript:alert(1)")));
+    }
+
+    #[test]
+    fn the_window_stays_on_the_studio_origin() {
+        assert!(is_studio_url(&u("http://127.0.0.1:7861/"), 7861));
+        assert!(is_studio_url(
+            &u("http://127.0.0.1:7861/static/x.js?a=1"),
+            7861
+        ));
+        assert!(is_studio_url(
+            &u("blob:http://127.0.0.1:7861/abc-123"),
+            7861
+        ));
+        assert!(!is_studio_url(&u("http://127.0.0.1:7862/"), 7861));
+        assert!(!is_studio_url(&u("http://localhost:7861/"), 7861));
+        assert!(!is_studio_url(&u("https://127.0.0.1:7861/"), 7861));
+        assert!(!is_studio_url(&u("https://example.com/"), 7861));
+        assert!(!is_studio_url(&u("file:///tmp/x"), 7861));
+    }
+
+    #[test]
+    fn a_taken_port_falls_back_to_a_free_one() {
+        let first = bind_preferred(0);
+        let taken = first.local_addr().unwrap().port();
+        let second = bind_preferred(taken);
+        assert_ne!(second.local_addr().unwrap().port(), taken);
+        assert!(second.local_addr().unwrap().ip().is_loopback());
     }
 }

@@ -135,6 +135,20 @@ function swapSettings() {
     el("label", { class: "field" }, el("div", { class: "label" }, "Helpers use", el("span", { class: "hint" }, "a text model")), pick));
 }
 
+/** "Write prompts into files" (#58): on keeps today's behaviour; off leaves the prompt and spoken text out of the files
+    the studio saves (model and settings such as seed stay). */
+function tagSettings() {
+  const on = SET.info?.tag_prompts !== false;
+  const set = async (v) => {
+    try { SET.info = await api("/api/settings/tags", { method: "POST", body: JSON.stringify({ tag_prompts: v }) }); refreshSettings(); }
+    catch (e) { toast(e.message, "err"); refreshSettings(); }
+  };
+  return el("div", { class: "set-network set-swap" },
+    el("b", {}, "Write prompts into files"),
+    el("p", {}, "New pictures, songs and videos carry their prompt (or the text that was spoken), model and seed inside the file, so they show in the file manager and travel with it. Off: the prompt and spoken text are left out, so sharing a file doesn't share its prompt (the model and settings such as the seed are still written). Files already made aren't changed."),
+    el("label", { class: "auto" }, el("input", { type: "checkbox", checked: on, onchange: (e) => set(e.target.checked) }), "Write prompts into files"));
+}
+
 /** Agents (MCP): the studio's own MCP server, off by default, with a token of its own (not the studio password).
     The Python server has no MCP, so its settings carry no "mcp" and the section is left out. */
 function mcpSettings() {
@@ -166,6 +180,7 @@ function settingsBody(firstRun) {
     i.configured ? swapSettings() : null,
     i.mcp ? mcpSettings() : null,
     updateSettings(),
+    tagSettings(),
     el("div", { class: "set-privacy" },
       el("div", {}, el("b", {}, "Privacy"),
         el("p", {}, "What you make is saved only on this computer, in the studio's data folder, and the studio sends it nowhere but your Tiiny. Deleting a result removes it and its prompt, sources and cached copies. To clear it all at once:"),
