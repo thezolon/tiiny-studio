@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Tiiny Studio</title>
 <link rel="icon" type="image/png" href="/static/favicon.png">
+<script>try { var t = JSON.parse(localStorage.getItem("tiiny.theme")); if (t === "light" || t === "dark") document.documentElement.dataset.theme = t; } catch (e) {}</script>
 <link rel="stylesheet" href="/static/studio.css">
 </head>
 <body>
@@ -39,11 +40,11 @@
   <header class="topbar">
     <div class="brand"><div class="brand-mark" aria-hidden="true"></div>Tiiny Studio <small id="deviceHost"></small></div>
     <nav class="ws-tabs" role="tablist" aria-label="Workspace">
-      <button role="tab" id="tabImage" data-ws="image" aria-selected="true" aria-controls="wsImage" tabindex="0"><svg><use href="#i-spark"/></svg><span>Image</span></button>
-      <button role="tab" id="tabAudio" data-ws="audio" aria-selected="false" aria-controls="wsAudio" tabindex="-1"><svg><use href="#i-wave"/></svg><span>Audio</span></button>
-      <button role="tab" id="tabMesh" data-ws="mesh" aria-selected="false" aria-controls="wsMesh" tabindex="-1"><svg><use href="#i-cube"/></svg><span>3D</span></button>
-      <button role="tab" id="tabVideo" data-ws="video" aria-selected="false" aria-controls="wsVideo" tabindex="-1"><svg><use href="#i-film"/></svg><span>Video</span></button>
-      <button role="tab" id="tabChat" data-ws="chat" aria-selected="false" aria-controls="wsChat" tabindex="-1"><svg><use href="#i-chat"/></svg><span>Chat</span></button>
+      <button role="tab" id="tabImage" data-ws="image" aria-label="Image" title="Image" aria-selected="true" aria-controls="wsImage" tabindex="0"><svg><use href="#i-spark"/></svg><span>Image</span></button>
+      <button role="tab" id="tabAudio" data-ws="audio" aria-label="Audio" title="Audio" aria-selected="false" aria-controls="wsAudio" tabindex="-1"><svg><use href="#i-wave"/></svg><span>Audio</span></button>
+      <button role="tab" id="tabMesh" data-ws="mesh" aria-label="3D" title="3D" aria-selected="false" aria-controls="wsMesh" tabindex="-1"><svg><use href="#i-cube"/></svg><span>3D</span></button>
+      <button role="tab" id="tabVideo" data-ws="video" aria-label="Video" title="Video" aria-selected="false" aria-controls="wsVideo" tabindex="-1"><svg><use href="#i-film"/></svg><span>Video</span></button>
+      <button role="tab" id="tabChat" data-ws="chat" aria-label="Chat" title="Chat" aria-selected="false" aria-controls="wsChat" tabindex="-1"><svg><use href="#i-chat"/></svg><span>Chat</span></button>
     </nav>
     <div class="spacer"></div>
     <span class="update-pill" id="updatePill" hidden>
@@ -51,7 +52,7 @@
       <button type="button" id="updateDismiss" title="Dismiss until the next version" aria-label="Dismiss the update notice">✕</button>
     </span>
     <button class="jobs-pill" id="jobsPill" hidden></button>
-    <button class="model-btn" id="modelBtn" title="Choose, load or unload image models (M)">
+    <button class="model-btn" id="modelBtn" title="Models: load, unload and download (M)">
       <span class="ico"><img id="modelIco" alt=""><span class="dot" id="statusDot"></span></span>
       <span class="txt"><div class="nm" id="modelName">Connecting…</div><div class="cp" id="modelCaps"></div></span>
       <svg><use href="#i-chev"/></svg>
@@ -137,6 +138,7 @@
       <div class="composer-foot">
         <div class="notice" id="notice"><span id="noticeText"></span><button id="noticeAct"></button></div>
         <button class="go" id="go"><svg><use href="#i-spark"/></svg><span id="goLabel">Generate</span><span class="est" id="goEst"></span></button>
+        <div class="go-why" id="goWhy" role="status"></div>
         <div class="foot-meta"><span id="queueMeta">Device idle</span><span id="lastMeta"></span></div>
       </div>
     </aside>
@@ -182,6 +184,7 @@
 </div>
 
 <div class="modal" id="settingsModal" role="dialog" aria-modal="true" aria-labelledby="settingsTitle"></div>
+<div class="modal" id="keysModal" role="dialog" aria-modal="true" aria-labelledby="keysTitle"></div>
 <div class="modal" id="updateModal" role="dialog" aria-modal="true" aria-labelledby="updateTitle"></div>
 <div class="toasts" id="toasts" aria-live="polite"></div>
 <div class="dropveil" id="dropveil"><div id="dropveilText">Drop to use as source image</div></div>

@@ -216,7 +216,7 @@ function renderComposer() {
       : refs ? el("span", {}, S.sources.length ? "Add picture" : "Add a reference (optional)") : S.sources.length ? el("span", {}, "Add ref") : el("span", {}, el("b", {}, "Drop, paste (Ctrl+V) or click to browse"), "PNG · JPG · WebP — or pick one from the gallery below"));
   const zone = fileZone(drop, { key: "img-src", accept: { test: (t) => S.mode === "text" || /^image\//.test(t) }, what: "image", label: srcLabel, take: (f) => addFiles(f, true) });
   if (S.sources.length + (text && S.textDoc ? 1 : 0) < (text ? 1 : Math.max(1, C.maxRefs))) box.append(zone);
-  $("#srcHint").textContent = text ? "drop, paste or browse" : refs ? `optional, up to ${C.maxRefs} · call them "image 1", "image 2"` : C.maxRefs > 1 ? `source + up to ${C.maxRefs - 1} references` : "drop, paste, or pick from gallery";
+  $("#srcHint").textContent = text ? "drop, paste or browse" : refs ? C.maxRefs === 1 ? "optional · one picture to guide the result" : `optional, up to ${C.maxRefs} · call them "image 1", "image 2"` : C.maxRefs > 1 ? `source + up to ${C.maxRefs - 1} references` : "drop, paste, or pick from gallery";
 
   // chips
   $("#chips").replaceChildren(...(edit ? EDIT_CHIPS : CREATE_CHIPS).map((c) => el("button", { class: "chip", onclick: () => insertChip(c, edit) }, edit ? c.trim().replace(/ (the|to)$/, " …").replace(/ $/, " …") : "+ " + c)));
@@ -227,10 +227,10 @@ function renderComposer() {
   if (edit && C.annotate && S.sources[0] && !S.sources[0].orig) feats.push(el("button", { class: "chip", onclick: () => openAnnot(0) }, "✎ Mark the area to change"));
   if (edit && S.sources[0]?.orig) feats.push(el("button", { class: "chip", onclick: () => insertChip("In the area marked in red, ", true) }, "In the marked area …"));
   $("#features").replaceChildren(...feats);
-  const am = modelById(S.model);
+  const am = modelById(S.model), loads = imageLoads();
   // several image models: pick a loaded one here (one that's loading is picked when it's ready)
   const pick = am && modelPicker(S.models, am.id, (id) => { if (modelById(id)?.status === "running") selectModel(id); });
-  $("#modelHint").replaceChildren(...(am ? [pick || el("span", {}, el("b", {}, shortName(am.id))), el("span", {}, (pick ? "" : " · ") + capsLine(am))] : S.deviceOk ? [el("span", {}, "No image model loaded — "), el("a", { href: "#", style: "color:var(--accent-2)", onclick: (e) => { e.preventDefault(); openDrawer(); } }, "load one")] : []));
+  $("#modelHint").replaceChildren(...(am ? [pick || el("span", {}, el("b", {}, shortName(am.id))), el("span", {}, (pick ? "" : " · ") + capsLine(am))] : loads ? [el("span", {}, el("b", {}, shortName(loads.id)), " · loads when its turn comes")] : S.deviceOk ? [el("span", {}, "No image model loaded — "), el("a", { href: "#", style: "color:var(--accent-2)", onclick: (e) => { e.preventDefault(); openDrawer(); } }, "load one")] : []));
   $("#modeEdit").classList.toggle("locked", !!am && !C.edit);
   $("#modeEdit").title = am && !C.edit ? `${shortName(am.id)} can't edit images` : "Edit an existing image";
 
@@ -269,8 +269,10 @@ function renderComposer() {
   const editInstalled = S.models.find((m) => canEditModel(m.id));
   const showNotice = (text, act, fn) => { notice.classList.add("show"); $("#noticeText").textContent = text; $("#noticeAct").textContent = act || ""; $("#noticeAct").onclick = fn || null; };
   notice.classList.remove("show");
-  if (S.deviceOk === false) showNotice(S.keyRejected ? "Your Tiiny rejected the API key." : "Can't reach the device.", S.keyRejected ? "Fix it in Settings" : "Check settings", () => openSettings(false));
+  const dp = deviceProblem();  // the same wording as the Models panel and the other workspaces
+  if (dp) showNotice(`${dp.title} ${dp.text}`, dp.act, dp.act ? () => openSettings(false) : null);
   else if (text) { /* OCR uses its own model; ocrImage loads it if needed */ }
+  else if (S.deviceOk && !S.model && loads) { /* the button says it loads one */ }
   else if (S.deviceOk && !S.model) showNotice(Object.keys(S.loading).length ? "Loading a model…" : "No image model is loaded on the device.", "Open models", openDrawer);
   else if (edit && S.model && !C.edit) {
     if (editRunning) showNotice(`${shortName(S.model)} can only create images.`, "Use " + shortName(editRunning.id), () => selectModel(editRunning.id));
@@ -281,9 +283,12 @@ function renderComposer() {
   // go button
   const p = buildParams(true);
   const go = $("#go");
-  go.disabled = text ? !S.deviceOk || !(S.sources.length || S.textDoc) : !S.model || !S.deviceOk || !$("#prompt").value.trim() || (edit && (!S.sources.length || !C.edit));
-  $("#goLabel").textContent = text ? (S.sources.length || S.textDoc ? "Read text again" : "Read text") : edit ? (S.queue.length || S.running ? "Queue edit" : "Apply edit") : (S.queue.length || S.running ? "Queue" : "Generate");
-  $("#goEst").textContent = text ? "" : S.model ? "~" + fmtSec(estimate(p)) : "";
+  go.disabled = text ? !S.deviceOk || !(S.sources.length || S.textDoc) : !(S.model || loads) || !S.deviceOk || !$("#prompt").value.trim() || (edit && (!S.sources.length || !C.edit));
+  $("#goLabel").textContent = text ? (S.sources.length || S.textDoc ? "Read text again" : "Read text") : loads ? `Queue (loads ${shortName(loads.id)})` : edit ? (S.queue.length || S.running ? "Queue edit" : "Apply edit") : (S.queue.length || S.running ? "Queue" : "Generate");
+  $("#goEst").textContent = text ? "" : S.model || loads ? "~" + fmtSec(estimate(p) + (loads ? LOAD_EST : 0)) : "";
+  // why the button is dimmed, in words (a tooltip on a disabled button never shows on touch)
+  $("#goWhy").textContent = !go.disabled || text || !S.deviceOk ? "" : !(S.model || loads) ? "" : !$("#prompt").value.trim() ? (edit ? "Describe the change first" : "Describe the image first")
+    : edit && !S.sources.length ? "Add the picture to change first" : edit && !C.edit ? "This model can't edit pictures" : "";
   renderStatus();
 }
 
@@ -298,7 +303,7 @@ function buildParams(preview = false) {
   const [w, h] = sizeFor();
   let prompt = $("#prompt").value.trim();
   if (S.transparent && caps(modelById(S.model)).transparent && !/transparent background/i.test(prompt)) prompt = prompt.replace(/[.\s]*$/, ". ") + "The image has an alpha channel and a transparent background.";
-  const p = { model: S.model, prompt, size: `${w}x${h}`, n: S.n };
+  const p = { model: S.model || imageLoads()?.id, prompt, size: `${w}x${h}`, n: S.n };
   const neg = $("#negative").value.trim(); if (neg) p.negative_prompt = neg;
   if (!$("#stepsAuto").checked) p.steps = Number($("#steps").value);
   if (!$("#cfgAuto").checked) p.guidance_scale = Number($("#cfg").value);
@@ -311,6 +316,13 @@ function buildParams(preview = false) {
   }
   if (S.mode === "edit" || (S.mode === "create" && S.sources.length && caps(modelById(S.model)).edit)) p.image = true;
   return p;
+}
+
+/** With no image model loaded: the one the queue loads when the job's turn comes (as in Audio, 3D and Video, #78). Create mode only. */
+function imageLoads() {
+  if (S.model || !S.deviceOk || S.mode !== "create" || typeof swapOn !== "function" || !swapOn("queue")) return null;
+  const imgs = (S.models || []).filter((m) => !/Image-to-3D/.test(m.type) && !S.loading[m.id] && m.status !== "loading");
+  return imgs.find((m) => m.id === store.get("model", null)) || imgs.slice().sort((a, b) => (a.npu_usage ?? 99) - (b.npu_usage ?? 99))[0] || null;
 }
 
 /* ---------- queue (server-side jobs, shared with Audio and 3D) ---------- */
@@ -326,7 +338,7 @@ async function submitImage() {
   const images = S.mode === "edit" || refs ? S.sources.map((s) => s.uri) : [];
   const { image, ...body } = params;
   try {
-    const j = await api("/api/jobs", { method: "POST", body: JSON.stringify({ kind: "image", ...body, images, ...(refs ? { mode: "refs" } : {}), est: estimate(params),
+    const j = await api("/api/jobs", { method: "POST", body: JSON.stringify({ kind: "image", ...body, images, ...(refs ? { mode: "refs" } : {}), ...(S.model ? {} : { load: true }), est: estimate(params),
       label: (refs ? "Compose: " : images.length ? "Edit: " : "Image: ") + params.prompt.slice(0, 40) }) });
     LOCALJ[j.id] = { params, images };
     S.jobs.push(j);
@@ -354,7 +366,7 @@ function imageJobDone(j) {
     $("#lastMeta").textContent = `last: ${fmtSec(j.entry.seconds)}`;
     notify(j.entry);
   } else if (S.view?.job === j.id) {
-    S.view = imageHistory()[0] ? { id: imageHistory()[0].id, idx: 0 } : null;
+    S.view = j.status === "error" ? { failed: j.id } : imageHistory()[0] ? { id: imageHistory()[0].id, idx: 0 } : null;  // a failure shows on the stage (#80)
   }
   delete LOCALJ[j.id]; delete IMGJ[j.id];
   syncImageJobs(true);
@@ -374,7 +386,7 @@ function renderStatus() {
   const dot = $("#statusDot");
   dot.className = "dot " + (S.deviceOk === false ? "err" : S.running ? "busy" : S.deviceOk ? "ok" : "");
   const q = S.queue.length;
-  $("#queueMeta").textContent = S.running ? `Running${q ? ` · ${q} queued` : ""}` : S.deviceOk === false ? (S.keyRejected ? "API key rejected" : "Device offline") : "Device idle";
+  $("#queueMeta").textContent = S.running ? `Running${q ? ` · ${q} queued` : ""}` : deviceProblem()?.short || "Device idle";
 }
 
 /* ---------- stage ---------- */
@@ -394,6 +406,11 @@ function renderStage() {
   if (viewingJob) {
     const job = S.running && S.running.jid === S.view.job ? S.running : S.queue.find((j) => j.jid === S.view.job);
     if (job) return renderPending(stage, head, job);
+    S.view = null;
+  }
+  if (S.view?.failed) {
+    const f = S.failed.find((x) => x.id === S.view.failed);
+    if (f) { head.append(el("div", { class: "crumb" }, el("b", {}, "Failed"), " · " + f.label)); stage.append(failedCard(f, () => dismissFailed(f.id))); return; }
     S.view = null;
   }
 
@@ -736,7 +753,7 @@ document.addEventListener("keydown", (e) => {
   else if (e.key === "ArrowLeft") { stepImage(-1); e.preventDefault(); }
   else if (!entry) return;
   else if (e.key === "e") useAsSource("/images/" + entry.outputs[S.view.idx || 0]);
-  else if (e.key === "v") rerun(entry);
+  else if (e.key === "v") { rerun(entry); toast("Queued a variation (V). Cancel it from the jobs pill if you didn't mean to."); }
   else if (e.key === "r") reuse(entry);
   else if (e.key === "c" && entry.sources.length) { S.compare = !S.compare; renderStage(); }
   else if (e.key === "d") document.querySelector(".toolbar a[download]")?.click();

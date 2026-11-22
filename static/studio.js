@@ -50,13 +50,28 @@ const S = {
 
 const fmtSec = (s) => s < 60 ? `${Math.round(s)}s` : `${Math.floor(s / 60)}m ${String(Math.round(s % 60)).padStart(2, "0")}s`;
 
+/** Theme: "system" (the default) follows the OS; "light" or "dark" is the user's own choice (Settings → Appearance). */
+function applyTheme(v) { if (v === "light" || v === "dark") document.documentElement.dataset.theme = v; else delete document.documentElement.dataset.theme; }
+applyTheme(store.get("theme", "system"));
+
 /* ---------- toasts ---------- */
 function toast(msg, kind = "") {
-  const t = el("div", { class: "toast " + kind });
+  const t = el("div", { class: "toast " + kind, title: "Click to dismiss", onclick: () => t.remove() });
   if (kind === "err") t.append(el("b", {}, "Error · "));
-  t.append(msg);
+  t.append(kind === "err" ? plainError(msg) : msg);
   $("#toasts").append(t);
-  setTimeout(() => t.remove(), kind === "err" ? 8000 : 3500);
+  setTimeout(() => t.remove(), kind === "err" ? 12000 : 3500);
+}
+
+/** An error as the user should read it: a Tiiny that doesn't answer is one plain sentence, and no address or API path
+    of the device shows (the original goes to the console, where a bug report can still get it). */
+const UNREACHABLE = "Can't reach your Tiiny. Is it on, and on the same network or USB cable? Check the address in Settings.";
+function plainError(msg) {
+  const raw = String(msg ?? "");
+  const out = /^Device unreachable/.test(raw) ? UNREACHABLE
+    : raw.replace(/\s*\(https?:\/\/[^\s)]*\)/g, "").replace(/https?:\/\/\S*\/(?:api|v1)\/\S*/g, "the device");
+  if (out !== raw) console.info("[tiiny-studio] error details:", raw);
+  return out;
 }
 
 /** A line for screen readers only, in the same polite live region as the toasts (#toasts). */
@@ -74,6 +89,14 @@ async function api(path, opts = {}) {
   return j;
 }
 
+/** Why the Tiiny can't be used right now, worded once for every place that says it (Models panel, gates, Image, Chat);
+    null while it answers. act: what fixes it from here (a locked Tiiny needs TiinyOS, so Settings wouldn't help). */
+function deviceProblem() {
+  if (S.deviceOk !== false) return null;
+  if (S.locked) return { kind: "locked", short: "Tiiny locked", title: "Your Tiiny is locked after a restart.", text: UNLOCK_HOW, act: null };
+  if (S.keyRejected) return { kind: "key", short: "API key rejected", title: "Your Tiiny rejected the API key.", text: "Copy the API key (not the device ID) from TiinyOS: avatar → Settings → API Key.", act: "Open Settings" };
+  return { kind: "offline", short: "Device offline", title: "Can't reach the Tiiny.", text: "Check that it's switched on and that the address in Settings is right.", act: "Open Settings" };
+}
 const KEY_REJECTED = "Your Tiiny rejected the API key. Copy the API key (not the device ID) from TiinyOS: avatar → Settings → API Key.";
 // After a power cycle the Tiiny answers but stays locked until TiinyOS unlocks it (the servers' LOCKED says the same)
 const UNLOCK_HOW = "Open the TiinyOS app once (or run \"tiiny login\" with the Tiiny CLI) to unlock it. The studio checks again by itself.";
@@ -202,12 +225,11 @@ function renderDrawer() { if (S.drawer) keepFocus($("#drawer"), drawDrawer); }  
 function drawDrawer() {
   const body = $("#drawerBody");
   if (S.deviceOk === false) {
-    body.replaceChildren(S.keyRejected
-      ? el("div", { class: "empty", style: "margin:40px auto" }, el("h2", {}, "API key rejected"),
-        el("p", {}, "Your Tiiny answers, but not to this key. Copy the API key (not the device ID) from TiinyOS: avatar → Settings → API Key."),
-        el("button", { class: "btn-sm accent", onclick: () => openSettings(false) }, "Open Settings"))
-      : S.locked ? el("div", { class: "empty", style: "margin:40px auto" }, el("h2", {}, "Your Tiiny is locked after a restart"), el("p", {}, UNLOCK_HOW))
-      : el("div", { class: "empty", style: "margin:40px auto" }, el("h2", {}, "Device offline"), el("p", {}, "Can't reach the Tiiny.")));
+    const dp = deviceProblem();
+    body.replaceChildren(el("div", { class: "empty", style: "margin:40px auto" }, el("h2", {}, dp.title), el("p", {}, dp.text),
+      el("div", { class: "row", style: "justify-content:center;gap:8px" },
+        el("button", { class: "btn-sm", onclick: () => loadModels() }, "Try again"),
+        dp.act ? el("button", { class: "btn-sm accent", onclick: () => openSettings(false) }, dp.act) : null)));
     return;
   }
 
@@ -275,11 +297,13 @@ function modelCard(m) {
     const t = (Date.now() - t0) / 1000, f = Math.min(0.95, t / est);
     card.append(el("div", { class: "load-bar" }, el("small", {}, `Loading… ${fmtSec(t)} of ~${fmtSec(est)}`), el("div", { class: "bar" }, el("i", { style: `width:${(f * 100).toFixed(0)}%` }))));
   } else if (S.confirm && S.confirm.id === m.id) {
-    const cand = S.confirm.plan.candidate || {};
+    // the Tiiny names the model to unload as `candidate` ({model_id, fullname, npu_usage}) or as a `model_id` list (the fake)
+    const plan = S.confirm.plan, vid = plan.candidate?.model_id || [].concat(plan.model_id || [])[0];
+    const cand = { ...(modelById(vid) || {}), ...(plan.candidate || {}), model_id: vid };
     const name = (cand.fullname || cand.model_id || "another model").split("/").pop();
     const isActive = cand.model_id === S.model;
     card.append(el("div", { class: "confirm" },
-      `${shortName(m.id)} needs ${S.confirm.plan.npu_required}% NPU; only ${S.confirm.plan.npu_available}% is free. Unload `, el("b", {}, name), ` (${cand.npu_usage}%) to make room?`,
+      `${shortName(m.id)} needs ${plan.npu_required}% NPU; only ${plan.npu_available}% is free. Unload `, el("b", {}, name), cand.npu_usage != null ? ` (${cand.npu_usage}%)` : "", " to make room?",
       isActive && (S.running || S.queue.length) ? el("div", { style: "margin-top:6px;color:var(--warn)" }, "It's running a job — wait for it to finish first.") : null,
       el("div", { class: "row" },
         el("button", { class: "btn-sm ghost", onclick: () => { S.confirm = null; renderDrawer(); } }, "Cancel"),
@@ -437,5 +461,34 @@ function nameFields() {
     if (c.textContent.trim()) ctl.setAttribute("aria-label", c.textContent.trim());
   }
 }
-new MutationObserver(nameFields).observe(document.body, { childList: true, subtree: true });
-nameFields();
+/** A toolbar button's label (<span class="lbl">) is hidden on narrow screens: keep it as the control's name and tooltip. */
+function nameButtons() {
+  for (const b of document.querySelectorAll(".tb")) {
+    const t = b.querySelector(":scope > .lbl")?.textContent.trim();
+    if (!t) continue;
+    if (!b.hasAttribute("aria-label") || b.dataset.named === b.getAttribute("aria-label")) { b.setAttribute("aria-label", t); b.dataset.named = t; }
+    if (!b.hasAttribute("title")) b.title = t;
+  }
+}
+new MutationObserver(() => { nameFields(); nameButtons(); }).observe(document.body, { childList: true, subtree: true });
+nameFields(); nameButtons();
+
+/* ---------- keyboard shortcuts (the ? key, or Settings) ---------- */
+const SHORTCUTS = [["M", "Open or close the Models panel"], ["← →", "Image: previous / next picture in the gallery"], ["E", "Image: edit the picture on show"],
+  ["V", "Image: same settings, new seed (queues a job)"], ["R", "Image: load its settings into the composer"], ["C", "Image: before / after"], ["D", "Image: download"],
+  ["Ctrl Enter", "Run the current tool"], ["Space", "Audio: play / pause"], ["?", "This list"]];
+function openKeys() {
+  const card = el("div", { class: "modal-card" },
+    el("div", { class: "modal-head" }, el("h3", { id: "keysTitle" }, "Keyboard shortcuts"), el("span", { class: "spacer" }),
+      el("button", { class: "icon-btn", title: "Close (Esc)", "aria-label": "Close", onclick: closeKeys }, "✕")),
+    el("div", { class: "set-body" }, el("table", { class: "keys-table" }, ...SHORTCUTS.map(([k, t]) => el("tr", {}, el("td", {}, ...k.split(" ").map((x) => el("kbd", {}, x))), el("td", {}, t))))),
+    el("div", { class: "modal-foot" }, el("small", { style: "color:var(--faint)" }, "They work when no text field has the focus.")));
+  $("#keysModal").replaceChildren(card);
+  openModal($("#keysModal"));
+}
+function closeKeys() { closeModal($("#keysModal")); }
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && $("#keysModal").classList.contains("show")) { e.stopPropagation(); closeKeys(); return; }
+  if (e.key !== "?" || e.target.closest("input, textarea, select") || e.ctrlKey || e.metaKey || e.altKey || MODALS.length) return;
+  e.preventDefault(); openKeys();
+}, true);

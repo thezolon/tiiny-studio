@@ -156,15 +156,20 @@ async function chatMic() {
 }
 
 /* ---------- sending and streaming ---------- */
-async function chatSend() {
-  const box = $("#chatInput"), text = box.value.trim();
-  if (C.busy || (!text && !C.attach.length)) return;
+/** again: { text, attach } of a message to send once more (Try again); what is typed in the box stays where it is. */
+async function chatSend(again) {
+  const box = $("#chatInput"), text = again ? again.text : box.value.trim(), attach = again ? again.attach : C.attach;
+  if (C.busy || (!text && !attach.length)) return;
   const model = runningChat();
-  if (!model) { toast("No chat model is loaded. Load one from the Models panel.", "err"); return openDrawer(); }
+  if (!model) {
+    const dp = deviceProblem();  // the real reason first: a locked or unreachable Tiiny isn't a missing model
+    if (dp) return void toast(`${dp.title} ${dp.text}`, "err");
+    toast("No chat model is loaded. Load one from the Models panel.", "err"); return openDrawer();
+  }
   const conv = C.cur;
-  conv.messages.push({ role: "user", text, attach: C.attach });
-  if (!conv.title) conv.title = (text || C.attach[0]?.name || "Chat").slice(0, 60);
-  C.attach = []; box.value = ""; autoGrowChat();
+  conv.messages.push({ role: "user", text, attach });
+  if (!conv.title) conv.title = (text || attach[0]?.name || "Chat").slice(0, 60);
+  if (!again) { C.attach = []; box.value = ""; autoGrowChat(); }
   const reply = { role: "assistant", text: "", reasoning: "", artifacts: [], model: model.id, pending: true };
   conv.messages.push(reply);
   C.busy = true; ChatWS.render(true);
@@ -206,6 +211,14 @@ async function chatSend() {
   chatPersist();
   pollJobs();
 }
+/** Try again after a failed or stopped reply: the same message goes out once more (what's typed in the box stays). */
+function chatRetry(reply) {
+  const msgs = C.cur.messages, i = msgs.indexOf(reply), user = msgs[i - 1];
+  if (C.busy || i < 1 || user?.role !== "user") return;
+  if (!runningChat()) { const dp = deviceProblem(); return void toast(dp ? `${dp.title} ${dp.text}` : "No chat model is loaded. Load one from the Models panel.", "err"); }
+  msgs.splice(i - 1, 2);
+  chatSend({ text: user.text, attach: user.attach || [] });
+}
 // thinking boxes the user opened or closed by hand stay that way while the reply streams (not saved with the chat)
 const thinkOpen = new WeakMap();
 async function chatPersist() {
@@ -220,12 +233,15 @@ const ChatWS = {
   mount(root) {
     C.cur = newChat();
     root.replaceChildren(
-      el("aside", { class: "chat-side" },
-        el("button", { class: "btn-sm accent chat-new", onclick: () => { if (!C.busy) { C.cur = newChat(); C.attach = []; this.render(); $("#chatInput")?.focus(); } } }, "+ New chat"),
+      el("aside", { class: "chat-side", id: "chatSide", "aria-label": "Chats" },
+        el("div", { class: "chat-side-top" },
+          el("button", { class: "btn-sm accent chat-new", onclick: () => { if (C.busy) return toast("Wait for the reply to finish", "err"); C.cur = newChat(); C.attach = []; this.sheet(false); this.render(); $("#chatInput")?.focus(); } }, "+ New chat"),
+          el("button", { class: "icon-btn sm chat-sheet-close", title: "Close", "aria-label": "Close the chat list", onclick: () => this.sheet(false) }, "✕")),
         el("div", { class: "chat-list", id: "chatList" }),
         el("div", { class: "chat-side-foot" },
           el("label", { class: "chat-opt", title: "Keep conversations in the studio's data folder (chats) so you can come back to them. Off: nothing is written to disk." },
             el("input", { type: "checkbox", checked: C.save, onchange: (e) => { C.save = e.target.checked; store.set("chat.save", C.save); if (C.save) chatPersist(); } }), "Save chats"))),
+      el("div", { class: "chat-scrim", onclick: () => this.sheet(false) }),
       el("section", { class: "chat-main" },
         el("div", { class: "chat-head", id: "chatHead" }),
         el("div", { class: "chat-scroll", id: "chatScroll" }, el("div", { class: "chat-msgs", id: "chatMsgs" })),
@@ -233,6 +249,15 @@ const ChatWS = {
     // drop or paste pictures and documents onto the composer (once: the composer element stays, its contents re-render)
     fileZone($("#chatComposer"), { key: "chat", accept: { test: () => true }, what: "file", label: "attachment", take: chatAttach });
     this.loadList();
+    document.addEventListener("keydown", (e) => { if (e.key === "Escape" && $("#chatSide")?.classList.contains("open")) this.sheet(false); });
+  },
+  /** Below 900 px the chat list is a sheet over the chat (opened by the Chats button in the head). */
+  sheet(open) {
+    const side = $("#chatSide");
+    if (!side) return;
+    side.classList.toggle("open", open);
+    if (open) side.querySelector(".chat-new")?.focus();
+    else if (side.contains(document.activeElement)) $("#chatSheetBtn")?.focus();
   },
   async loadList() {
     try { C.list = await api("/api/chats"); } catch { C.list = []; }
@@ -248,7 +273,7 @@ const ChatWS = {
   },
   async open(id) {
     if (C.busy) return toast("Wait for the reply to finish", "err");
-    try { const c = await api(`/api/chats/${id}`); C.cur = { id: c.id, title: c.title, created: c.created, messages: c.messages || [] }; C.attach = []; this.render(); }
+    try { const c = await api(`/api/chats/${id}`); C.cur = { id: c.id, title: c.title, created: c.created, messages: c.messages || [] }; C.attach = []; this.sheet(false); this.render(); }
     catch (e) { toast(e.message, "err"); }
   },
   async remove(id) {
@@ -263,10 +288,13 @@ const ChatWS = {
     const sc = $("#chatScroll"), top = sc.scrollTop, stay = !toBottom && this.shown === C.cur && sc.scrollHeight - top - sc.clientHeight >= 80;
     this.shown = C.cur;
     const m = runningChat();
+    const dp = deviceProblem();
     $("#chatHead").replaceChildren(...[
+      el("button", { class: "btn-sm ghost chat-sheet-btn", id: "chatSheetBtn", title: "Saved chats, new chat and the Save chats switch", onclick: () => this.sheet(true) }, "Chats"),
       el("span", { class: "chat-title" }, C.cur.title || "New chat"), el("span", { class: "spacer" }),
       C.cur.messages.length && !C.busy ? el("button", { class: "btn-sm ghost", title: "Start a new chat", onclick: () => { C.cur = newChat(); C.attach = []; this.render(); } }, "+ New") : null,
       m ? el("span", { class: "chat-model", title: m.id }, shortName(m.id) + (seesImages(m) ? " · sees images" : ""))
+        : dp ? el("span", { class: "chat-model", title: `${dp.title} ${dp.text}` }, dp.short)  // the Tiiny can't be asked: no model to load yet
         : el("button", { class: "btn-sm", onclick: openDrawer }, "Load a chat model")].filter(Boolean));
     const msgs = $("#chatMsgs");
     msgs.replaceChildren(...(C.cur.messages.length ? C.cur.messages.map((x) => this.bubble(x)) : [this.empty()]));
@@ -301,10 +329,11 @@ const ChatWS = {
     if (atBottom) sc.scrollTop = sc.scrollHeight;
   },
   empty() {
-    const m = runningChat();
+    const m = runningChat(), dp = deviceProblem();
     return el("div", { class: "chat-empty" }, el("h2", {}, "Chat with your Tiiny"),
       el("p", {}, m ? `Talking to ${shortName(m.id)}. Attach pictures or documents, or ask it to make something: an image, an edit, speech, a loop or a song. If a tool needs room on the device, the studio swaps models and swaps back.`
-        : "Load a chat model from the Models panel to start."),
+        : dp ? `${dp.title} ${dp.text}` : "Load a chat model from the Models panel to start."),
+      !m && dp?.act ? el("p", {}, el("button", { class: "btn-sm accent", onclick: () => openSettings(false) }, dp.act)) : null,
       el("div", { class: "chips" }, ["Make an image of a cosy reading nook on a rainy evening", "Summarise the attached document in five bullets", "Write a short poem and read it aloud", "Make a chill lo-fi piano loop"]
         .map((t) => el("button", { class: "chip", onclick: () => { $("#chatInput").value = t; autoGrowChat(); $("#chatInput").focus(); } }, t))));
   },
@@ -326,7 +355,8 @@ const ChatWS = {
       (x.artifacts || []).length ? el("div", { class: "msg-art" }, x.artifacts.map((a) => this.artifact(a))) : null,
       x.pending ? el("div", { class: "msg-status" }, el("span", { class: "dot busy" }), x.status || "Working…",
         el("button", { class: "btn-sm ghost", ...onPress(() => C.job && cancelJob(C.job)) }, "Stop")) : null,
-      x.error ? el("div", { class: "msg-error" }, x.error) : null,
+      x.error ? el("div", { class: "msg-error" }, plainError(x.error),
+        el("button", { class: "btn-sm", disabled: C.busy, title: "Send the same message again", onclick: () => chatRetry(x) }, "Try again")) : null,
       !x.pending && !x.error ? el("div", { class: "msg-meta" }, [x.model && shortName(x.model), x.seconds && `${x.seconds}s`].filter(Boolean).join(" · "),
         el("button", { class: "btn-sm ghost", title: "Copy the reply", onclick: () => { navigator.clipboard?.writeText(x.text || ""); toast("Copied"); } }, "Copy")) : null);
   },
@@ -346,8 +376,9 @@ const ChatWS = {
     const old = $("#chatInput"), prev = old?.value || "";
     // model refreshes redraw the composer: keep the typing focus and the caret where they were
     const typing = old && document.activeElement === old ? [old.selectionStart, old.selectionEnd, old.selectionDirection] : null;
-    const input = el("textarea", { id: "chatInput", rows: "1", placeholder: C.busy ? "Wait for the reply…" : "Message your Tiiny — Enter to send, Shift+Enter for a new line",
-      oninput: autoGrowChat, onkeydown: (e) => { if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); chatSend(); } } }, prev);
+    const input = el("textarea", { id: "chatInput", rows: "1", placeholder: C.busy ? "Wait for the reply…" : "Message your Tiiny",
+      // a touch keyboard has no Shift+Enter: there Enter starts a new line and the Send button sends
+      oninput: autoGrowChat, onkeydown: (e) => { if (e.key === "Enter" && !e.shiftKey && !e.isComposing && !matchMedia("(hover: none)").matches) { e.preventDefault(); chatSend(); } } }, prev);
     const file = el("input", { type: "file", hidden: true, multiple: true, accept: DOC_ACCEPT, onchange: (e) => { chatAttach(e.target.files); e.target.value = ""; } });
     const toggle = (key, label, title) => el("button", { class: "btn-sm toggle", "aria-pressed": String(C[key]), title, onclick: () => { C[key] = !C[key]; store.set("chat." + key, C[key]); this.renderComposer(); } }, label);
     box.replaceChildren(...[
@@ -358,14 +389,15 @@ const ChatWS = {
         el("button", { class: "icon-btn", title: "Attach pictures or documents (or paste / drop them)", onclick: () => file.click() }, icon("i-upload")), file,
         el("button", { class: "icon-btn" + (C.recorder ? " rec-on" : ""), title: C.recorder ? "Stop and transcribe" : "Speak your message", onclick: chatMic }, icon("i-mic")),
         input,
-        el("button", { class: "go chat-send", disabled: C.busy, onclick: chatSend }, icon("i-spark"), "Send")),
+        el("button", { class: "go chat-send", disabled: C.busy, onclick: () => chatSend() }, icon("i-spark"), "Send")),
       el("div", { class: "chat-opts" },
         // the model's own thinking info decides: an on/off switch, a note that it always reasons, or nothing
         { switch: toggle("thinking", "Thinking", "Let the model reason before answering (slower, often better)"),
-          always: el("span", { class: "btn-sm toggle", "aria-pressed": "true", title: `${shortName(runningChat()?.id || "")} always reasons before answering` }, "Always thinks") }[thinkingMode(runningChat())] || null,
+          always: el("span", { class: "btn-sm toggle on", title: `${shortName(runningChat()?.id || "")} always reasons before answering` }, "Always thinks") }[thinkingMode(runningChat())] || null,
         toggle("tools", "Can make things", "Let the model create and edit images, speak, and make loops and songs (models are swapped on the device when needed)"),
         el("span", { class: "spacer" }),
-        el("small", { style: "color:var(--faint)" }, C.save ? "Saved in the data folder · delete removes it completely" : "Not saved"))].filter(Boolean));
+        el("small", { style: "color:var(--faint)" }, C.save ? "Saved in the data folder · delete removes it completely" : "Not saved"),
+        el("small", { class: "key-hint", style: "color:var(--faint)" }, "Enter sends · Shift+Enter new line"))].filter(Boolean));
     autoGrowChat();
     if (typing) { input.focus({ preventScroll: true }); input.setSelectionRange(...typing); }
   },

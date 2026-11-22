@@ -13,7 +13,7 @@ async function loadSettings() {
 }
 function renderDeviceLabel() {
   const i = SET.info;
-  $("#deviceHost").textContent = i?.host ? `Tiiny · ${i.name || i.host}` : "not connected";
+  $("#deviceHost").textContent = i?.host ? (/^tiiny\b/i.test(i.name || "") ? i.name : `Tiiny · ${i.name || i.host}`) : "not connected";  // the default name already says Tiiny
   $("#deviceHost").title = i?.host ? `${i.url}${i.auto && i.devices?.length > 1 ? " · auto-switch on" : ""}` : "";
 }
 /** Called from the model poll with the device the server is using; tells the user about switches. */
@@ -91,13 +91,14 @@ function deviceList() {
   const act = async (path, body) => { try { SET.info = await api("/api/settings/" + path, { method: "POST", body: JSON.stringify(body) }); renderDeviceLabel(); refreshSettings(); if (path === "activate") loadModels(true); } catch (e) { toast(e.message, "err"); } };
   const rows = (i.devices || []).map((d, n) => {
     const st = d.status;
-    const dot = el("span", { class: "dev-dot " + (st ? (st.ok ? "ok" : "bad") : ""), title: st ? (st.ok ? `answering · ${st.ms} ms` : "not answering") : "not checked yet" });
+    const lockedNow = d.id === i.active && S.locked && !!st?.ok;  // it answers, but is locked after a restart: not green
+    const dot = el("span", { class: "dev-dot " + (lockedNow ? "warn" : st ? (st.ok ? "ok" : "bad") : ""), title: lockedNow ? "answering, but locked: open the TiinyOS app once" : st ? (st.ok ? `answering · ${st.ms} ms` : "not answering") : "not checked yet" });
     const active = d.id === i.active;
     return el("div", { class: "dev-row" + (active ? " active" : "") },
       dot,
       el("div", { class: "grow" },
         el("div", { class: "dev-name" }, d.name, n === 0 && i.devices.length > 1 ? el("span", { class: "dev-tag" }, "preferred") : null, active ? el("span", { class: "dev-tag on" }, "in use") : null),
-        el("small", {}, `${d.host}${d.key_set ? ` · key ${d.key_hint}` : " · no key"}${st?.ok ? ` · ${st.ms} ms` : st ? " · not answering" : ""}`),
+        el("small", {}, `${d.host}${d.key_set ? ` · key ${d.key_hint}` : " · no key"}${lockedNow ? " · locked: open the TiinyOS app once" : st?.ok ? ` · ${st.ms} ms` : st ? " · not answering" : ""}`),
         i.docker && d.host.startsWith("172.17.") && !st?.ok ? el("small", { class: "dev-warn" }, "A USB address in Docker's own network: the studio in Docker can't reach it. Use the Tiiny's Wi-Fi address, the desktop app, or ",
           el("a", { href: "/docs/CONNECTING.md", target: "_blank", rel: "noopener" }, "move Docker's network"), ".") : null),
       n > 0 ? el("button", { class: "icon-btn sm", type: "button", title: "Move up (higher priority)", "aria-label": `Move ${d.name} up`, onclick: () => act("move", { id: d.id, dir: -1 }) }, "↑") : null,
@@ -197,9 +198,14 @@ function settingsBody(firstRun) {
       el("p", {}, i.lan_access
         ? (i.password ? "Other devices on your network can open the studio with the password." : "Other devices on your network can open the studio — and no password is set. Add STUDIO_PASSWORD to .env, or remove STUDIO_BIND to go back to this-computer-only.")
         : "Nobody else on your network can open it. To allow phones or other computers, set STUDIO_BIND=0.0.0.0 (and a STUDIO_PASSWORD) in .env and restart.")),
+    el("div", { class: "set-network" }, el("b", {}, "Appearance"),
+      el("label", { class: "field" }, el("div", { class: "label" }, "Theme", el("span", { class: "hint" }, "System follows your computer")),
+        el("select", { class: "input", onchange: (e) => { store.set("theme", e.target.value); applyTheme(e.target.value); } },
+          ...[["system", "System"], ["light", "Light"], ["dark", "Dark"]].map(([v, t]) => el("option", { value: v, selected: store.get("theme", "system") === v }, t))))),
     el("div", { class: "row set-actions" },
       el("a", { class: "set-credit", href: "https://github.com/thezolon", target: "_blank", rel: "noopener" }, `Tiiny Studio ${SET.info?.version || ""} · by Zolon Farsane`.replace("  ", " ")),
       el("span", { class: "spacer" }),
+      el("button", { class: "btn-sm ghost", type: "button", title: "Shortcuts: press ? anywhere", onclick: openKeys }, "Keyboard shortcuts"),
       el("button", { class: "btn-sm accent", type: "button", onclick: closeSettings }, "Done")),
   ];
 }

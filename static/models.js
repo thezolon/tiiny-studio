@@ -163,6 +163,7 @@ function queueList() {
   return el("div", { class: "mm-queue" },
     el("div", { class: "npu-top" }, el("span", {}, el("b", {}, `Queue · ${items.length}`), items.length ? ` · ${GB(total)}, one after another` : ""),
       items.length ? el("button", { class: "btn-sm ghost", onclick: () => queuePost("dequeue", { all: true }, "Queue cleared") }, "Clear queue") : null),
+    items.length && S.downloads.some((d) => d.status === "paused") ? el("div", { class: "hint-line" }, "A download is paused, so the queue is waiting. Resume it or cancel it and the next one starts.") : null,
     q.stopped ? el("div", { class: "confirm mm-stopped" }, el("b", {}, "The queue stopped. "), q.stopped,
       el("div", { class: "row" }, el("button", { class: "btn-sm accent", onclick: () => queuePost("resume", {}, "Queue resumed") }, "Resume the queue"))) : null,
     items.length ? el("ol", { class: "mm-queue-list", "aria-label": "Waiting to download" }, items.map((i) => el("li", { class: "other-row" },
@@ -192,8 +193,8 @@ function updatesArea() {
         el("button", { class: "btn-sm accent", onclick: () => getModel(id) }, `${queueBusy() ? "Queue the download" : "Download again"} · ${GB(storeModel(id)?.size)}`))));
   }
   if (!waiting.length) {
-    out.push(el("div", { class: "hint-line mm-uptodate" }, "No model updates waiting. ",
-      el("span", {}, "The Tiiny can't see updates while it has no internet, so this also shows when it's offline.")));
+    out.push(el("div", { class: "hint-line mm-uptodate" }, "No updates found ",
+      el("span", {}, "(the Tiiny needs internet to check).")));
     return out;
   }
   const total = waiting.reduce((a, m) => a + (m.size || 0), 0);

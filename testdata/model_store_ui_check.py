@@ -64,7 +64,7 @@ try:
         order = [r for r in reqs if r[0] == "DELETE" or r[1].endswith("/download")]
         check("updates ran one after another", order[-4:] == [("DELETE", "/api/v1/models/Fake/Whisper-ASR"), ("POST", "/api/v1/models/Fake/Whisper-ASR/download"),
                                                          ("DELETE", "/api/v1/models/Fake/PP-OCRv6"), ("POST", "/api/v1/models/Fake/PP-OCRv6/download")])
-        check("no update left", "No model updates waiting" in page.locator("#drawerBody").inner_text())
+        check("no update left", "No updates found" in page.locator("#drawerBody").inner_text())
         # --- a cancel is not a finish ---
         fake.state.flags.update(download_rate=2, updates=["Fake/Foundation-1", "Fake/YuE2"])
         page.evaluate("document.querySelectorAll('.toast').forEach((t) => t.remove())")

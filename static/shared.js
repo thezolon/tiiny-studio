@@ -58,7 +58,7 @@ async function pollJobs() {
       onJobDone(j);
     } else if (j.status === "error" || j.status === "cancelled") {
       seenDone.add(j.id);
-      if (j.status === "error") { toast(j.error || "Job failed", "err"); noteFailed(j); }
+      if (j.status === "error") { if (!(j.kind === "chat" && S.ws === "chat")) toast(j.error || "Job failed", "err"); noteFailed(j); }  // a chat reply says so in its own bubble
       onJobDone(j);
     }
   }
@@ -104,7 +104,7 @@ const FAILED_KINDS = ["image", "speech", "transcribe", "loop", "song", "mesh", "
 S.failed = store.get("jobs.failed", []);
 function noteFailed(j) {
   if (!FAILED_KINDS.includes(j.kind) || S.failed.some((f) => f.id === j.id) || store.get("jobs.dismissed", []).includes(j.id)) return;
-  S.failed.unshift({ id: j.id, kind: j.kind, model: j.model, label: j.label || j.kind, error: j.error || "Job failed", at: j.finished || Date.now() / 1000 });
+  S.failed.unshift({ id: j.id, kind: j.kind, model: j.model, label: j.label || j.kind, error: j.error || "Job failed", prompt: j.kind === "image" ? j.params?.prompt : undefined, at: j.finished || Date.now() / 1000 });
   S.failed = S.failed.slice(0, 20); store.set("jobs.failed", S.failed);
 }
 function dismissFailed(id) {
@@ -112,11 +112,13 @@ function dismissFailed(id) {
   S.failed = S.failed.filter((f) => !gone.includes(f.id)); store.set("jobs.failed", S.failed);
   store.set("jobs.dismissed", [...gone, ...store.get("jobs.dismissed", [])].slice(0, 100));
   for (const k of ["audio", "mesh", "video"]) { const m = WS[k].mod(), st = m?.state?.(); if (st?.view?.failed && gone.includes(st.view.failed)) { st.view = null; if (m.mounted && S.ws === k) m.renderStage(); } }
+  if (S.view?.failed && gone.includes(S.view.failed)) { S.view = null; renderStage(); renderStrip(); }  // Image
   renderJobsPill(); renderJobsMenu();
 }
 /** Open a failure's tab with the failure on its stage. */
 function openFailed(f) {
   const k = wsOfJob(f); setWs(k);
+  if (k === "image") { S.view = { failed: f.id }; renderStage(); renderStrip(); return; }  // Image keeps its state in S
   const m = WS[k]?.mod?.(), st = m?.state?.();
   if (st) { st.view = { failed: f.id }; m.renderStage(); m.renderStrip?.(); }
 }
@@ -125,9 +127,11 @@ function failedCard(f, onDismiss) {
   return el("div", { class: "pending media-pending failed" },
     el("div", { class: "pending-inner" },
       el("div", { class: "big" }, "Didn't finish"),
-      el("div", { class: "sub err-text" }, f.error),
+      el("div", { class: "sub err-text" }, plainError(f.error)),
       el("div", { class: "prompt-echo" }, f.label),
       el("div", { class: "row", style: "justify-content:center;gap:8px;flex-wrap:wrap" },
+        // an image's prompt goes back into the composer, so trying again is one click
+        f.kind === "image" && f.prompt ? el("button", { class: "tb primary", onclick: () => { onDismiss(); setMode("create"); $("#prompt").value = f.prompt; autoGrow(); renderComposer(); $("#prompt").focus(); } }, "Put the prompt back") : null,
         // a video stopped at the 1-hour limit may still hold the NPU: only unloading its model frees it (#80)
         f.kind === "video" && f.model && /1-hour limit/.test(f.error) && modelById(f.model)?.status === "running"
           ? el("button", { class: "tb", ...onPress(async (b) => { b.disabled = true; b.textContent = "Unloading…"; await stopModel(f.model, shortName(f.model)); onDismiss(); }) }, "Unload the video model") : null,
@@ -168,7 +172,7 @@ function renderJobsMenu() {
   const failedRows = S.failed.map((f) => el("div", { class: "jobs-menu-row failed" },
     el("span", { class: "dot err" }),
     el("button", { class: "jobs-menu-label", title: "Open it on its tab", onclick: () => { menu.hidden = true; openFailed(f); } },
-      el("b", {}, f.label), el("small", { class: "err-text" }, `Failed ${clock(f.at)} · ${f.error}`)),
+      el("b", {}, f.label), el("small", { class: "err-text" }, `Failed ${clock(f.at)} · ${plainError(f.error)}`)),
     el("button", { class: "btn-sm ghost", onclick: () => dismissFailed(f.id) }, "Dismiss")));
   keepFocus(menu, () => menu.replaceChildren(...[...act.map((j) => el("div", { class: "jobs-menu-row" },
     el("span", { class: "dot " + (j.status === "running" ? "busy" : "") }),
@@ -392,12 +396,9 @@ function mediaBadges(m) {
 }
 /** A card that blocks a tool until its model is loaded (or explains it isn't installed). */
 function modelGate(tool, what, picker) {
-  if (S.deviceOk === false && S.locked)  // it answers, but needs TiinyOS to unlock it: Settings wouldn't help
-    return el("div", { class: "gate" }, el("div", { class: "grow" }, el("b", {}, "Your Tiiny is locked after a restart."), el("p", {}, UNLOCK_HOW)));
-  if (S.deviceOk === false)  // no model list to go on: say why rather than "not installed"
-    return el("div", { class: "gate" }, el("div", { class: "grow" }, el("b", {}, S.keyRejected ? "Your Tiiny rejected the API key." : "Can't reach the Tiiny."),
-      el("p", {}, S.keyRejected ? "Copy the API key (not the device ID) from TiinyOS: avatar → Settings → API Key." : "Check that it's on and the address is right.")),
-      el("button", { class: "btn-sm accent", onclick: () => openSettings(false) }, "Settings"));
+  const dp = deviceProblem();  // no model list to go on: say why rather than "not installed" (a locked Tiiny needs TiinyOS: Settings wouldn't help)
+  if (dp) return el("div", { class: "gate" }, el("div", { class: "grow" }, el("b", {}, dp.title), el("p", {}, dp.text)),
+    dp.act ? el("button", { class: "btn-sm accent", onclick: () => openSettings(false) }, "Settings") : null);
   const m = modelForTool(tool);
   // Music used to need the models' own ports (blocked over USB); the gateway's /v1/music routes now cover it.
   if (m && (m.status === "running" || picker)) return null;  // with a picker, its card offers Load
@@ -664,6 +665,7 @@ function mediaWS(c) {
           el("div", { class: "composer-scroll" }, ...top, el("div", { id: p + "Gate" }), el("div", { id: p + "Panel" })),
           el("div", { class: "composer-foot" },
             el("button", { class: "go", id: p + "Go", onclick: () => this.submit() }, icon(ico), typeof label === "string" ? el("span", { id: p + "GoLabel", "data-label": label }, label) : label, el("span", { class: "est", id: est })),
+            el("div", { class: "go-why", id: p + "Why", role: "status" }),
             el("div", { class: "foot-meta" }, ...foot))),
         el("section", { class: "stage-col" },
           el("div", { class: "stage-head", id: p + "Head" }),
@@ -678,6 +680,8 @@ function mediaWS(c) {
       $(`#${p}Gate`).replaceChildren(...[pick, g].filter(Boolean));
       this.renderFoot();
     },
+    /** Why the main button is dimmed, in words under it (a tooltip on a disabled button never shows on touch). */
+    setWhy(text) { const n = $(`#${p}Why`); if (n) n.textContent = text || ""; },
     /** The tool's model and whether it's loaded; also writes the "name · not loaded" line in the footer. */
     footModel(tool, extra = "") {
       const m = modelForTool(tool), loaded = m?.status === "running";
