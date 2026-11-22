@@ -482,8 +482,11 @@ mod tests {
         let dir =
             std::env::temp_dir().join(format!("studio-store-{}", uuid::Uuid::new_v4().simple()));
         std::fs::create_dir_all(&dir).unwrap();
-        // a sharing violation / no permission: not damaged, so it stays and is never overwritten
-        let busy = dir.join("history.json");
+        // a sharing violation / no permission: not damaged, so it stays and is never overwritten. Its own file name:
+        // warnings are process-wide, and a parallel test's "history.json could not be opened" (ENOTDIR on Unix) would
+        // otherwise look like this one's.
+        let name = format!("history-{}.json", uuid::Uuid::new_v4().simple());
+        let busy = dir.join(&name);
         std::fs::write(&busy, b"[{\"id\": \"keep\"}]").unwrap();
         let denied = |_: &Path| Err(std::io::Error::from(std::io::ErrorKind::PermissionDenied));
         assert!(read_json_with(&busy, denied).is_none());
@@ -505,7 +508,7 @@ mod tests {
         let warned = || {
             data_warnings()
                 .iter()
-                .any(|w| w.starts_with("history.json could not be opened ("))
+                .any(|w| w.starts_with(&format!("{name} could not be opened (")))
         };
         assert!(warned());
         assert!(read_json_or_set_aside(&busy).is_some());

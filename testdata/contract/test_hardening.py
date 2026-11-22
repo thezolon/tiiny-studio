@@ -152,7 +152,7 @@ class Hardening(Jobs):
                 self.assertTrue(job["error"].startswith("Couldn't save the result: "), job["error"])
                 self.assertTrue(any(p.endswith("/content") for _, p, *_ in calls))  # it did download the clip
         finally:
-            for d, data in zip(tmps, saved):
+            for d, data in zip(tmps, saved, strict=True):
                 d.rmdir()
                 if data is not None:
                     d.write_bytes(data)
@@ -167,7 +167,7 @@ class Hardening(Jobs):
         try:
             py, rs = self.post("/api/settings/auto", {"auto": False})
         finally:
-            for c, data in zip(cfgs, saved):
+            for c, data in zip(cfgs, saved, strict=True):
                 c.rmdir()
                 if data is not None:
                     c.write_bytes(data)
