@@ -12,11 +12,10 @@ async function askUpdateCheck() {
   let info;
   try { info = await api("/api/settings"); } catch { return false; }
   if (!info?.update_ask) return false;
-  const on = confirm("Check for updates automatically?
-
-Once a day the studio would ask GitHub whether a newer version is out, with one anonymous request that says nothing about you or your Tiiny. It never downloads or installs anything. You can change this any time in Settings.
-
-OK = Yes, Cancel = No");
+  const on = confirm("Check for updates automatically?\n\n" +
+    "Once a day the studio would ask GitHub whether a newer version is out. GitHub sees your IP address and the studio's " +
+    "version, nothing about you, your files or your Tiiny. It never downloads or installs anything. You can change this " +
+    "any time in Settings.\n\nOK = Yes, Cancel = No");
   try { await api("/api/settings/updates", { method: "POST", body: JSON.stringify({ update_check: on }) }); } catch { return false; }
   return on;
 }
