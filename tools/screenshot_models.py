@@ -3,8 +3,8 @@
     TIINY_URL=http://192.168.1.50 TIINY_KEY=... python tools/screenshot_models.py [--out docs/screenshots/models.webp]
 
 Starts a scratch studio (Python server, empty temporary data folder, so no gallery, chats or voices can show) against
-the Tiiny, names the device "Wi-Fi" so no address appears in the picture, opens the drawer on the Model Store with
-the first model's details open, and saves a 1670x993 WebP in the dark theme. Read-only on the Tiiny: nothing is
+the Tiiny, names the device "Wi-Fi" so no address appears in the picture, opens the drawer on the Model Store (with
+--details, the first model's details open), and saves a 1670x993 WebP in the dark theme. Read-only on the Tiiny: nothing is
 downloaded, loaded or deleted. The scratch studio and its folder are removed afterwards. Look at the picture before
 committing it. Needs: pip install playwright==1.64.1 pillow && python -m playwright install chromium."""
 import argparse
@@ -26,6 +26,7 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--out", default=str(ROOT / "docs" / "screenshots" / "models.webp"))
     ap.add_argument("--port", type=int, default=7971)
+    ap.add_argument("--details", action="store_true", help="open the first model's Details (long descriptions fill the drawer)")
     a = ap.parse_args()
     url, key = os.environ.get("TIINY_URL"), os.environ.get("TIINY_KEY")
     if not url or not key:
@@ -54,10 +55,10 @@ def main():
             page.wait_for_load_state("networkidle")
             page.evaluate("openDrawer(); setMtab('store')")
             page.wait_for_function("() => S.store && S.store.models.length", timeout=60000)
-            # the first store model's details open, to show what the store tells about each model
-            page.evaluate("""() => { const m = S.store.models.filter((x) => x.in_store)
-                .sort((a, b) => (a.recommend_rank ?? 1e9) - (b.recommend_rank ?? 1e9))[0];
-                (S.openDesc ||= {})['store:' + m.id] = true; renderDrawer(); }""")
+            if a.details:  # the first store model's details open, to show what the store tells about each model
+                page.evaluate("""() => { const m = S.store.models.filter((x) => x.in_store)
+                    .sort((a, b) => (a.recommend_rank ?? 1e9) - (b.recommend_rank ?? 1e9))[0];
+                    (S.openDesc ||= {})['store:' + m.id] = true; renderDrawer(); }""")
             page.wait_for_timeout(2500)  # icons
             page.evaluate("document.querySelectorAll('.toast').forEach((t) => t.remove()); document.activeElement?.blur()")
             png = page.screenshot()
