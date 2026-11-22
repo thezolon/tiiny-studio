@@ -118,7 +118,7 @@ pub async fn endpoint(
         .unwrap_or("");
     if cfg.token.is_empty() || !constant_time_eq(given.as_bytes(), cfg.token.as_bytes()) {
         if headers.contains_key(header::AUTHORIZATION) {
-            crate::routes::MCP_GUARD.failed(ip, "MCP token");
+            crate::routes::MCP_GUARD.failed(ip, "MCP token", given);
         }
         return (
             StatusCode::UNAUTHORIZED,
