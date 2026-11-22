@@ -76,7 +76,9 @@ function chatToolModels() {
   const edit = imgs.find((m) => m.status === "running" && canEditModel(m.id)) || imgs.find((m) => canEditModel(m.id));
   return { image: create?.id, edit: edit?.id, speech: modelForTool("speech")?.id, loop: modelForTool("loop")?.id, song: modelForTool("song")?.id };
 }
-const runningChat = () => (S.allModels || []).find((m) => m.status === "running" && CHAT_TYPES.includes(m.type));
+const runningChats = () => (S.allModels || []).filter((m) => m.status === "running" && CHAT_TYPES.includes(m.type));
+/** The chat model that answers: the one picked in the head while it still runs, else the first running one. */
+const runningChat = () => { const all = runningChats(); return all.find((m) => m.id === C.pick) || all[0]; };
 
 /* ---------- conversation <-> API messages ---------- */
 function apiMessages(conv, vision) {
@@ -166,6 +168,7 @@ async function chatSend(again) {
     if (dp) return void toast(`${dp.title} ${dp.text}`, "err");
     toast("No chat model is loaded. Load one from the Models panel.", "err"); return openDrawer();
   }
+  if (C.pick && C.pick !== model.id) C.pick = null;  // the chosen model stopped running: fall back (the head redraws below)
   const conv = C.cur;
   conv.messages.push({ role: "user", text, attach });
   if (!conv.title) conv.title = (text || attach[0]?.name || "Chat").slice(0, 60);
@@ -177,7 +180,7 @@ async function chatSend(again) {
   const voice = voices.find((v) => v.id === store.get("chat.voice", null)) || voices[0];
   try {
     const job = await api("/api/jobs", { method: "POST", body: JSON.stringify({
-      kind: "chat", label: "Chat", model: "default", messages: apiMessages({ messages: conv.messages.slice(0, -1) }, seesImages(model)),
+      kind: "chat", label: "Chat", model: runningChats().length > 1 ? model.id : "default", messages: apiMessages({ messages: conv.messages.slice(0, -1) }, seesImages(model)),
       thinking: C.thinking, tools: C.tools ? CHAT_TOOLS : [], tool_models: chatToolModels(), voice_id: voice?.id,
       system: madeSoFar({ messages: conv.messages.slice(0, -1) }),
       last_image: latestImage({ messages: conv.messages.slice(0, -1) }), prefs: { size: "1024x1024" } }) });
@@ -293,7 +296,10 @@ const ChatWS = {
       el("button", { class: "btn-sm ghost chat-sheet-btn", id: "chatSheetBtn", title: "Saved chats, new chat and the Save chats switch", onclick: () => this.sheet(true) }, "Chats"),
       el("span", { class: "chat-title" }, C.cur.title || "New chat"), el("span", { class: "spacer" }),
       C.cur.messages.length && !C.busy ? el("button", { class: "btn-sm ghost", title: "Start a new chat", onclick: () => { C.cur = newChat(); C.attach = []; this.render(); } }, "+ New") : null,
-      m ? el("span", { class: "chat-model", title: m.id }, shortName(m.id) + (seesImages(m) ? " · sees images" : ""))
+      m && runningChats().length > 1 ? el("select", { class: "chat-model chat-model-pick", "aria-label": "Model that answers", title: "Which loaded chat model answers",
+        onchange: (e) => { C.pick = e.target.value; this.render(); } },
+        runningChats().map((x) => el("option", { value: x.id, selected: x.id === m.id }, shortName(x.id) + (seesImages(x) ? " · sees images" : ""))))
+      : m ? el("span", { class: "chat-model", title: m.id }, shortName(m.id) + (seesImages(m) ? " · sees images" : ""))
         : dp ? el("span", { class: "chat-model", title: `${dp.title} ${dp.text}` }, dp.short)  // the Tiiny can't be asked: no model to load yet
         : el("button", { class: "btn-sm", onclick: openDrawer }, "Load a chat model")].filter(Boolean));
     const msgs = $("#chatMsgs");

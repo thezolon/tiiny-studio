@@ -295,6 +295,7 @@ textarea.lyrics:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(-
 .chat-head { display: flex; align-items: center; gap: 10px; padding: 12px 22px; border-bottom: 1px solid var(--line); }
 .chat-title { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; flex: 1; }
 .chat-model { min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--muted); font-size: 13px; padding: 3px 10px; border: 1px solid var(--line); border-radius: 99px; white-space: nowrap; }
+.chat-model-pick { appearance: auto; background: var(--panel-2); max-width: 220px; cursor: pointer; }
 .chat-scroll { overflow-y: auto; min-height: 0; }
 .chat-msgs { max-width: 820px; margin: 0 auto; padding: 22px 22px 8px; display: flex; flex-direction: column; gap: 16px; }
 .msg { max-width: 100%; }
