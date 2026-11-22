@@ -1,5 +1,51 @@
 # Changelog
 
+## 0.7.1 (2026-11-22)
+
+Fixes from a full review of 0.7.0 (code, design, security and tests): safer saved data, documents that can't crash the
+app, a studio that's harder to misuse on a network, clearer messages, and a better layout on small screens. Upgrade from
+0.7.0 or 0.6.6 is recommended.
+
+**Good to know when you update**
+- **Update checks:** the desktop app now asks once ("Check for updates automatically?") before it ever contacts GitHub.
+  If you had never changed the switch, checks stay off until you answer.
+- **Desktop app address:** the app now always uses `http://127.0.0.1:7861` (another free port only if 7861 is taken),
+  so agents (MCP) keep one address and the page keeps its preferences between starts.
+- **On a network (LAN access):** the studio only answers to addresses it recognises (IP addresses, `localhost`,
+  one-word names, `.local`, `.lan`, `.home`, `.home.arpa`, `.fritz.box`, `.ts.net` and similar). Behind a reverse proxy
+  or under another name, list it in `STUDIO_HOSTS`. Wrong passwords are slowed down after ten tries.
+- **Chat:** when an attached document looks like it carries instructions for the model, that reply runs with its tools
+  (pictures, speech, model swaps) switched off, and the warning says so.
+- **Agents and the API:** transcription takes WAV (the page already converts); video is 1-7 s, what the Tiiny renders.
+- **Prompts in files:** a new Settings switch, "Write prompts into files" (on, as before), keeps prompts and spoken
+  text out of pictures, songs and clips you share.
+
+**Fixed**
+- **Saved data:** a damaged gallery index, voices list or settings file was read as empty and then overwritten. It is
+  now kept aside and reported, and saves are written fully to disk before they replace the old file. One device record
+  with a missing name no longer drops every device. Reference pictures no longer bloat the gallery index.
+- **Documents:** some tiny or unusual .docx, .odt, .xlsx, .pptx and HTML files could crash the app or use gigabytes of
+  memory; reading now has limits and runs apart from the rest of the studio. HTML and EPUB over about 1 MB can be read
+  again, large pages are fast, and text that a limit cuts says so. Curly quotes and dashes (HTML, RTF), nested tables,
+  pages without `</head>`, old-encoding text files, spreadsheet columns and slide order are read correctly.
+- **Messages:** a locked or unreachable Tiiny is named as such in Chat and Image (not "load a model" or "offline"),
+  with the right next step; errors leave out internal addresses; a failed chat reply or picture can be tried again.
+- **Small screens:** saved chats and "New chat" open as a sheet below 900 px; the jobs menu and messages fit a phone;
+  buttons keep their names for screen readers. New: a light/dark switch in Settings, a keyboard-shortcuts list (`?`),
+  and slightly larger small text.
+- **Jobs and models:** Stop during a chat tool no longer starts another reply on the Tiiny; quitting no longer starts
+  the next queued job; a failed model swap puts your models back; downloads, updates and song deletes stay with the
+  Tiiny they belong to; long chat replies aren't cut at 15 minutes; thinking can be switched off for models that report
+  it wrongly.
+- **Songs, 3D and video:** a finished song is no longer lost when the Tiiny's clean-up fails; the style reference is
+  checked before sending; 3D and video notice when a task is gone; speech works without a voice on models that have
+  their own.
+- Security hardening: stricter checks on file names, on which address the device key may go to, and on requests from
+  other web pages; security headers on every page; a hardened `compose.yaml` (read-only, no extra privileges).
+- Technical: nine fix packages (#139-#147, tracked in #138), each with tests: 130+ Rust tests, 162 contract tests, the
+  browser checks now run against the Rust server that ships, and CI builds and starts the Docker image before it is
+  published. `server.py` remains the behaviour reference for the tests, not meant for LAN use.
+
 ## 0.7.0 (2026-11-21)
 
 Install, update and remove models from the studio: the Tiiny's Model Store is now in the Models panel, so you no
