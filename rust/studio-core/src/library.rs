@@ -10,6 +10,7 @@ use axum::{
     Json, Router,
 };
 use serde_json::{json, Value};
+use tokio::io::{AsyncReadExt, AsyncSeekExt};
 
 use crate::routes::{error, mime, read_json, str_of, CHAT_BODY, MAX_BODY};
 use crate::store::{safe_file, save_json, shred, word};
@@ -133,15 +134,29 @@ fn entries_of(state: &AppState, ids: &[String]) -> Vec<Value> {
         .collect()
 }
 
-fn forget(state: &AppState, ids: &[String]) {
+/// Drop the in-memory copies of deleted entries. A job that is still queued or running is stopped, not dropped: if it
+/// stayed unknown to the table nothing could stop it, and its result would be saved after the delete.
+async fn forget(state: &AppState, ids: &[String]) {
     for id in ids {
-        state.jobs.remove(id);
+        if state.jobs.is_active(id) {
+            state.jobs.cancel(state, id).await;
+        } else {
+            state.jobs.remove(id);
+        }
         state
             .search_cache
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .remove(id);
     }
+}
+
+/// `Store::delete_entries` shreds files (zeros + fsync): not on the async runtime.
+async fn delete_in_store(state: &AppState, ids: Vec<String>) -> Result<(), String> {
+    let store = state.store.clone();
+    tokio::task::spawn_blocking(move || store.delete_entries(&ids))
+        .await
+        .unwrap_or_else(|_| Err("the delete was interrupted".into()))
 }
 
 async fn delete_entries(State(state): State<AppState>, body: Bytes) -> Response {
@@ -159,8 +174,8 @@ async fn delete_entries(State(state): State<AppState>, body: Bytes) -> Response 
     ids.sort();
     ids.dedup();
     let sessions = crate::media::recover::sessions_of(&entries_of(&state, &ids));
-    let saved = state.store.delete_entries(&ids);
-    forget(&state, &ids);
+    let saved = delete_in_store(&state, ids.clone()).await;
+    forget(&state, &ids).await;
     crate::media::recover::delete_device_sessions(&state, sessions); // the Tiiny's copy goes too
     if let Err(e) = saved {
         return save_failed(&e);
@@ -174,8 +189,8 @@ async fn delete_entry(State(state): State<AppState>, Path(id): Path<String>) -> 
     }
     let ids = vec![id];
     let sessions = crate::media::recover::sessions_of(&entries_of(&state, &ids));
-    let saved = state.store.delete_entries(&ids);
-    forget(&state, &ids); // the finished job's in-memory copy (prompt, label) goes too
+    let saved = delete_in_store(&state, ids.clone()).await;
+    forget(&state, &ids).await; // the finished job's in-memory copy (prompt, label) goes too
     crate::media::recover::delete_device_sessions(&state, sessions);
     match saved {
         Ok(()) => Json(json!({"ok": true})).into_response(),
@@ -213,7 +228,11 @@ async fn image(
     if !safe_file(&name) {
         return not_found();
     }
-    let Ok(b) = std::fs::read(state.store.images.join(&name)) else {
+    let path = state.store.images.join(&name);
+    let Ok(mut file) = tokio::fs::File::open(&path).await else {
+        return not_found();
+    };
+    let Ok(len) = file.metadata().await.map(|m| m.len()) else {
         return not_found();
     };
     let common = [
@@ -230,9 +249,13 @@ async fn image(
     let Some((a, z)) = range.filter(|(a, z)| {
         (!a.is_empty() || !z.is_empty()) && a.chars().chain(z.chars()).all(|c| c.is_ascii_digit())
     }) else {
-        return (common, b).into_response();
+        // not a range: the whole file
+        let mut b = Vec::with_capacity(len as usize);
+        return match file.read_to_end(&mut b).await {
+            Ok(_) => (common, b).into_response(),
+            Err(_) => not_found(),
+        };
     };
-    let len = b.len() as u64;
     let last = len.saturating_sub(1);
     let (start, end) = if a.is_empty() {
         (len.saturating_sub(z.parse().unwrap_or(0)), last)
@@ -249,7 +272,13 @@ async fn image(
         )
             .into_response();
     }
-    let part = b[start as usize..=end as usize].to_vec();
+    // seek and read just the asked bytes: a <video> seeks with many ranges
+    let mut part = vec![0u8; (end - start + 1) as usize];
+    if file.seek(std::io::SeekFrom::Start(start)).await.is_err()
+        || file.read_exact(&mut part).await.is_err()
+    {
+        return not_found();
+    }
     (
         StatusCode::PARTIAL_CONTENT,
         common,
@@ -318,20 +347,31 @@ async fn delete_voice(State(state): State<AppState>, Path(id): Path<String>) -> 
     if !word(&id) {
         return not_found();
     }
-    let _g = state.store.lock();
-    let voices = state.store.load_voices();
-    let (gone, keep): (Vec<Value>, Vec<Value>) =
-        voices.into_iter().partition(|v| str_of(v, "id") == id);
-    for v in gone {
-        let f = str_of(&v, "file");
-        if safe_file(f) {
-            shred(&state.store.images.join(f));
+    let store = state.store.clone();
+    // saved first, shredded after (and off the runtime, with the store lock let go): see Store::delete_entries
+    let done = tokio::task::spawn_blocking(move || {
+        let gone = {
+            let _g = store.lock();
+            let voices = store.load_voices();
+            let (gone, keep): (Vec<Value>, Vec<Value>) =
+                voices.into_iter().partition(|v| str_of(v, "id") == id);
+            store.save_voices(&keep)?;
+            gone
+        };
+        for v in gone {
+            let f = str_of(&v, "file");
+            if safe_file(f) {
+                shred(&store.images.join(f));
+            }
         }
+        Ok::<(), String>(())
+    })
+    .await;
+    match done {
+        Ok(Ok(())) => Json(json!({"ok": true})).into_response(),
+        Ok(Err(e)) => save_failed(&e),
+        Err(_) => save_failed("the delete was interrupted"),
     }
-    if let Err(e) = state.store.save_voices(&keep) {
-        return save_failed(&e);
-    }
-    Json(json!({"ok": true})).into_response()
 }
 
 async fn chats(State(state): State<AppState>) -> Json<Value> {
@@ -378,9 +418,12 @@ async fn delete_chat(State(state): State<AppState>, Path(id): Path<String>) -> R
         return not_found();
     }
     let path = state.store.chat_path(&id);
-    if path.is_file() {
-        shred(&path);
-    }
+    let _ = tokio::task::spawn_blocking(move || {
+        if path.is_file() {
+            shred(&path);
+        }
+    })
+    .await;
     Json(json!({"ok": true})).into_response()
 }
 
@@ -392,48 +435,53 @@ async fn wipe(State(state): State<AppState>) -> Response {
             "Jobs are still running or queued; wipe after they finish.",
         );
     }
-    let g = state.store.lock();
-    let sessions = crate::media::recover::sessions_of(&state.store.load_history());
-    let files: Vec<_> = std::fs::read_dir(&state.store.images)
-        .into_iter()
-        .flatten()
-        .flatten()
-        .map(|e| e.path())
-        .filter(|p| p.is_file())
-        .collect();
-    for p in &files {
-        shred(p);
-    }
-    let entries = state.store.load_history().len();
-    let voices = state.store.load_voices().len();
-    for e in std::fs::read_dir(&state.store.chats)
-        .into_iter()
-        .flatten()
-        .flatten()
-    {
-        let p = e.path();
-        if p.extension().and_then(|x| x.to_str()) == Some("json") {
-            shred(&p);
+    // a wipe means gone whatever happens to the lists, so the shredding comes first here; it is slow (zeros + fsync
+    // per file), so it runs off the async runtime
+    let store = state.store.clone();
+    let wiped = tokio::task::spawn_blocking(move || {
+        let _g = store.lock();
+        let sessions = crate::media::recover::sessions_of(&store.load_history());
+        let files: Vec<_> = std::fs::read_dir(&store.images)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .map(|e| e.path())
+            .filter(|p| p.is_file())
+            .collect();
+        for p in &files {
+            shred(p);
         }
-    }
-    state.store.shred_leftovers();
-    let saved = state
-        .store
-        .save_history(&[])
-        .and_then(|_| state.store.save_voices(&[]));
+        let entries = store.load_history().len();
+        let voices = store.load_voices().len();
+        for e in std::fs::read_dir(&store.chats)
+            .into_iter()
+            .flatten()
+            .flatten()
+        {
+            let p = e.path();
+            if p.extension().and_then(|x| x.to_str()) == Some("json") {
+                shred(&p);
+            }
+        }
+        store.shred_leftovers();
+        let saved = store.save_history(&[]).and_then(|_| store.save_voices(&[]));
+        (sessions, entries, voices, files.len(), saved)
+    })
+    .await;
+    let Ok((sessions, entries, voices, files, saved)) = wiped else {
+        return save_failed("the wipe was interrupted");
+    };
     state.jobs.clear();
     state
         .search_cache
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .clear();
-    drop(g);
     crate::media::recover::delete_device_sessions(&state, sessions);
     if let Err(e) = saved {
         return save_failed(&e);
     }
-    Json(json!({"ok": true, "entries": entries, "voices": voices, "files": files.len()}))
-        .into_response()
+    Json(json!({"ok": true, "entries": entries, "voices": voices, "files": files})).into_response()
 }
 
 fn local_stamp(epoch: i64) -> String {
@@ -468,8 +516,10 @@ async fn export(State(state): State<AppState>, body: Bytes) -> Response {
             .filter(|e| ids.contains(&str_of(e, "id")))
             .collect()
     };
-    let mut buf = std::io::Cursor::new(Vec::new());
-    {
+    let images = state.store.images.clone();
+    // reading and compressing the files is blocking work: off the async runtime
+    let zipped = tokio::task::spawn_blocking(move || {
+        let mut buf = std::io::Cursor::new(Vec::new());
         let mut z = zip::ZipWriter::new(&mut buf);
         let opts = zip::write::SimpleFileOptions::default()
             .compression_method(zip::CompressionMethod::Deflated);
@@ -490,7 +540,7 @@ async fn export(State(state): State<AppState>, body: Bytes) -> Response {
                 .filter_map(|v| v.as_str().map(String::from))
                 .collect();
             for (n, f) in outputs.iter().enumerate() {
-                let path = state.store.images.join(f);
+                let path = images.join(f);
                 if !safe_file(f) {
                     continue;
                 }
@@ -530,7 +580,12 @@ async fn export(State(state): State<AppState>, body: Bytes) -> Response {
             );
         }
         let _ = z.finish();
-    }
+        buf.into_inner()
+    })
+    .await;
+    let Ok(zipped) = zipped else {
+        return error(StatusCode::INTERNAL_SERVER_ERROR, "Couldn't build the zip");
+    };
     let name = format!(
         "attachment; filename=\"tiiny-studio-{}.zip\"",
         local_stamp(crate::jobs::now() as i64)
@@ -541,7 +596,7 @@ async fn export(State(state): State<AppState>, body: Bytes) -> Response {
             (header::CONTENT_DISPOSITION, name),
             (header::CACHE_CONTROL, "no-store".into()),
         ],
-        buf.into_inner(),
+        zipped,
     )
         .into_response()
 }

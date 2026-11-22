@@ -272,15 +272,21 @@ impl Store {
         self.save_history(&items)
     }
 
-    /// Remove entries and shred their files (callers drop jobs/search cache themselves).
+    /// Remove entries and shred their files (callers drop jobs/search cache themselves). The list is saved first, so a
+    /// failed save (disk full) leaves entries that still have their files; the shredding (slow: it writes zeros and
+    /// syncs) happens after the store lock is let go. Blocking: call from `spawn_blocking` in async code.
     pub fn delete_entries(&self, ids: &[String]) -> Result<(), String> {
-        let _g = self.lock();
-        let items = self.load_history();
-        let (gone, keep): (Vec<Value>, Vec<Value>) = items.into_iter().partition(|e| {
-            e.get("id")
-                .and_then(Value::as_str)
-                .is_some_and(|i| ids.iter().any(|x| x == i))
-        });
+        let gone = {
+            let _g = self.lock();
+            let items = self.load_history();
+            let (gone, keep): (Vec<Value>, Vec<Value>) = items.into_iter().partition(|e| {
+                e.get("id")
+                    .and_then(Value::as_str)
+                    .is_some_and(|i| ids.iter().any(|x| x == i))
+            });
+            self.save_history(&keep)?;
+            gone
+        };
         for e in &gone {
             for f in entry_files(e) {
                 if safe_file(&f) {
@@ -288,7 +294,7 @@ impl Store {
                 }
             }
         }
-        self.save_history(&keep)
+        Ok(())
     }
 
     /// The device ids already handled; None without a (usable) file: the next look at the device is a baseline.
