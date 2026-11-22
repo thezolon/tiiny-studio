@@ -185,6 +185,7 @@ impl<'a> Reader<'a> {
             let Some(line) = self.lines.next() else {
                 if self.field_len != 0 || self.state == State::InQuotedField {
                     self.save_field();
+                    self.state = State::StartRecord; // as csv's parse_reset: the next call sees the end
                     break;
                 }
                 return Ok(None);

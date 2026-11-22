@@ -241,7 +241,7 @@ pub fn json_text(data: &[u8]) -> String {
 }
 
 /// The rows of a CSV/TSV text (at most MAX_ROWS), by Python's csv rules.
-fn csv_rows(text: &str, tab: bool) -> R<Vec<Vec<String>>> {
+fn csv_rows(text: &str, tab: bool) -> R<(Vec<Vec<String>>, bool)> {
     use super::csv::{sniff, Dialect, Reader};
     let dialect = if tab {
         Dialect::excel_tab()
@@ -257,10 +257,12 @@ fn csv_rows(text: &str, tab: bool) -> R<Vec<Vec<String>>> {
             None => break,
         }
     }
+    let mut more = false;
     if rows.len() == super::MAX_ROWS {
-        reader.next_row()?; // Python's zip() pulls one more row before it stops, and can fail on it
+        // Python's zip() pulls one more row before it stops, and can fail on it
+        more = reader.next_row()?.is_some();
     }
-    Ok(rows)
+    Ok((rows, more))
 }
 
 /// CSV/TSV into one table block (at most MAX_ROWS rows). Line ends are normalised first (a file with bare
@@ -269,7 +271,12 @@ fn csv_rows(text: &str, tab: bool) -> R<Vec<Vec<String>>> {
 pub fn csv_table(doc: &mut Doc, data: &[u8], tab: bool) -> R<()> {
     let text = decode(data).replace("\r\n", "\n").replace('\r', "\n");
     match csv_rows(&text, tab) {
-        Ok(rows) => doc.add(Block::Table(rows)),
+        Ok((rows, more)) => {
+            doc.add(Block::Table(rows));
+            if more {
+                doc.add(Block::P("[… more rows not shown]".into()));
+            }
+        }
         Err(_) => text_blocks(doc, strip(&text)),
     }
     Ok(())

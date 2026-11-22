@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use super::render::Block;
 use super::text::{dirname, is_digit, join, normpath, py_int, strip};
 use super::xml::{a, p, r, rel, s, v, w, Elem};
-use super::{Doc, Fail, MAX_CELLS, MAX_COLS, MAX_ROWS, R};
+use super::{rows_note, Doc, Fail, MAX_CELLS, MAX_COLS, MAX_ROWS, R};
 
 /// `mc:Fallback`: the stand-in Word writes next to `mc:Choice` (a text box then comes out twice if both are read).
 const MC_FALLBACK: &str = "{http://schemas.openxmlformats.org/markup-compatibility/2006}Fallback";
@@ -429,8 +429,35 @@ fn pptx_shapes(doc: &mut Doc, tree: &Elem, rel: &Rels, label: &str) -> R<()> {
     Ok(())
 }
 
+/// The slide files in the deck's own order (`p:sldIdLst` in presentation.xml); slides it doesn't list follow in
+/// file-number order, and a deck without a usable list is read in file-number order.
+fn slide_names(doc: &mut Doc) -> R<Vec<String>> {
+    let files = numbered(doc.names(), "ppt/slides/slide");
+    if !doc.has("ppt/presentation.xml") {
+        return Ok(files);
+    }
+    let rel = rels(doc, "ppt/presentation.xml")?;
+    let Ok(root) = doc.xml("ppt/presentation.xml") else {
+        return Ok(files);
+    };
+    let mut out: Vec<String> = vec![];
+    for e in root.iter(Some(p!("sldId"))) {
+        if let Some(t) = e.get(r!("id")).and_then(|id| rel.get(id)) {
+            if files.iter().any(|f| f == t) && !out.iter().any(|o| o == t) {
+                out.push(t.to_string());
+            }
+        }
+    }
+    for f in files {
+        if !out.contains(&f) {
+            out.push(f);
+        }
+    }
+    Ok(out)
+}
+
 pub fn pptx(doc: &mut Doc) -> R<()> {
-    for (i, name) in numbered(doc.names(), "ppt/slides/slide").iter().enumerate() {
+    for (i, name) in slide_names(doc)?.iter().enumerate() {
         let i = i + 1;
         let rel = rels(doc, name)?;
         let root = doc.xml(name)?;
@@ -512,7 +539,10 @@ pub fn xlsx(doc: &mut Doc) -> R<()> {
             continue;
         };
         let mut rows: Vec<Vec<String>> = vec![];
-        for row in doc.xml(target)?.iter(Some(s!("row"))) {
+        let (mut rows_left, mut cols_cut) = (0usize, 0usize);
+        let sheet_xml = doc.xml(target)?;
+        let row_els = sheet_xml.iter(Some(s!("row")));
+        for (ri, row) in row_els.iter().enumerate() {
             let mut cells: HashMap<usize, String> = HashMap::new();
             let mut next_col = 0usize; // where a cell without a reference goes
             for c in row.iter(Some(s!("c"))) {
@@ -540,11 +570,16 @@ pub fn xlsx(doc: &mut Doc) -> R<()> {
                     Some(cell) => col_index(cell).unwrap_or(Some(next_col)),
                     None => Some(next_col),
                 };
-                if let Some(col) = col {
-                    next_col = col + 1;
-                    if !val.is_empty() && col < MAX_COLS {
-                        cells.insert(col, val.replace('\t', " "));
+                match col {
+                    Some(col) => {
+                        next_col = col + 1;
+                        if !val.is_empty() && col < MAX_COLS {
+                            cells.insert(col, val.replace('\t', " "));
+                        } else if !val.is_empty() {
+                            cols_cut += 1;
+                        }
                     }
+                    None => cols_cut += usize::from(!val.is_empty()),
                 }
             }
             if let Some(&max) = cells.keys().max() {
@@ -556,11 +591,20 @@ pub fn xlsx(doc: &mut Doc) -> R<()> {
                 );
             }
             if rows.len() >= MAX_ROWS || cell_count >= MAX_CELLS {
+                rows_left = row_els.len() - ri - 1;
                 break;
             }
         }
         if !rows.is_empty() {
             doc.add(Block::Table(rows));
+        }
+        if rows_left > 0 {
+            doc.add(Block::P(rows_note(rows_left)));
+        }
+        if cols_cut > 0 {
+            doc.add(Block::P(format!(
+                "[… {cols_cut} cells beyond column {MAX_COLS} not shown]"
+            )));
         }
         doc.flush(
             sheet

@@ -9,9 +9,11 @@ import base64
 import csv
 import html.parser
 import io
+import itertools
 import json
 import posixpath
 import re
+import threading
 import urllib.parse
 import xml.etree.ElementTree as ET
 import zipfile
@@ -25,6 +27,11 @@ MAX_CELLS = 1_000_000      # cells kept per sheet
 MAX_COLS = 16_384          # Excel's own column limit
 MAX_LIST_DEPTH = 16        # deeper list nesting / longer runs of spaces in a file are clamped
 MAX_SPACES = 1000
+_cut = threading.local()   # set when a limit shortened a paragraph while reading; odf() turns it into a visible note
+
+
+def rows_note(n):
+    return f"[… {n} more rows not shown]"
 IMAGE_TYPES = {"png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg", "gif": "image/gif", "bmp": "image/bmp",
                "webp": "image/webp", "tif": "image/tiff", "tiff": "image/tiff"}
 NS = {
@@ -358,8 +365,26 @@ def pptx_shapes(doc, tree, rel, label):
                 doc.image(rel[rid], label)
 
 
+def slide_names(doc):
+    """The slide files in the deck's own order (p:sldIdLst); slides it doesn't list follow in file-number order."""
+    files = numbered(doc.zf.namelist(), r"ppt/slides/slide\d+\.xml")
+    if not doc.has("ppt/presentation.xml"):
+        return files
+    rel = rels(doc, "ppt/presentation.xml")
+    try:
+        root = doc.xml("ppt/presentation.xml")
+    except ET.ParseError:
+        return files
+    out = []
+    for e in root.iter(q("p:sldId")):
+        t = rel.get(e.get(q("r:id")))
+        if t in files and t not in out:
+            out.append(t)
+    return out + [f for f in files if f not in out]
+
+
 def pptx(doc):
-    for i, name in enumerate(numbered(doc.zf.namelist(), r"ppt/slides/slide\d+\.xml"), 1):
+    for i, name in enumerate(slide_names(doc), 1):
         rel = rels(doc, name)
         tree = doc.xml(name).find(f"{q('p:cSld')}/{q('p:spTree')}")
         if tree is not None:
@@ -409,8 +434,9 @@ def xlsx(doc):
         target = rel.get(sheet.get(q("r:id")))
         if not target or not doc.has(target):
             continue
-        rows, cell_count = [], 0
-        for row in doc.xml(target).iter(q("s:row")):
+        rows, cell_count, rows_left, cols_cut = [], 0, 0, 0
+        row_els = list(doc.xml(target).iter(q("s:row")))
+        for ri, row in enumerate(row_els):
             cells, next_col = {}, 0  # a cell without a reference goes after the previous one
             for c in row.iter(q("s:c")):
                 kind, v = c.get("t"), c.find(q("s:v"))
@@ -422,17 +448,26 @@ def xlsx(doc):
                     val = v.text if v is not None and v.text else ""
                 col = col_index(c.get("r")) if c.get("r") else None
                 col = next_col if col is None else col
-                if col is not False:
+                if col is False:
+                    cols_cut += bool(val)
+                else:
                     next_col = col + 1
                     if val and col < MAX_COLS:
                         cells[col] = val.replace("\t", " ")
+                    elif val:
+                        cols_cut += 1
             if cells:
                 cell_count += max(cells) + 1
                 rows.append([cells.get(i, "") for i in range(max(cells) + 1)])
             if len(rows) >= MAX_ROWS or cell_count >= MAX_CELLS:
+                rows_left = len(row_els) - ri - 1
                 break
         if rows:
             doc.add("table", rows)
+        if rows_left > 0:
+            doc.add("p", rows_note(rows_left))
+        if cols_cut:
+            doc.add("p", f"[… {cols_cut} cells beyond column {MAX_COLS} not shown]")
         doc.flush(sheet.get("name") or "Sheet")
 
 
@@ -442,7 +477,10 @@ def odf_inline(el):
     out = [el.text or ""]
     for c in el:
         if c.tag == q("text:s"):
-            out.append(" " * min(max(int(c.get(q("text:c"), "1")), 0), MAX_SPACES))
+            n = int(c.get(q("text:c"), "1"))
+            if n > MAX_SPACES:
+                _cut.v = True
+            out.append(" " * min(max(n, 0), MAX_SPACES))
         elif c.tag == q("text:tab"):
             out.append("\t")
         elif c.tag == q("text:line-break"):
@@ -504,7 +542,14 @@ def odf_walk(doc, el, label, styles, depth=-1, style=None):
             odf_walk(doc, c, label, styles, depth, style)
 
 
+def odf_cut_note(doc):
+    if getattr(_cut, "v", False):
+        _cut.v = False
+        doc.add("p", "[… long runs of spaces or very long paragraphs were shortened]")
+
+
 def odf(doc):
+    _cut.v = False
     body = doc.xml("content.xml").find(q("office:body"))
     if body is None:
         return
@@ -521,18 +566,30 @@ def odf(doc):
                         odf_walk(doc, box, f"Slide {i}", {k: v for k, v in styles.items()}, -1, None)
                 else:
                     odf_walk(doc, [frame], f"Slide {i}", styles)
+            odf_cut_note(doc)
             doc.flush(f"Slide {i}")
     elif sheets is not None:
         for t in sheets.iter(q("table:table")):
-            rows, cell_count = [], 0
-            for row in t.iter(q("table:table-row")):
-                cells = []
+            rows, cell_count, rows_left, repeat_cut, cols_cut = [], 0, 0, False, False
+            row_els = list(t.iter(q("table:table-row")))
+            for ri, row in enumerate(row_els):
+                cells, gap_cut = [], False
                 for c in row:
                     if c.tag not in (q("table:table-cell"), q("table:covered-table-cell")):
                         continue
                     val = " ".join("".join(odf_inline(p)) for p in c.iter(q("text:p")))
                     # a gap of empty cells is one cell repeated: keep it, or what follows lands in the wrong column
-                    n = min(int(c.get(q("table:number-columns-repeated"), "1")), 256 if not val else 50)
+                    wanted = int(c.get(q("table:number-columns-repeated"), "1"))
+                    n = min(wanted, 256 if not val else 50)
+                    if wanted > n:
+                        if val:
+                            repeat_cut = True
+                        else:
+                            gap_cut = True
+                    if val and gap_cut:
+                        repeat_cut = True  # something follows a gap that was shortened
+                    if val and n > MAX_COLS - len(cells):
+                        cols_cut = True
                     cells += [val] * max(min(n, MAX_COLS - len(cells)), 0)
                 while cells and not cells[-1]:
                     cells.pop()
@@ -540,12 +597,21 @@ def odf(doc):
                     cell_count += len(cells)
                     rows.append(cells)
                 if len(rows) >= MAX_ROWS or cell_count >= MAX_CELLS:
+                    rows_left = len(row_els) - ri - 1
                     break
             if rows:
                 doc.add("table", rows)
+            if rows_left > 0:
+                doc.add("p", rows_note(rows_left))
+            if repeat_cut:
+                doc.add("p", "[… some repeated cells were shortened]")
+            if cols_cut:
+                doc.add("p", f"[… cells beyond column {MAX_COLS} not shown]")
+            odf_cut_note(doc)
             doc.flush(t.get(q("table:name")) or "Sheet")
     else:
         odf_walk(doc, body, "Document", styles)
+        odf_cut_note(doc)
         doc.flush("Document")
 
 
@@ -844,7 +910,10 @@ def read_parts(name, data):
         except csv.Error:
             dialect = "excel"
         try:
-            doc.add("table", [r for r, _ in zip(csv.reader(io.StringIO(text), dialect), range(MAX_ROWS), strict=False)])
+            reader = csv.reader(io.StringIO(text), dialect)
+            doc.add("table", list(itertools.islice(reader, MAX_ROWS)))
+            if len(doc.blocks[-1][1]) == MAX_ROWS and next(reader, None) is not None:  # one more row pulled, as before
+                doc.add("p", "[… more rows not shown]")
         except csv.Error:  # an unclosed quote swallows the rest, or a cell is over the field limit: show it as text
             text_blocks(doc, text.strip())
         doc.flush("Table")

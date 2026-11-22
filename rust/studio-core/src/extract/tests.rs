@@ -80,6 +80,7 @@ fn counts_taken_from_a_file_are_clamped() {
         &odt(r#"<text:p>a<text:s text:c="100000000000"/>b</text:p>"#),
     );
     assert!(t.len() < 5000, "{}", t.len());
+    assert!(t.contains("[… long runs of spaces"), "{t}");
     let li = r#"<w:p><w:pPr><w:numPr><w:ilvl w:val="100000000000"/><w:numId w:val="1"/></w:numPr></w:pPr><w:r><w:t>item</w:t></w:r></w:p>"#;
     let t = text("a.docx", &docx(li));
     assert!(t.len() < 100, "{}", t.len());
@@ -96,11 +97,15 @@ fn counts_taken_from_a_file_are_clamped() {
 #[test]
 fn spreadsheet_columns_and_cells_are_bounded() {
     let rows = r#"<row><c r="A1" t="inlineStr"><is><t>keep</t></is></c><c r="BGQCU1" t="inlineStr"><is><t>far</t></is></c></row>"#;
-    assert_eq!(text("a.xlsx", &xlsx(rows)), "keep");
+    assert_eq!(
+        text("a.xlsx", &xlsx(rows)),
+        "keep\n[… 1 cells beyond column 16384 not shown]"
+    );
     let row = r#"<row><c r="A1"><v>1</v></c><c r="XFD1"><v>2</v></c></row>"#;
     let t = text("a.xlsx", &xlsx(&row.repeat(4000)));
+    assert!(t.contains("more rows not shown]"), "{t}");
     assert!(
-        t.lines().count() <= MAX_CELLS / MAX_COLS + 1,
+        t.lines().count() <= MAX_CELLS / MAX_COLS + 2,
         "{}",
         t.lines().count()
     );
@@ -238,4 +243,54 @@ async fn isolated_extract_returns_the_result() {
         .await
         .unwrap();
     assert_eq!(r[0]["text"], "hello");
+}
+
+#[test]
+fn rows_cut_by_the_limit_say_so() {
+    let csv = "a,b\n".repeat(MAX_ROWS + 7);
+    let t = text("a.csv", csv.as_bytes());
+    assert!(
+        t.ends_with("[… more rows not shown]"),
+        "{}",
+        &t[t.len() - 40..]
+    );
+    let csv = "a,b\n".repeat(MAX_ROWS);
+    assert!(!text("a.csv", csv.as_bytes()).contains("not shown"));
+    let rows = r#"<row><c t="inlineStr"><is><t>x</t></is></c></row>"#.repeat(MAX_ROWS + 3);
+    assert!(text("a.xlsx", &xlsx(&rows)).ends_with("[… 3 more rows not shown]"));
+}
+
+#[test]
+fn ods_cut_repeats_say_so() {
+    let ods = format!(
+        r#"<office:document-content {ODT}><office:body><office:spreadsheet><table:table table:name="S"><table:table-row><table:table-cell table:number-columns-repeated="9999"><text:p>a</text:p></table:table-cell></table:table-row></table:table></office:spreadsheet></office:body></office:document-content>"#
+    );
+    let t = text("a.ods", &zipped(&[("content.xml", &ods)]));
+    assert!(t.contains("[… some repeated cells were shortened]"), "{t}");
+}
+
+#[test]
+fn slides_follow_the_decks_own_order() {
+    const P: &str = "http://schemas.openxmlformats.org/presentationml/2006/main";
+    let slide = |t: &str| {
+        format!(
+            r#"<p:sld xmlns:p="{P}" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><p:cSld><p:spTree><p:sp><p:txBody><a:p><a:r><a:t>{t}</a:t></a:r></a:p></p:txBody></p:sp></p:spTree></p:cSld></p:sld>"#
+        )
+    };
+    let pres = format!(
+        r#"<p:presentation xmlns:p="{P}" xmlns:r="{R}"><p:sldIdLst><p:sldId id="1" r:id="rId2"/><p:sldId id="2" r:id="rId1"/></p:sldIdLst></p:presentation>"#
+    );
+    let rels = format!(
+        r#"<Relationships xmlns="{REL}"><Relationship Id="rId1" Target="slides/slide1.xml"/><Relationship Id="rId2" Target="slides/slide2.xml"/></Relationships>"#
+    );
+    let z = zipped(&[
+        ("ppt/presentation.xml", &pres),
+        ("ppt/_rels/presentation.xml.rels", &rels),
+        ("ppt/slides/slide1.xml", &slide("FIRSTFILE")),
+        ("ppt/slides/slide2.xml", &slide("SECONDFILE")),
+    ]);
+    let parts = extract("a.pptx", &z).unwrap();
+    assert_eq!(parts[0]["text"], "SECONDFILE");
+    assert_eq!(parts[0]["label"], "Slide 1");
+    assert_eq!(parts[1]["text"], "FIRSTFILE");
 }

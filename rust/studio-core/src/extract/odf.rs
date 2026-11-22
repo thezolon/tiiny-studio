@@ -5,7 +5,21 @@ use std::collections::HashMap;
 use super::render::Block;
 use super::text::{py_int, strip};
 use super::xml::{draw, office, pres, style, table, text, xlink, Elem};
-use super::{Doc, Fail, MAX_CELLS, MAX_COLS, MAX_ROWS, R};
+use super::{rows_note, Doc, Fail, MAX_CELLS, MAX_COLS, MAX_ROWS, R};
+use std::cell::Cell;
+
+thread_local! {
+    /// Set when a space run or paragraph was cut by a limit while reading; `odf` turns it into a visible note.
+    static CUT: Cell<bool> = const { Cell::new(false) };
+}
+
+fn cut_note(doc: &mut Doc) {
+    if CUT.replace(false) {
+        doc.add(Block::P(
+            "[… long runs of spaces or very long paragraphs were shortened]".into(),
+        ));
+    }
+}
 
 /// Longest run of spaces one `text:s` stands for, and the most text one paragraph keeps; a file can claim
 /// any count, and 100 billion spaces would be one allocation.
@@ -24,11 +38,16 @@ fn inline(el: &Elem) -> R<String> {
     let mut out = el.text.clone();
     for c in &el.kids {
         if out.len() > MAX_INLINE {
+            CUT.set(true);
             break;
         }
         let t = c.tag.as_str();
         if t == text!("s") {
-            out.push_str(&" ".repeat(int(c.get(text!("c")), "1")?.clamp(0, MAX_SPACES) as usize));
+            let n = int(c.get(text!("c")), "1")?;
+            if n > MAX_SPACES {
+                CUT.set(true);
+            }
+            out.push_str(&" ".repeat(n.clamp(0, MAX_SPACES) as usize));
         } else if t == text!("tab") {
             out.push('\t');
         } else if t == text!("line-break") {
@@ -157,6 +176,7 @@ fn walk(
 }
 
 pub fn odf(doc: &mut Doc) -> R<()> {
+    CUT.set(false);
     let content = doc.xml("content.xml")?;
     let Some(body) = content.child(office!("body")) else {
         return Ok(());
@@ -183,24 +203,39 @@ pub fn odf(doc: &mut Doc) -> R<()> {
                     _ => walk(doc, &[frame], &label, &styles, -1, None)?,
                 }
             }
+            cut_note(doc);
             doc.flush(&label);
         }
     } else if let Some(sheets) = body.child(office!("spreadsheet")) {
         for t in sheets.iter(Some(table!("table"))) {
             let mut rows: Vec<Vec<String>> = vec![];
             let mut cell_count = 0usize;
+            let (mut rows_left, mut repeat_cut, mut cols_cut) = (0usize, false, false);
             doc.check()?;
-            for row in t.iter(Some(table!("table-row"))) {
+            let row_els = t.iter(Some(table!("table-row")));
+            for (ri, row) in row_els.iter().enumerate() {
                 let mut cells: Vec<String> = vec![];
+                let mut gap_cut = false;
                 for c in row.kids.iter().filter(|k| {
                     k.tag == table!("table-cell") || k.tag == table!("covered-table-cell")
                 }) {
                     let val = paragraphs(c, false)?;
                     // a gap of empty cells is one cell repeated: keep it, or what follows lands in the wrong column
-                    let n = int(c.get(table!("number-columns-repeated")), "1")?
-                        .min(if val.is_empty() { 256 } else { 50 });
+                    let wanted = int(c.get(table!("number-columns-repeated")), "1")?;
+                    let n = wanted.min(if val.is_empty() { 256 } else { 50 });
+                    if wanted > n {
+                        if val.is_empty() {
+                            gap_cut = true;
+                        } else {
+                            repeat_cut = true;
+                        }
+                    }
+                    if !val.is_empty() && gap_cut {
+                        repeat_cut = true; // something follows a gap that was shortened
+                    }
                     for _ in 0..n.max(0) {
                         if cells.len() >= MAX_COLS {
+                            cols_cut |= !val.is_empty();
                             break;
                         }
                         cells.push(val.clone());
@@ -214,12 +249,25 @@ pub fn odf(doc: &mut Doc) -> R<()> {
                     rows.push(cells);
                 }
                 if rows.len() >= MAX_ROWS || cell_count >= MAX_CELLS {
+                    rows_left = row_els.len() - ri - 1;
                     break;
                 }
             }
             if !rows.is_empty() {
                 doc.add(Block::Table(rows));
             }
+            if rows_left > 0 {
+                doc.add(Block::P(rows_note(rows_left)));
+            }
+            if repeat_cut {
+                doc.add(Block::P("[… some repeated cells were shortened]".into()));
+            }
+            if cols_cut {
+                doc.add(Block::P(format!(
+                    "[… cells beyond column {MAX_COLS} not shown]"
+                )));
+            }
+            cut_note(doc);
             doc.flush(
                 t.get(table!("name"))
                     .filter(|n| !n.is_empty())
@@ -235,6 +283,7 @@ pub fn odf(doc: &mut Doc) -> R<()> {
             -1,
             None,
         )?;
+        cut_note(doc);
         doc.flush("Document");
     }
     Ok(())
