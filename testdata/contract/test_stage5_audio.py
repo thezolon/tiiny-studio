@@ -32,6 +32,7 @@ CAPS, TASKS = ("GET", "/v1/3d/capabilities"), ("POST", "/v1/3d/tasks")
 VIDEO_ID = "/v1/videos/video_00000000000000000000000000000001"
 VIDEO_CALLS = [SYS, RUN, ("POST", "/v1/videos"), ("GET", VIDEO_ID), ("GET", VIDEO_ID), ("GET", VIDEO_ID + "/content"), ("DELETE", VIDEO_ID)]
 DOWNLOAD = ("GET", "/v1/music/sessions/sess-1/download")
+PLAIN_DOWNLOAD = ("GET", "/v1/music/sessions/plain-1/download")  # a song on the plain gateway route (/v1/music/generate)
 
 
 def png_pixels(data):
@@ -53,12 +54,12 @@ def speech_entry(model=TTS, text="RUST TEST hello there.", language=None, voice=
                                          "ref_text": ref_text, "speaker": speaker, "design": design}, "duration": duration}
 
 
-def song_entry(route, model=SONG, device=True, lyrics="[verse]\nla la", **params):
+def song_entry(route, model=SONG, device=True, lyrics="[verse]\nla la", session="sess-1", **params):
     """The entry of a finished song against the fake (tracks and the resume token are added by the test)."""
     e = {"kind": "song", "params": {"model": model, "route": route, "caption": "RUST TEST pop", **({"lyrics": lyrics} if lyrics else {}), **params},
          "tracks": {}, "duration": 0.25}
     if device:
-        e["device"] = {"music_session": "sess-1"}
+        e["device"] = {"music_session": session}  # a plain-gateway song gets the fake's plain-N, as on the device
     return e
 
 
@@ -143,7 +144,7 @@ class Audio(Jobs):
 
     # ---------- transcribe ----------
     def test_transcribe(self):
-        base = {"kind": "transcribe", "model": ASR}
+        base = {"kind": "transcribe", "model": ASR, "load": ASR}
         job, _ = self.check_job({**base, "audio": WAV, "language": " en ", "name": "RUST TEST clip"},  # 24 kHz: resampled
                                 entry=transcript_entry(language="en", name="RUST TEST clip"), calls=[SYS, TRANSCRIBE])
         self.assertEqual(job["entry"]["text"], "fake transcript")
@@ -167,7 +168,7 @@ class Audio(Jobs):
             o.setframerate(rate)
             o.writeframes(struct.pack(f"<{n}h", *s))
         long_wav = "data:audio/wav;base64," + base64.b64encode(buf.getvalue()).decode()
-        job, _ = self.check_job({"kind": "transcribe", "model": ASR, "audio": long_wav, "ephemeral": True},
+        job, _ = self.check_job({"kind": "transcribe", "model": ASR, "load": ASR, "audio": long_wav, "ephemeral": True},
                                 entry=transcript_entry(" ".join(["fake transcript"] * 3)), calls=[SYS, TRANSCRIBE, TRANSCRIBE, TRANSCRIBE])
         posts = [c for c in self.last_calls if c[1] == "/v1/audio/transcriptions"]
         self.assertEqual(len(posts), 3)  # cut at 53 s and 110 s (the quiet spots); the last 75 s stay whole
@@ -254,8 +255,8 @@ class Audio(Jobs):
         # AceStep takes 5 s and up; 3 s is refused, 12 s goes through
         job, _ = self.run_job(self.song(model=ace, load=ace, reference_audio=short))
         self.assertEqual(job["error"], "The style reference must be at least 5 seconds long for AceStep-Fake (this one is 3.0 s)")
-        self.check_job(self.song(model=ace, load=ace, reference_audio=LONG_REF), entry=song_entry("gateway", model=ace, seed=5),
-                       calls=[SYS, RUN, ("POST", "/v1/music/generate"), DOWNLOAD])
+        self.check_job(self.song(model=ace, load=ace, reference_audio=LONG_REF), entry=song_entry("gateway", model=ace, seed=5, session="plain-1"),
+                       calls=[SYS, RUN, ("POST", "/v1/music/generate"), PLAIN_DOWNLOAD])
 
     def test_song_polls_progress_while_composing(self):
         job, calls = self.check_job(self.song(flags={"delay": {"/v1/generate": 3.4}}), entry=song_entry("direct", device=False, seed=5))
@@ -298,8 +299,8 @@ class Audio(Jobs):
         ace = "ACE-Step/AceStep-Fake"
         for extra in ({"seconds_total": 30}, {"seconds_total": 30, "flags": {"closed_port": True}}, {"preview": True}):
             job, _ = self.check_job(self.song(model=ace, load=ace, **extra),
-                                    entry=song_entry("gateway", model=ace, seed=5, seconds_total=8 if "preview" in extra else 30),
-                                    calls=[SYS, RUN, ("POST", "/v1/music/generate"), DOWNLOAD])
+                                    entry=song_entry("gateway", model=ace, seed=5, seconds_total=8 if "preview" in extra else 30, session="plain-1"),
+                                    calls=[SYS, RUN, ("POST", "/v1/music/generate"), PLAIN_DOWNLOAD])
             self.assertEqual(job["status"], "done", extra)
             self.assertEqual(job["entry"]["params"]["route"], "gateway")
             self.assertNotIn("resume", job["entry"])
@@ -361,15 +362,15 @@ class Audio(Jobs):
         # the music service (/v1/music/info) decides the route: YuE2 and AceStep take the plain /generate (no preview),
         # SongGeneration keeps its preview; AceStep's own settings go nested in config.ace_step
         base = {"kind": "song", "caption": "RUST TEST pop", "lyrics": "[verse]\nla la", "generation_type": "mixed", "seconds_total": 20}
-        plain = [SYS, RUN, ("POST", "/v1/music/generate"), DOWNLOAD]
+        plain = [SYS, RUN, ("POST", "/v1/music/generate"), PLAIN_DOWNLOAD]
         job, _ = self.check_job({**base, "model": "Fake/YuE2", "load": "Fake/YuE2", "preview": True},
-                                entry=song_entry("gateway", model="Fake/YuE2", generation_type="mixed", seconds_total=20), calls=plain)
+                                entry=song_entry("gateway", model="Fake/YuE2", generation_type="mixed", seconds_total=20, session="plain-1"), calls=plain)
         self.assertEqual((job["status"], job["entry"]["params"]["route"]), ("done", "gateway"), job.get("error"))
         self.assertEqual([c[1] for c in self.calls() if c[0] == "POST"], ["/v1/music/generate"])
         ace = {"bpm": 92, "key_scale": "C major", "time_signature": "4", "vocal_language": "en", "negative_prompt": "drums", "nope": 1}
         clean = {k: v for k, v in ace.items() if k != "nope"}
         job, _ = self.check_job({**base, "model": "ACE-Step/AceStep-Fake", "load": "ACE-Step/AceStep-Fake", "ace_step": ace},
-                                entry=song_entry("gateway", model="ACE-Step/AceStep-Fake", generation_type="mixed", seconds_total=20, ace_step=clean), calls=plain)
+                                entry=song_entry("gateway", model="ACE-Step/AceStep-Fake", generation_type="mixed", seconds_total=20, ace_step=clean, session="plain-1"), calls=plain)
         sent = next(c[3] for c in self.calls() if c[1] == "/v1/music/generate")
         self.assertEqual(sent["config"]["ace_step"], clean)
         self.failed({**base, "model": "ACE-Step/AceStep-Fake", "load": "ACE-Step/AceStep-Fake", "ace_step": {"bpm": "fast"}}, "must be number")

@@ -37,7 +37,7 @@ class Media(ContractCase):
         return scrub(calls)
 
     def test_image_create_two(self):
-        job, _ = self.check_job({"kind": "image", "model": IMAGE, "prompt": "RUST TEST duck", "n": 2, "seed": 7, "size": "512x512"},
+        job, _ = self.check_job({"kind": "image", "model": IMAGE, "load": IMAGE, "prompt": "RUST TEST duck", "n": 2, "seed": 7, "size": "512x512"},
                                 entry=image_entry(prompt="RUST TEST duck", size="512x512", seed=7, n=2), calls=[STATUS, GEN, GEN])
         # the saved files are the fake's pictures (once the tags the studio writes into them are left out, #58)
         self.assertEqual(self.file_media(job), [("0.png", fake_tiiny.tiny_png()), ("1.png", fake_tiiny.tiny_png())])
@@ -48,6 +48,8 @@ class Media(ContractCase):
     def test_image_warmup_retry(self):
         # the first two requests fail like a freshly loaded Qwen-Image; the server retries and succeeds
         request(self.h.fake_url, "POST", "/__reset")
+        self.load_on_fake(IMAGE)  # the device answers 404 for a model that isn't loaded
+        request(self.h.fake_url, "POST", "/__reset_log")
         request(self.h.fake_url, "POST", "/__flags", {"image_warmup": 2})
         job, calls = self.finish(request(self.h.rs_url, "POST", "/api/jobs", {"kind": "image", "model": IMAGE, "prompt": "RUST TEST warm"}).json)
         self.assertEqual((job["status"], [p for _, p, *_ in calls if p != "/api/v1/sys/status"]), ("done", ["/v1/images/generations"] * 3))
@@ -56,6 +58,8 @@ class Media(ContractCase):
         # Cancel while the device is still working: the job shows "stopping", then ends cancelled and nothing is saved.
         base = self.h.rs_url
         request(self.h.fake_url, "POST", "/__reset")
+        self.load_on_fake(IMAGE)
+        request(self.h.fake_url, "POST", "/__reset_log")
         request(self.h.fake_url, "POST", "/__flags", {"delay": {"/v1/images/generations": 1.5}})
         job = request(base, "POST", "/api/jobs", {"kind": "image", "model": IMAGE, "prompt": "RUST TEST cancel"}).json
         self.wait_sent("POST", "/v1/images/generations")  # the device is working on it
@@ -69,15 +73,15 @@ class Media(ContractCase):
                          ("running", True, "cancelled", "Cancelled", 0, [("POST", f"/api/v1/models/{q}/stop"), ("POST", f"/api/v1/models/{q}/launch")]))
 
     def test_image_edit(self):
-        job, _ = self.check_job({"kind": "image", "model": IMAGE, "prompt": "RUST TEST hat", "images": [PNG], "steps": ""},
+        job, _ = self.check_job({"kind": "image", "model": IMAGE, "load": IMAGE, "prompt": "RUST TEST hat", "images": [PNG], "steps": ""},
                                 entry=image_entry("edit", prompt="RUST TEST hat"), calls=[STATUS, GEN])
         self.assertEqual(self.file_media(job, "sources"), [("src0.png", fake_tiiny.tiny_png())])
 
     def test_image_from_references(self):
-        job, _ = self.check_job({"kind": "image", "model": IMAGE, "prompt": "RUST TEST image 1 in a cafe", "images": [PNG, PNG], "mode": "refs", "size": "1024x576"},
+        job, _ = self.check_job({"kind": "image", "model": IMAGE, "load": IMAGE, "prompt": "RUST TEST image 1 in a cafe", "images": [PNG, PNG], "mode": "refs", "size": "1024x576"},
                                 entry=image_entry("refs", prompt="RUST TEST image 1 in a cafe", size="1024x576"), calls=[STATUS, GEN])
         self.assertEqual(self.file_media(job, "sources"), [("src0.png", fake_tiiny.tiny_png()), ("src1.png", fake_tiiny.tiny_png())])
-        self.check_job({"kind": "image", "model": IMAGE, "prompt": "RUST TEST fox", "images": [], "mode": "refs"},
+        self.check_job({"kind": "image", "model": IMAGE, "load": IMAGE, "prompt": "RUST TEST fox", "images": [], "mode": "refs"},
                        entry=image_entry("create", prompt="RUST TEST fox"), calls=[STATUS, GEN])  # no pictures: a plain create
 
     def test_ocr(self):
@@ -89,7 +93,7 @@ class Media(ContractCase):
                        calls=[STATUS, ("GET", "/api/v1/models/running")])
 
     def test_disk_space(self):
-        job = {"kind": "image", "model": IMAGE, "prompt": "RUST TEST duck", "size": "512x512"}
+        job = {"kind": "image", "model": IMAGE, "load": IMAGE, "prompt": "RUST TEST duck", "size": "512x512"}
         self.check_job({**job, "flags": {"disk_free_gb": 1.5}}, "error", calls=[STATUS],
                        error="The Tiiny is almost out of space (1.5 GB free). "
                              "Free some up (delete a model you don't use in Models \u2192 Installed, or files in the TiinyOS app) and try again.")

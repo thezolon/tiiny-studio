@@ -90,7 +90,7 @@ class Hardening(Jobs):
     def test_a_result_that_cannot_be_saved_fails_the_job(self):
         with self.blocked("images"):
             # the reason is the operating system's own words: only the start is compared
-            job, _ = self.run_job({"kind": "image", "model": IMAGE_MODEL, "prompt": "RUST TEST duck", "size": "512x512"})
+            job, _ = self.run_job({"kind": "image", "model": IMAGE_MODEL, "load": IMAGE_MODEL, "prompt": "RUST TEST duck", "size": "512x512"})
             self.assertEqual(job["status"], "error")
             self.assertTrue(job["error"].startswith("Couldn't save the result: ") and len(job["error"]) > 30, job["error"])
             self.expect(self.get("/api/history"), 200, [])

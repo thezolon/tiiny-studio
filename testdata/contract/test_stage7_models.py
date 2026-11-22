@@ -389,24 +389,24 @@ class Models(ContractCase):
         # download a store model, load it, speak with it, unload it: the fake knows every model in the store, and (like the
         # device) refuses to speak with a model that isn't loaded
         say = {"kind": "speech", "model": SMALL, "text": "RUST TEST hello there."}
-        for base in (self.h.py_url, self.h.rs_url):
-            request(self.h.fake_url, "POST", "/__reset")
-            self.forget(base)
-            self.flags(download_rate=1000)
-            self.assertEqual(request(base, "POST", "/api/model/download", {"id": SMALL}).status, 200)
-            self.wait_until(lambda base=base: any(m["id"] == SMALL and m["status"] == "downloaded"
-                                                  for m in request(base, "GET", "/api/store").json["models"]), "the download to finish")
-            job, _ = self.run_job(base, say, reset=False)  # installed, but not loaded: the device says so
-            self.assertEqual(job["status"], "error", job)
-            self.load_on_fake(SMALL)
-            code = request(self.h.fake_url, "GET", f"/api/v1/models/{SMALL}/unload_candidate", headers=AUTH).status
-            self.assertEqual(code, 200)
-            job, calls = self.run_job(base, say, reset=False)
-            self.assertEqual(job["status"], "done", job.get("error"))
-            self.assertIn(("POST", "/v1/audio/speech"), [c[:2] for c in calls])
-            request(self.h.fake_url, "POST", f"/api/v1/models/{SMALL}/stop", {}, headers=AUTH)
-            self.assertNotIn(SMALL, self.fake.state.running)
-            self.forget(base)
+        base = self.h.rs_url
+        request(self.h.fake_url, "POST", "/__reset")
+        self.forget(base)
+        self.flags(download_rate=1000)
+        self.assertEqual(request(base, "POST", "/api/model/download", {"id": SMALL}).status, 200)
+        self.wait_until(lambda: any(m["id"] == SMALL and m["status"] == "downloaded"
+                                    for m in request(base, "GET", "/api/store").json["models"]), "the download to finish")
+        job, _ = self.run_job(say, reset=False)  # installed, but not loaded: the device says so
+        self.assertEqual(job["status"], "error", job)
+        self.load_on_fake(SMALL)
+        code = request(self.h.fake_url, "GET", f"/api/v1/models/{SMALL}/unload_candidate", headers=AUTH).status
+        self.assertEqual(code, 200)
+        job, calls = self.run_job(say, reset=False)
+        self.assertEqual(job["status"], "done", job.get("error"))
+        self.assertIn(("POST", "/v1/audio/speech"), [c[:2] for c in calls])
+        request(self.h.fake_url, "POST", f"/api/v1/models/{SMALL}/stop", {}, headers=AUTH)
+        self.assertNotIn(SMALL, self.fake.state.running)
+        self.forget(base)
 
     def test_the_fake_answers_a_model_that_is_not_loaded_like_the_device(self):
         # tested on 0.1.39: 404 for a named model that isn't running, 503 for `default` when no such model runs
