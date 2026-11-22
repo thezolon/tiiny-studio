@@ -287,6 +287,26 @@ From Tiiny's docs (**docs**), not tested here.
   2026-11-22): `POST /v1/audio/speech` with the store id answers a WAV. It refuses `speed` other than 1.0 (400 "Unsupported
   speed: 1.2. Only 1.0 is supported") although its capabilities report `support_speed`; the studio sends no `speed`. MOSS-TTS-Nano speaks with `voice: default`; cloning fails (the gateway demands
   `ref_text`, the container refuses it).
+- **Five voice models lose sentences through the gateway** (tested 2026-11-22, 0.1.39, model builds 20261106;
+  repro: `python tools/tts_check.py` in tiiny-api-notes, which transcribes every clip with Parakeet).
+  Affected: MOSS-TTS-Nano, OmniVoice, VoxCPM2, Qwen3-TTS CustomVoice and VibeVoice-Realtime-0.5B. Through
+  `POST /v1/audio/speech` on :80:
+  - One plain sentence answers an instant 500 "The upstream TTS model failed." almost every time. With
+    `stream: true` it sometimes answers 200 with an empty body.
+  - About half of multi-sentence requests also answer 500. The others answer **200 with a valid WAV**, but **the last
+    sentence is missing** or **moved to the front**, with or without `stream`. So a 200 + `RIFF` check doesn't catch it.
+  - The trailing-space trick that `tts_text` relies on ("How are you. ") only helps about half the time.
+  - The model's own port (Wi-Fi/LAN only) and `tiiny run tts` return the full text, in order, every time.
+
+  Kokoro-82M and Supertonic-3 are complete on every route. VibeVoice-1.5B sounds the same on both routes (its
+  occasional doubled or skipped word is the model's). Supertonic's own port wants its own name (`model_config.id`), not
+  the store id. VoxCPM2 has no preset speakers (own port: "Unsupported speaker: alloy"). Through the gateway, VoxCPM2
+  also gives 500 for any `voice`, for `instruct` and for `response_format` mp3; mp3 works on its own port. The gateway
+  takes only `wav`, `pcm` and `mp3` (400 for opus or flac). `tiiny run tts -o x.mp3` writes WAV audio.
+
+  **The studio's speech job** (`run_speech` / `speech.rs`) uses the model's own port first wherever the link reaches it,
+  and the gateway only when it can't (USB) or the own port fails. Over USB the Speak panel warns when one of these five
+  is picked and suggests Kokoro-82M or Supertonic-3.
 - **Thinking** (tested 2026-10-30, 0.1.38): follow the model's `thinking` object, not its name. `toggleable` models
   (Qwen3.5/3.6) switch with `chat_template_kwargs.enable_thinking` (off: no reasoning, ~10x faster); `reasoning_effort`
   changes nothing for them. gpt-oss (`toggleable: false`, levels low/medium/high) reasons whatever it's sent and no longer

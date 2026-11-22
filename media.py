@@ -523,8 +523,10 @@ class Media:
 
 
 # ---------- kinds ----------
-UPSTREAM_FAILED = ("{model} failed on the device (\"The upstream TTS model failed\"). Some voice models and modes don't work "
-                   "through TiinyOS's gateway yet (cloning with MOSS-TTS-Nano; Supertonic-3 failed this way on 0.1.38 and works from 0.1.39). Try another voice model.")
+UPSTREAM_FAILED = ("{model} failed on the device (\"The upstream TTS model failed\"). Through TiinyOS's gateway, several voice "
+                   "models fail on many texts (MOSS-TTS-Nano, OmniVoice, VoxCPM2, Qwen3-TTS CustomVoice, VibeVoice-Realtime), and "
+                   "cloning with MOSS-TTS-Nano doesn't work. Over USB only the gateway is reachable: Kokoro-82M and Supertonic-3 "
+                   "work there, or connect over Wi-Fi.")
 
 
 def run_speech(m, job, req):
@@ -553,29 +555,33 @@ def run_speech(m, job, req):
     m.ensure_running(job["model"])
     # Long text is voiced a few sentences at a time (the model has a context limit) and stitched together.
     chunks = split_for_speech(text)
-    parts, direct = [], None
+    # The model's own port first, where the link reaches it (Wi-Fi/LAN, not USB): through the gateway, MOSS-TTS-Nano,
+    # OmniVoice, VoxCPM2, Qwen3-TTS CustomVoice and VibeVoice-Realtime answer 500 for many texts, and for others a WAV
+    # that lacks its last sentence or has it at the front (TiinyOS 0.1.39, docs/DEVICE-API.md). The gateway is the
+    # fallback: for the rest of the job once the own port fails. The same as the Rust server's speech.rs.
+    parts, direct = [], speech_direct(m, job["model"])
     for i, chunk in enumerate(chunks):
         if job["cancel"]:
             raise JobError("Cancelled")
         job["message"] = "Synthesising speech" if len(chunks) == 1 else f"Speaking part {i + 1} of {len(chunks)}"
         job["progress"] = round(i / len(chunks) * 100) if len(chunks) > 1 else 0
         if direct:
-            code, res = m.http("POST", f"{direct[0]}/v1/audio/speech", {**body, "model": direct[1], "input": tts_text(chunk)}, raw=True)
-        else:
-            code, res = m.http("POST", f"{m.settings.url}/v1/audio/speech", {**body, "input": tts_text(chunk)}, headers=m.gateway_headers(), raw=True)
+            try:
+                code, res = m.http("POST", f"{direct[0]}/v1/audio/speech", {**body, "model": direct[1], "input": tts_text(chunk)}, raw=True)
+            except JobError:
+                code, res = 0, None
+            if code == 200 and isinstance(res, bytes) and res[:4] == b"RIFF":
+                parts.append(res)
+                continue
+            direct = None
+        code, res = m.http("POST", f"{m.settings.url}/v1/audio/speech", {**body, "input": tts_text(chunk)}, headers=m.gateway_headers(), raw=True)
         if code != 200 or not isinstance(res, bytes) or res[:4] != b"RIFF":
             why = m.err(res if not isinstance(res, bytes) else res.decode("utf-8", "replace"))
-            if "upstream TTS model failed" not in why and not direct:
-                if no_voice:
-                    why += " (No voice was chosen. If this model has no default voice, give it a speaker, a voice description or a reference clip.)"
-                raise JobError(why)
-            # The gateway sends some containers the store id, which they don't know (Supertonic-3, 0.1.38): ask the
-            # model's own port under its own name, where the link allows it.
-            direct = None if direct else speech_direct(m, job["model"])
-            if direct:
-                code, res = m.http("POST", f"{direct[0]}/v1/audio/speech", {**body, "model": direct[1], "input": tts_text(chunk)}, raw=True)
-            if not direct or code != 200 or not isinstance(res, bytes) or res[:4] != b"RIFF":
+            if "upstream TTS model failed" in why:
                 raise JobError(UPSTREAM_FAILED.format(model=job["model"].split("/")[-1]))
+            if no_voice:
+                why += " (No voice was chosen. If this model has no default voice, give it a speaker, a voice description or a reference clip.)"
+            raise JobError(why)
         parts.append(res)
     res = join_wavs(parts)
     out = m.save(f"{job['id']}-speech.wav", res)
@@ -599,9 +605,10 @@ def speech_direct(m, model):
 
 
 def tts_text(piece):
-    """The text a speech model gets for one piece: ends with sentence punctuation, then a space. MOSS-TTS-Nano, OmniVoice,
-    VoxCPM2 and Qwen3-TTS CustomVoice answer 500 otherwise ("How are you." fails, "How are you. " works). The same as
-    the Rust server's tts_text."""
+    """The text a speech model gets for one piece: ends with sentence punctuation, then a space. Through the gateway,
+    MOSS-TTS-Nano, OmniVoice, VoxCPM2 and Qwen3-TTS CustomVoice answer 500 more often without it ("How are you." fails,
+    "How are you. " often works), but it only helps about half the time (TiinyOS 0.1.39): the real cure is the model's
+    own port (run_speech). Harmless for every model. The same as the Rust server's tts_text."""
     t = piece.rstrip()
     core = t.rstrip('"\'\u201d\u2019)]\u00bb\u300d\u300f')
     if core and core[-1] not in ".!?\u2026\u3002\uff01\uff1f":

@@ -37,11 +37,11 @@ pub fn strip(s: &str) -> &str {
     s.trim_matches(is_space)
 }
 
-/// Split text into chunks of whole sentences, each at most ~limit characters.
-/// The text a speech model gets for one piece. MOSS-TTS-Nano, OmniVoice, VoxCPM2 and Qwen3-TTS CustomVoice answer 500
-/// ("The upstream TTS model failed") unless the text ends with sentence punctuation and then a space (TiinyOS 0.1.39 and
-/// 1.0.3; "How are you." fails, "How are you. " works). So: add a full stop if there's none (a Chinese/Japanese one after
-/// CJK text), then a space. Models without the problem sound the same (Kokoro: the same bytes).
+/// The text a speech model gets for one piece: ends with sentence punctuation, then a space. Through the gateway,
+/// MOSS-TTS-Nano, OmniVoice, VoxCPM2 and Qwen3-TTS CustomVoice answer 500 more often without it ("How are you." fails,
+/// "How are you. " often works), but it only helps about half the time (TiinyOS 0.1.39): the real cure is the model's
+/// own port (speech.rs). A full stop is added if there's none (a Chinese/Japanese one after CJK text), then a space.
+/// Harmless for every model (Kokoro: the same bytes).
 pub fn tts_text(piece: &str) -> String {
     let t = piece.trim_end();
     let core = t.trim_end_matches([
@@ -67,6 +67,7 @@ pub fn tts_text(piece: &str) -> String {
     out
 }
 
+/// Split text into chunks of whole sentences, each at most ~limit characters.
 pub fn split_for_speech(text: &str, limit: usize) -> Vec<String> {
     let text_s = strip(text);
     let c: Vec<char> = text_s.chars().collect();
