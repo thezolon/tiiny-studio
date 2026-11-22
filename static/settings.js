@@ -99,6 +99,7 @@ function deviceList() {
       el("div", { class: "grow" },
         el("div", { class: "dev-name" }, d.name, n === 0 && i.devices.length > 1 ? el("span", { class: "dev-tag" }, "preferred") : null, active ? el("span", { class: "dev-tag on" }, "in use") : null),
         el("small", {}, `${d.host}${d.key_set ? ` · key ${d.key_hint}` : " · no key"}${lockedNow ? " · locked: open the TiinyOS app once" : st?.ok ? ` · ${st.ms} ms` : st ? " · not answering" : ""}`),
+        d.usable === false ? el("small", { class: "dev-warn" }, "This address can't be used (it has a backslash, a user name or an unknown scheme): edit it to fix.") : null,
         i.docker && d.host.startsWith("172.17.") && !st?.ok ? el("small", { class: "dev-warn" }, "A USB address in Docker's own network: the studio in Docker can't reach it. Use the Tiiny's Wi-Fi address, the desktop app, or ",
           el("a", { href: "/docs/CONNECTING.md", target: "_blank", rel: "noopener" }, "move Docker's network"), ".") : null),
       n > 0 ? el("button", { class: "icon-btn sm", type: "button", title: "Move up (higher priority)", "aria-label": `Move ${d.name} up`, onclick: () => act("move", { id: d.id, dir: -1 }) }, "↑") : null,
@@ -168,7 +169,9 @@ function mcpSettings() {
     el("b", {}, "Agents (MCP)"),
     el("p", {}, "Off by default. When on, agents such as Claude, Cline or Hermes can make images, voice, music, 3D and video through the studio, using its queue and models. An agent sees only what it makes itself, not your gallery or chats."),
     el("label", { class: "auto" }, el("input", { type: "checkbox", checked: !!m.on, onchange: (e) => set({ on: e.target.checked }) }), "Let agents use the studio (MCP)"),
-    m.on ? [row("mcpUrl", "Endpoint", url), row("mcpToken", "Token", m.token || ""),
+    // the token isn't in every settings answer; "Show token" asks for it (an empty POST answers with it)
+    m.on ? [row("mcpUrl", "Endpoint", url),
+      m.token ? row("mcpToken", "Token", m.token) : el("button", { class: "btn-sm", type: "button", onclick: () => set({}) }, "Show token"),
       el("button", { class: "btn-sm", type: "button", onclick: () => { if (confirm("Make a new token? Agents using the old one are locked out until you give them the new one.")) set({ new_token: true }); } }, "New token")] : null);
 }
 

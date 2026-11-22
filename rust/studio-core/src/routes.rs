@@ -11,9 +11,12 @@ use axum::{
 };
 use rust_embed::RustEmbed;
 use serde_json::{json, Value};
+use std::net::IpAddr;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use crate::device::{self, quote};
-use crate::settings::{hostname, normalize_url};
+use crate::settings::{device_url, hostname, normalize_url, same_origin};
 use crate::AppState;
 
 #[derive(RustEmbed)]
@@ -27,7 +30,20 @@ struct Static;
 #[exclude = "*/*"]
 struct Docs;
 
+/// What the access middleware needs besides the app state.
+struct Guards {
+    /// STUDIO_HOSTS: extra names answered when the studio is open to the network
+    hosts: Vec<String>,
+    password: AuthGuard,
+}
+
+type GuardState = (AppState, Arc<Guards>);
+
 pub fn router(state: AppState) -> Router {
+    let guards = Arc::new(Guards {
+        hosts: allowed_hosts_from_env(),
+        password: AuthGuard::new(),
+    });
     Router::new()
         .route("/", get(index))
         .route("/index.html", get(index))
@@ -53,24 +69,112 @@ pub fn router(state: AppState) -> Router {
         .route("/api/model/{action}", post(model_change))
         .route("/api/device/shutdown", post(shutdown))
         .route("/api/icon/{org}/{name}", get(icon))
-        .route("/api/extract", post(extract_document))
-        .route("/mcp", any(crate::mcp::endpoint))
+        .route(
+            "/api/extract",
+            post(extract_document).layer(axum::extract::DefaultBodyLimit::max(MAX_BODY)),
+        )
+        .route(
+            "/mcp",
+            any(crate::mcp::endpoint).layer(axum::extract::DefaultBodyLimit::max(MCP_BODY)),
+        )
         .merge(crate::library::routes())
         .fallback(not_found)
-        // same cap as server.py (for a body without a Content-Length too); /api/extract checks its own 100 MB
-        .layer(axum::extract::DefaultBodyLimit::max(MAX_BODY))
+        // most routes only ever get small JSON; the few that take uploads set their own, larger limit (body_limit_for)
+        .layer(axum::extract::DefaultBodyLimit::max(SMALL_BODY))
         .layer(middleware::from_fn(body_limit))
-        .layer(middleware::from_fn_with_state(state.clone(), authorized))
-        .layer(middleware::from_fn_with_state(state.clone(), same_site))
+        .layer(middleware::from_fn_with_state(
+            (state.clone(), guards.clone()),
+            authorized,
+        ))
+        .layer(middleware::from_fn_with_state(
+            (state.clone(), guards),
+            same_site,
+        ))
+        .layer(middleware::from_fn(security_headers))
         .with_state(state)
 }
 
+/// What the page may load and do. The UI is static files of its own origin (no CDN, no inline scripts); styles may
+/// be inline (style="" attributes), pictures/audio/video may be blob: or data: (results, previews, recordings), the
+/// PDF.js worker and model-viewer use blob: workers and WebAssembly. Nothing may frame the studio.
+const CSP: &str = "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; \
+img-src 'self' data: blob:; media-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' data: blob:; \
+worker-src 'self' blob:; object-src 'none'; frame-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'";
+
+/// Anti-framing, no content sniffing and a CSP on every answer.
+async fn security_headers(req: Request, next: Next) -> Response {
+    let mut res = next.run(req).await;
+    let h = res.headers_mut();
+    h.insert(
+        header::X_FRAME_OPTIONS,
+        header::HeaderValue::from_static("DENY"),
+    );
+    h.insert(
+        header::X_CONTENT_TYPE_OPTIONS,
+        header::HeaderValue::from_static("nosniff"),
+    );
+    h.insert(
+        header::CONTENT_SECURITY_POLICY,
+        header::HeaderValue::from_static(CSP),
+    );
+    h.insert(
+        header::REFERRER_POLICY,
+        header::HeaderValue::from_static("no-referrer"),
+    );
+    res
+}
+
+/// STUDIO_HOSTS: extra names the studio answers to when it is shared on a network, comma separated (the name a
+/// reverse proxy forwards, e.g. `studio.example.org`).
+fn allowed_hosts_from_env() -> Vec<String> {
+    parse_hosts(&std::env::var("STUDIO_HOSTS").unwrap_or_default())
+}
+
+fn parse_hosts(list: &str) -> Vec<String> {
+    list.split([',', ' ', ';'])
+        .map(|h| host_name(&h.trim().to_ascii_lowercase()).to_string())
+        .filter(|h| !h.is_empty())
+        .collect()
+}
+
+/// The host name of a Host header value ("nas.lan:7860" -> "nas.lan", "[::1]:7860" -> "::1").
+fn host_name(h: &str) -> &str {
+    match h.strip_prefix('[') {
+        Some(rest) => rest.split(']').next().unwrap_or(""),
+        None if h.matches(':').count() > 1 => h, // a bare IPv6 address
+        None => h.rsplit_once(':').map_or(h, |(n, _)| n),
+    }
+}
+
+/// Which names a studio opened to a network answers to. A page that re-points its own public name at the studio
+/// (DNS rebinding) sends that name as Host, so a public domain name is refused unless STUDIO_HOSTS lists it. Fine
+/// without listing: IP addresses (an attacker can't make a browser send another site's name with one), localhost,
+/// names with no dot (the computer's own name, as in `http://nas:7860`) and the private-network suffixes.
+fn host_allowed(name: &str, extra: &[String]) -> bool {
+    let name = name.trim_end_matches('.');
+    name.parse::<std::net::IpAddr>().is_ok()
+        || !name.contains('.')
+        || [".local", ".lan", ".home.arpa", ".localdomain", ".internal"]
+            .iter()
+            .any(|s| name.ends_with(s))
+        || extra.iter().any(|h| h == name)
+}
+
 /// Keeps other websites out. Without this, any page open in the browser could POST here (wipe everything, power
-/// off the Tiiny) or, by pointing its own domain at 127.0.0.1 (DNS rebinding), read the gallery. So: unless the
-/// studio is opened to the LAN, only localhost addresses are answered; and a change (anything but GET/HEAD) from a
-/// browser must come from the studio's own page.
-async fn same_site(State(state): State<AppState>, req: Request, next: Next) -> Response {
-    match foreign(req.method(), req.headers(), state.config.lan_access) {
+/// off the Tiiny) or, by pointing its own domain at the studio (DNS rebinding), read the gallery. So: unless the
+/// studio is opened to the LAN, only localhost addresses are answered; opened to the LAN, only names that
+/// `host_allowed` accepts; and a change (anything but GET/HEAD) from a browser must come from the studio's own page.
+async fn same_site(
+    State((state, guards)): State<GuardState>,
+    req: Request,
+    next: Next,
+) -> Response {
+    match foreign(
+        req.method(),
+        req.headers(),
+        state.config.lan_access,
+        &guards.hosts,
+    ) {
         Some(why) => error(StatusCode::FORBIDDEN, why),
         None => next.run(req).await,
     }
@@ -80,6 +184,7 @@ fn foreign(
     method: &axum::http::Method,
     headers: &axum::http::HeaderMap,
     lan_access: bool,
+    extra_hosts: &[String],
 ) -> Option<&'static str> {
     let text = |h| {
         headers
@@ -88,13 +193,16 @@ fn foreign(
             .map(str::to_ascii_lowercase)
     };
     let host = text(header::HOST);
-    if let (false, Some(h)) = (lan_access, &host) {
-        let name = match h.strip_prefix('[') {
-            Some(rest) => rest.split(']').next().unwrap_or(""),
-            None => h.rsplit_once(':').map_or(h.as_str(), |(n, _)| n),
-        };
-        if !matches!(name, "localhost" | "127.0.0.1" | "::1") {
-            return Some("This studio only answers at localhost.");
+    if let Some(h) = &host {
+        let name = host_name(h);
+        if !lan_access {
+            if !matches!(name, "localhost" | "127.0.0.1" | "::1") {
+                return Some("This studio only answers at localhost.");
+            }
+        } else if !host_allowed(name, extra_hosts) {
+            return Some(
+                "This studio doesn't answer to that name. Add it to STUDIO_HOSTS, or open the studio by its IP address.",
+            );
         }
     }
     if matches!(*method, axum::http::Method::GET | axum::http::Method::HEAD) {
@@ -112,15 +220,25 @@ fn foreign(
 }
 
 /// Optional password (STUDIO_PASSWORD): HTTP basic auth, any username, on every request.
-async fn authorized(State(state): State<AppState>, req: Request, next: Next) -> Response {
+async fn authorized(
+    State((state, guards)): State<GuardState>,
+    req: Request,
+    next: Next,
+) -> Response {
     // the MCP endpoint checks its own bearer token (agents don't have the studio password); same_site still applies
     if req.uri().path() == "/mcp" {
         return next.run(req).await;
     }
     let password = &state.config.password;
+    let ip = client_ip(req.extensions());
     if password.is_empty() {
         return next.run(req).await;
     }
+    // after a run of wrong passwords every attempt waits, the right one included, so guessing doesn't pay
+    if let Some(wait) = guards.password.wait(ip) {
+        return too_many_attempts(wait);
+    }
+    let sent = req.headers().get(header::AUTHORIZATION).is_some();
     let given = req
         .headers()
         .get(header::AUTHORIZATION)
@@ -134,7 +252,12 @@ async fn authorized(State(state): State<AppState>, req: Request, next: Next) -> 
                 .unwrap_or_default()
         });
     if given.is_some_and(|g| constant_time_eq(g.as_bytes(), password.as_bytes())) {
+        guards.password.succeeded(ip);
         return next.run(req).await;
+    }
+    if sent {
+        // a browser's first request has no credentials yet (that is the prompt, not a guess)
+        guards.password.failed(ip, "password");
     }
     (
         StatusCode::UNAUTHORIZED,
@@ -142,6 +265,102 @@ async fn authorized(State(state): State<AppState>, req: Request, next: Next) -> 
             header::WWW_AUTHENTICATE,
             r#"Basic realm="Tiiny Studio", charset="UTF-8""#,
         )],
+    )
+        .into_response()
+}
+
+/// Failed password / MCP-token attempts, counted per client address (so one machine on the LAN guessing can't
+/// lock the real user out). The first `FREE_FAILURES` wrong tries of an address cost nothing; after that, its
+/// attempts are refused for a time that doubles with each further failure (1 s, 2 s, 4 s ... up to a minute), and
+/// a good attempt, or ten quiet minutes, starts over. At most `MAX_CLIENTS` addresses are remembered (the one
+/// quiet longest is dropped first). Behind a reverse proxy every client has the proxy's address, so they share
+/// one count there.
+pub(crate) struct AuthGuard(Mutex<Vec<(IpAddr, u32, Instant)>>);
+
+const FREE_FAILURES: u32 = 10;
+const MAX_LOCKOUT_SECS: u64 = 60;
+const FORGET_AFTER: Duration = Duration::from_secs(600);
+const MAX_CLIENTS: usize = 256;
+
+pub(crate) static MCP_GUARD: AuthGuard = AuthGuard::new();
+
+/// Who is asking: the connection's address (the unspecified address when the server wasn't given it, as in tests).
+pub(crate) fn client_ip(ext: &axum::http::Extensions) -> IpAddr {
+    ext.get::<axum::extract::ConnectInfo<std::net::SocketAddr>>()
+        .map(|c| c.0.ip().to_canonical())
+        .unwrap_or(IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED))
+}
+
+impl AuthGuard {
+    pub(crate) const fn new() -> Self {
+        AuthGuard(Mutex::new(Vec::new()))
+    }
+
+    fn lock(&self) -> std::sync::MutexGuard<'_, Vec<(IpAddr, u32, Instant)>> {
+        self.0.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// Seconds an attempt from `ip` has to wait now, if it has to.
+    pub(crate) fn wait(&self, ip: IpAddr) -> Option<u64> {
+        self.wait_at(ip, Instant::now())
+    }
+
+    fn wait_at(&self, ip: IpAddr, now: Instant) -> Option<u64> {
+        let (_, n, last) = *self.lock().iter().find(|(a, _, _)| *a == ip)?;
+        if n < FREE_FAILURES {
+            return None;
+        }
+        let lockout =
+            Duration::from_secs((1u64 << (n - FREE_FAILURES).min(6)).min(MAX_LOCKOUT_SECS));
+        lockout
+            .checked_sub(now.saturating_duration_since(last))
+            .map(|left| left.as_secs() + 1)
+    }
+
+    pub(crate) fn failed(&self, ip: IpAddr, what: &str) {
+        self.failed_at(ip, Instant::now(), what);
+    }
+
+    fn failed_at(&self, ip: IpAddr, now: Instant, what: &str) {
+        let mut g = self.lock();
+        let i = match g.iter().position(|(a, _, _)| *a == ip) {
+            Some(i) => i,
+            None => {
+                if g.len() >= MAX_CLIENTS {
+                    // drop the address that has been quiet the longest
+                    if let Some(old) = (0..g.len()).min_by_key(|&k| g[k].2) {
+                        g.swap_remove(old);
+                    }
+                }
+                g.push((ip, 0, now));
+                g.len() - 1
+            }
+        };
+        let e = &mut g[i];
+        if now.saturating_duration_since(e.2) > FORGET_AFTER {
+            e.1 = 0;
+        }
+        e.1 = e.1.saturating_add(1);
+        e.2 = now;
+        if e.1 == FREE_FAILURES {
+            eprintln!(
+                "Too many wrong {what} attempts from {ip}: its further attempts are slowed down."
+            );
+        }
+    }
+
+    pub(crate) fn succeeded(&self, ip: IpAddr) {
+        self.lock().retain(|(a, _, _)| *a != ip);
+    }
+}
+
+pub(crate) fn too_many_attempts(wait: u64) -> Response {
+    (
+        StatusCode::TOO_MANY_REQUESTS,
+        [(header::RETRY_AFTER, wait.to_string())],
+        Json(
+            json!({"error": {"message": "Too many wrong attempts. Wait a moment and try again."}}),
+        ),
     )
         .into_response()
 }
@@ -181,8 +400,27 @@ pub(crate) fn read_json(body: &Bytes) -> Result<Value, String> {
 }
 
 /// The largest request body: pictures, voice clips and video frames arrive as base64 JSON; /api/extract checks its own 100 MB.
-const MAX_BODY: usize = 150 << 20;
+pub(crate) const MAX_BODY: usize = 150 << 20;
 const TOO_LARGE: &str = "That request is too large (over 150 MB).";
+/// Settings, history, search, export, model and device calls: a few KB in practice.
+const SMALL_BODY: usize = 2 << 20;
+/// A saved chat can carry its attached pictures.
+pub(crate) const CHAT_BODY: usize = 32 << 20;
+/// MCP calls (an agent may pass a picture or clip as base64).
+const MCP_BODY: usize = 32 << 20;
+
+/// The body size a route accepts; the routes that take uploads or chats set the same number with a layer.
+fn body_limit_for(method: &axum::http::Method, path: &str) -> usize {
+    if *method != axum::http::Method::POST && *method != axum::http::Method::PUT {
+        return SMALL_BODY;
+    }
+    match path {
+        "/api/jobs" | "/api/extract" | "/api/voices" => MAX_BODY,
+        "/mcp" => MCP_BODY,
+        p if p.starts_with("/api/chats/") && !p.ends_with("/delete") => CHAT_BODY,
+        _ => SMALL_BODY,
+    }
+}
 
 async fn body_limit(req: Request, next: Next) -> Response {
     let len = req
@@ -192,6 +430,12 @@ async fn body_limit(req: Request, next: Next) -> Response {
         .and_then(|v| v.trim().parse::<usize>().ok());
     if len.is_some_and(|n| n > MAX_BODY) {
         return error(StatusCode::PAYLOAD_TOO_LARGE, TOO_LARGE);
+    }
+    if len.is_some_and(|n| n > body_limit_for(req.method(), req.uri().path())) {
+        return error(
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "That request is too large for this part of the studio.",
+        );
     }
     next.run(req).await
 }
@@ -286,9 +530,19 @@ pub fn mime(path: &str) -> &'static str {
 }
 
 async fn settings(State(state): State<AppState>, req: Request) -> Json<Value> {
-    let mut v = state.settings.public();
+    let mut v = without_mcp_token(state.settings.public());
     v["can_open_folder"] = json!(can_open_folder(&req));
     Json(v)
+}
+
+/// The MCP token goes only to the call that asks for it (a POST to /api/settings/mcp, which the page makes when the
+/// user turns MCP on, asks for a new token or presses "Show token"): not in every settings answer.
+fn without_mcp_token(mut v: Value) -> Value {
+    if let Some(m) = v.get_mut("mcp").and_then(Value::as_object_mut) {
+        let set = m.remove("token").is_some_and(|t| t.as_str() != Some(""));
+        m.insert("token_set".into(), json!(set));
+    }
+    v
 }
 
 /// Opening the results folder only makes sense on the computer running the studio, with a desktop:
@@ -486,7 +740,7 @@ async fn save_settings(State(state): State<AppState>, body: Bytes) -> Response {
     }
     let check = state.clone();
     tokio::spawn(async move { check.settings.check(&check.http).await });
-    Json(state.settings.public()).into_response()
+    Json(without_mcp_token(state.settings.public())).into_response()
 }
 
 async fn device_action(
@@ -531,7 +785,13 @@ async fn device_action(
             &format!("Couldn't save your changes: {e}"),
         );
     }
-    Json(state.settings.public()).into_response()
+    let v = state.settings.public();
+    Json(if action == "mcp" {
+        v
+    } else {
+        without_mcp_token(v)
+    })
+    .into_response()
 }
 
 /// Try a device address/key (typed or saved) without saving it.
@@ -554,12 +814,16 @@ async fn test_settings(State(state): State<AppState>, body: Bytes) -> Json<Value
     let url = Some(normalize_url(str_of(&req, "url")))
         .filter(|u| !u.is_empty())
         .unwrap_or(saved_url.clone());
-    let mut key = str_of(&req, "key").trim().to_string();
-    if key.is_empty() && hostname(&url) == hostname(&saved_url) {
-        key = saved_key; // a saved key is only ever tried against its own host
-    }
     if url.is_empty() {
         return Json(json!({"ok": false, "message": "Enter the device address."}));
+    }
+    let url = match device_url(&url) {
+        Ok(u) => u,
+        Err(message) => return Json(json!({"ok": false, "message": message})),
+    };
+    let mut key = str_of(&req, "key").trim().to_string();
+    if key.is_empty() && same_origin(&url, &saved_url) {
+        key = saved_key; // a saved key is only ever tried against its own origin (scheme, host and port)
     }
     let (code, res) = device::call(&state, "GET", "/v1/models", None, 8, Some((&url, &key))).await;
     if code == 200 {
@@ -605,6 +869,9 @@ async fn test_settings(State(state): State<AppState>, body: Bytes) -> Json<Value
     }
     if crate::settings::in_docker() && hostname(&url).starts_with("172.17.") {
         return Json(json!({"ok": false, "message": DOCKER_USB}));
+    }
+    if device::is_locked(code, &res) {
+        return Json(json!({"ok": false, "message": device::LOCKED}));
     }
     let msg = match res.get("error") {
         Some(Value::Object(e)) => e.get("message").and_then(Value::as_str).map(String::from),
@@ -1138,38 +1405,244 @@ mod tests {
         );
     }
 
+    fn host_headers(host: &str, origin: Option<&str>) -> axum::http::HeaderMap {
+        let mut m = axum::http::HeaderMap::new();
+        m.insert(header::HOST, host.parse().unwrap());
+        if let Some(o) = origin {
+            m.insert(header::ORIGIN, o.parse().unwrap());
+        }
+        m
+    }
+
     #[test]
-    fn lan_access_answers_any_name_but_not_other_sites() {
-        use axum::http::{HeaderMap, Method};
-        let h = |host: &str, origin: Option<&str>| {
-            let mut m = HeaderMap::new();
-            m.insert(header::HOST, host.parse().unwrap());
-            if let Some(o) = origin {
-                m.insert(header::ORIGIN, o.parse().unwrap());
-            }
-            m
-        };
-        assert_eq!(foreign(&Method::GET, &h("nas.lan:7860", None), true), None);
+    fn lan_access_answers_private_names_but_not_other_sites() {
+        use axum::http::Method;
+        let h = host_headers;
+        let none: &[String] = &[];
+        for ok in [
+            "nas.lan:7860",
+            "nas:7860",
+            "192.168.1.50:7860",
+            "[fe80::1]:7860",
+            "studio.local",
+            "localhost:7860",
+        ] {
+            assert_eq!(
+                foreign(&Method::GET, &h(ok, None), true, none),
+                None,
+                "{ok}"
+            );
+        }
         assert_eq!(
             foreign(
                 &Method::POST,
                 &h("192.168.1.50:7860", Some("http://192.168.1.50:7860")),
-                true
+                true,
+                none
             ),
             None
         );
         assert!(foreign(
             &Method::POST,
             &h("192.168.1.50:7860", Some("https://evil.example")),
-            true
+            true,
+            none
         )
         .is_some());
         assert!(foreign(
             &Method::DELETE,
             &h("nas.lan:7860", Some("http://nas.lan:7861")),
-            true
+            true,
+            none
         )
         .is_some());
+    }
+
+    #[test]
+    fn lan_access_refuses_rebinding_names() {
+        use axum::http::Method;
+        let h = host_headers;
+        let none: &[String] = &[];
+        // a page on evil.example that re-points its name at the studio sends it as Host and as Origin: they match
+        // each other, so only the Host check stops it, for reads and for changes
+        assert!(foreign(&Method::GET, &h("evil.example:7860", None), true, none).is_some());
+        assert!(foreign(
+            &Method::POST,
+            &h("evil.example:7860", Some("http://evil.example:7860")),
+            true,
+            none
+        )
+        .is_some());
+        assert!(foreign(&Method::GET, &h("nas.lan.evil.example", None), true, none).is_some());
+        // a reverse proxy's name works once it is listed
+        let listed = parse_hosts("Studio.Example.org, other.example.org:443");
+        assert_eq!(
+            foreign(
+                &Method::POST,
+                &h("studio.example.org", Some("https://studio.example.org")),
+                true,
+                &listed
+            ),
+            None
+        );
+        assert!(foreign(&Method::GET, &h("other.example.org", None), true, &listed).is_none());
+        assert!(foreign(&Method::GET, &h("evil.example", None), true, &listed).is_some());
+        // local-only mode is unchanged: localhost addresses only, the list does not apply
+        assert_eq!(
+            foreign(&Method::GET, &h("localhost:7860", None), false, none),
+            None
+        );
+        assert_eq!(
+            foreign(&Method::GET, &h("[::1]:7860", None), false, none),
+            None
+        );
+        assert!(foreign(&Method::GET, &h("nas.lan:7860", None), false, none).is_some());
+        assert!(foreign(&Method::GET, &h("studio.example.org", None), false, &listed).is_some());
+    }
+
+    #[tokio::test]
+    async fn answers_carry_security_headers() {
+        let res = app("")
+            .oneshot(Request::get("/").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        let h = res.headers();
+        assert_eq!(h[header::X_FRAME_OPTIONS], "DENY");
+        assert_eq!(h[header::X_CONTENT_TYPE_OPTIONS], "nosniff");
+        let csp = h[header::CONTENT_SECURITY_POLICY].to_str().unwrap();
+        assert!(csp.contains("frame-ancestors 'none'") && csp.contains("script-src 'self'"));
+        // errors and API answers too
+        let res = app("")
+            .oneshot(Request::get("/nothing-here").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert!(res.headers().contains_key(header::X_FRAME_OPTIONS));
+    }
+
+    #[test]
+    fn the_ui_needs_nothing_the_csp_forbids() {
+        // no inline <script>, no event-handler attributes, no external script/style/image: the CSP's script-src 'self'
+        // relies on it
+        let html = String::from_utf8(Static::get("index.html").unwrap().data.into_owned()).unwrap();
+        let inline = regex::Regex::new(r"<script(\s[^>]*)?>\s*[^<\s]").unwrap();
+        assert!(!inline.is_match(&html), "inline script in index.html");
+        let handler = regex::Regex::new(r#"(?i)\son[a-z]+\s*="#).unwrap();
+        assert!(
+            !handler.is_match(&html),
+            "inline event handler in index.html"
+        );
+        let external = regex::Regex::new(r#"(?i)(src|href)\s*=\s*"https?://"#).unwrap();
+        assert!(!external.is_match(&html), "external resource in index.html");
+    }
+
+    #[test]
+    fn wrong_attempts_are_slowed_down() {
+        let g = AuthGuard::new();
+        let ip: IpAddr = "192.168.1.20".parse().unwrap();
+        let t0 = Instant::now();
+        for _ in 0..FREE_FAILURES - 1 {
+            g.failed_at(ip, t0, "password");
+            assert_eq!(g.wait_at(ip, t0), None);
+        }
+        g.failed_at(ip, t0, "password");
+        assert_eq!(g.wait_at(ip, t0), Some(2)); // a 1 s lockout, rounded up
+        assert_eq!(g.wait_at(ip, t0 + Duration::from_secs(2)), None);
+        g.failed_at(ip, t0 + Duration::from_secs(2), "password");
+        assert!(g.wait_at(ip, t0 + Duration::from_secs(3)).is_some()); // 2 s now
+        for i in 0..20 {
+            g.failed_at(ip, t0 + Duration::from_secs(10 + i), "password");
+        }
+        let t = t0 + Duration::from_secs(30);
+        assert!(g.wait_at(ip, t).is_some_and(|w| w <= MAX_LOCKOUT_SECS + 1));
+        // ten quiet minutes, or a good attempt, start over
+        assert_eq!(
+            g.wait_at(ip, t + FORGET_AFTER + Duration::from_secs(MAX_LOCKOUT_SECS)),
+            None
+        );
+        g.succeeded(ip);
+        assert_eq!(g.wait_at(ip, t), None);
+    }
+
+    #[tokio::test]
+    async fn only_upload_routes_take_big_bodies() {
+        let big = "x".repeat(3 << 20); // over the small limit, under the others
+        let post = |path: &str| {
+            Request::post(path)
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(big.clone()))
+                .unwrap()
+        };
+        for path in ["/api/history/delete", "/api/settings/auto", "/api/search"] {
+            let (code, _, _) = send(app(""), post(path)).await;
+            assert_eq!(code, StatusCode::PAYLOAD_TOO_LARGE, "{path}");
+        }
+        for path in ["/api/jobs", "/api/chats/abc", "/api/voices"] {
+            let (code, _, _) = send(app(""), post(path)).await;
+            assert_ne!(code, StatusCode::PAYLOAD_TOO_LARGE, "{path}");
+        }
+        assert!(body_limit_for(&axum::http::Method::POST, "/api/extract") == MAX_BODY);
+    }
+
+    #[test]
+    fn one_clients_failures_do_not_lock_out_another() {
+        let g = AuthGuard::new();
+        let t0 = Instant::now();
+        let guesser: IpAddr = "192.168.1.66".parse().unwrap();
+        let user: IpAddr = "192.168.1.20".parse().unwrap();
+        for _ in 0..FREE_FAILURES + 3 {
+            g.failed_at(guesser, t0, "password");
+        }
+        assert!(g.wait_at(guesser, t0).is_some());
+        assert_eq!(g.wait_at(user, t0), None);
+        g.succeeded(user);
+        assert!(g.wait_at(guesser, t0).is_some());
+        // the table stays bounded, dropping the address quiet the longest
+        for i in 0..(MAX_CLIENTS as u32 + 50) {
+            let ip = IpAddr::from(std::net::Ipv4Addr::from(0x0a00_0000 + i));
+            g.failed_at(ip, t0 + Duration::from_secs(1 + u64::from(i)), "password");
+        }
+        assert!(g.0.lock().unwrap().len() <= MAX_CLIENTS);
+        assert_eq!(g.wait_at(guesser, t0), None, "the oldest was dropped");
+    }
+
+    #[tokio::test]
+    async fn too_many_wrong_passwords_get_429() {
+        let a = app("right-password");
+        let basic = |p: &str| {
+            use base64::Engine;
+            format!(
+                "Basic {}",
+                base64::engine::general_purpose::STANDARD.encode(format!("u:{p}"))
+            )
+        };
+        let req = |p: &str| {
+            Request::get("/api/settings")
+                .header(header::AUTHORIZATION, basic(p))
+                .body(Body::empty())
+                .unwrap()
+        };
+        let mut last = StatusCode::OK;
+        for _ in 0..FREE_FAILURES + 1 {
+            last = a.clone().oneshot(req("wrong")).await.unwrap().status();
+        }
+        assert_eq!(last, StatusCode::TOO_MANY_REQUESTS);
+        // even the right password waits while the lockout lasts
+        assert_eq!(
+            a.clone()
+                .oneshot(req("right-password"))
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::TOO_MANY_REQUESTS
+        );
+    }
+
+    #[test]
+    fn mcp_token_is_left_out_of_settings_answers() {
+        let v = without_mcp_token(json!({"mcp": {"on": true, "token": "abc"}}));
+        assert_eq!(v["mcp"], json!({"on": true, "token_set": true}));
+        let v = without_mcp_token(json!({"mcp": {"on": false, "token": ""}}));
+        assert_eq!(v["mcp"], json!({"on": false, "token_set": false}));
     }
 
     #[tokio::test]

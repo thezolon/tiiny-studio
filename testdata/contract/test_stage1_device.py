@@ -120,6 +120,17 @@ class Device(ContractCase):
         self.assertEqual((py.status, rs.status, py.json), (500, 500, rs.json))
         self.assertNotIn("type", py.json["error"])
 
+    def test_locked_in_the_connection_test_and_a_failed_running_list(self):
+        self.addCleanup(request, self.h.fake_url, "POST", "/__flags", {"locked": False, "fail": {}})
+        request(self.h.fake_url, "POST", "/__flags", {"locked": True})
+        py, rs = self.post("/api/settings/test", {})
+        self.assertEqual(py.json, rs.json)
+        self.assertIn("TiinyOS app", py.json["message"])
+        # a failed /running call fails the catalog instead of showing every model as stopped
+        request(self.h.fake_url, "POST", "/__flags", {"locked": False, "fail": {"/api/v1/models/running": [500, "boom"]}})
+        py, rs = self.get("/api/catalog")
+        self.assertEqual((py.status, rs.status, py.json), (500, 500, rs.json))
+
     def test_missing_icon_is_asked_for_once(self):
         # 0.1.38 has no icon for MiniMax-H3-Turbo (404); the drawer redraws every few seconds, so remember that
         request(self.h.fake_url, "POST", "/__reset_log")
