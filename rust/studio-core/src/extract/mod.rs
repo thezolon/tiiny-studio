@@ -45,6 +45,10 @@ const MAX_TEXT: usize = 128 << 20;
 const TIME_BUDGET: Duration = Duration::from_secs(45);
 /// Stack of the extraction thread; the readers recurse one level per nested element (at most xml::MAX_DEPTH, a few KB of stack each in a debug build).
 const STACK_SIZE: usize = 64 << 20;
+/// The visible note for rows a limit left out of a table.
+pub(crate) fn rows_note(n: usize) -> String {
+    format!("[… {n} more rows not shown]")
+}
 const TOO_MUCH: &str = "This document has more text than the studio can read.";
 const TOO_SLOW: &str = "Reading this document is taking too long, so it was stopped.";
 const IMAGE_TYPES: [(&str, &str); 8] = [
