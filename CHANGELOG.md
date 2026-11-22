@@ -42,11 +42,14 @@ app, a studio that's harder to misuse on a network, clearer messages, and a bett
   their own.
 - **Chat and Image:** with two chat models loaded you can pick which one answers; a picture run that made fewer images
   than asked says so on the result.
+- **Big spreadsheets** are read in a fraction of the memory (a 200,000-row sheet: about 70 MB instead of 930 MB).
+- **Supertonic-3** no longer shows the "needs Wi-Fi" note: it works through the Tiiny's gateway since TiinyOS 0.1.39.
 - **Passwords:** a tab left open after the password changed no longer locks your address out; the desktop app works
   with `STUDIO_PASSWORD` set.
 - Security hardening: stricter checks on file names, on which address the device key may go to, and on requests from
   other web pages; security headers on every page; a hardened `compose.yaml` (read-only, no extra privileges).
-- Technical: fix packages #139-#150 (tracked in #138), each with tests: 130+ Rust tests, 163 contract tests, the
+- Technical: fix packages #139-#150 (tracked in #138), each with tests: 130+ Rust tests, 166 contract tests (the fake Tiiny
+  now refuses what the real one refuses), the
   browser checks now run against the Rust server that ships, and CI builds and starts the Docker image before it is
   published; a release tag must be on `main` with its Rust checks passed. `server.py` remains the behaviour reference for the tests, not meant for LAN use.
 
