@@ -48,11 +48,6 @@ WATCH = [
     ("auto", "PP-DocLayoutV3 has no gateway route", layout_route,
      "Text mode leaves layout models out (layoutOnly() in static/shared.js). Its reading order was wrong too: test "
      "that before using it."),
-    ("manual", "Supertonic-3 fails through the gateway",
-     "Load Supertonic-3; POST /v1/audio/speech through port 80 with a short text. Still broken if it answers "
-     "'The upstream TTS model failed'.",
-     "The studio calls its own port (Wi-Fi/LAN only): needsWifi()/wifiNote() in static/shared.js, the direct route in "
-     "media.py and rust/studio-core/src/media/speech.rs."),
     ("manual", "GLM-OCR isn't reachable through the gateway",
      "Load GLM-OCR; read a picture with it over the USB link in the studio (Text mode). Still broken if it fails.",
      "OCR uses GLM-OCR's own port (Wi-Fi/LAN only); PP-OCRv6 works on every link."),
