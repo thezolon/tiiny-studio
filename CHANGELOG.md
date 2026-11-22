@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.6.6 (2026-11-21)
+
+Songs can borrow the feel of a piece of music, Fedora gets its own package, and long chat replies are lighter on the
+window.
+
+- **Song style reference:** give a song 10-30 s of music and it borrows the feel (requested on the Tiiny Discord). It
+  works with SongGeneration (at least 10 s) and AceStep (any length); YuE2 doesn't take one, so the field only shows
+  for models that do. "Use as song style" on any audio result, songs included, sets it. Turned on now that the current
+  TiinyOS handles it; it failed on older versions.
+- **Fedora (.rpm):** a new `.rpm` package for Fedora and similar systems, x64 and ARM. It uses the system's own
+  WebKitGTK, which can help if the AppImage's window goes white (reported on the Tiiny Discord). The README says what
+  else to try in that case.
+- **Long chat replies:** while a reply arrives, only its new part is redrawn instead of the whole reply, so a long
+  answer full of tables keeps the window far less busy (reported on the Tiiny Discord, on Linux).
+- Technical: each Linux release job now installs the `.rpm` in a Fedora container and checks every library resolves;
+  the style reference's limits (SongGeneration refuses under 10 s; 10-120 s, mono or stereo, Wi-Fi and USB routes;
+  AceStep 5-120 s) are in `docs/DEVICE-API.md`; a flaky MCP test waits for the other job instead of a fixed 200 ms.
+
 ## 0.6.5 (2026-11-21)
 
 The studio fits big-scaling screens (a TV at 200%), and you can read the model's thinking while it works.
