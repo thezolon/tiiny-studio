@@ -127,6 +127,6 @@ class Mcp(ContractCase):
             failed, content = self.tool(name, {"job_id": theirs["id"]})
             self.assertTrue(failed, name)
             self.assertIn("not one of this agent's jobs", content[0]["text"])
-        job, _ = self.finish(self.base, theirs)
+        job, _ = self.finish(theirs)
         self.assertEqual(job["status"], "done")  # the refused cancel did nothing
         request(self.base, "DELETE", "/api/history/" + job["entry"]["id"])
