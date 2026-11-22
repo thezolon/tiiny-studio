@@ -1,6 +1,7 @@
 """Contract-test support: the fake Tiiny, the Python server and the Rust server, side by side.
 Subclass ContractCase; self.get/self.post send the same request to both servers, self.same() compares.
-The Rust binary is built with `cargo build` in rust/ when missing (tests skip if cargo isn't there)."""
+The Rust binary is built with `cargo build` in rust/ when missing (tests skip if cargo isn't there, unless
+STUDIO_REQUIRE_RUST=1, which CI sets: then a missing Rust server is an error, never a silent skip)."""
 import json
 import os
 import re
@@ -66,40 +67,64 @@ def strip(obj, ignore):
 def rust_binary():
     """Path of the Rust server, (re)built first so tests never run a stale binary. Raises SkipTest without cargo."""
     if shutil.which("cargo"):
-        r = subprocess.run(["cargo", "build", "-p", "studio-server"], cwd=ROOT / "rust", capture_output=True, text=True)
+        r = subprocess.run(["cargo", "build", "-p", "studio-server", *(["--locked"] if os.environ.get("CI") else [])], cwd=ROOT / "rust", capture_output=True, text=True)
         if r.returncode:
             raise RuntimeError("cargo build failed:\n" + r.stdout[-2000:] + r.stderr[-2000:])
     elif not RUST_BIN.exists():
-        raise unittest.SkipTest("Rust server not built and cargo isn't installed (cd rust && cargo build)")
+        msg = "Rust server not built and cargo isn't installed (cd rust && cargo build)"
+        if os.environ.get("STUDIO_REQUIRE_RUST"):
+            raise RuntimeError(msg)
+        raise unittest.SkipTest(msg)
     return RUST_BIN
 
 
 class Harness:
-    def __init__(self):
-        self.procs, self.tmp = [], []
+    def __init__(self, extra_env=None):
+        self.extra_env = extra_env or {}  # added to both servers' environment (after the harness's own settings)
+        self.procs, self.tmp, self.logs = [], [], []
         self.fake, self.fake_url = None, None
         self.py_url = self.rs_url = None
         self.containers = []
 
     def _spawn(self, cmd, port, data_dir):
+        """Start a server on port and wait for it. If it dies at once (the port was taken between free_port() and its
+        bind) it is started again on a new port; its output goes to a temp file whose tail is in the error."""
         env = {**os.environ, "PORT": str(port), "DATA_DIR": str(data_dir), "TIINY_URL": self.fake_url, "TIINY_KEY": KEY,
                "PYTHONUNBUFFERED": "1", "STUDIO_WARMUP_WAIT": "0.2", "STUDIO_DOCKER": "1",
                "STUDIO_UPDATE_URL": f"{self.fake_url}/__release",  # "GitHub" is the fake
-               "STUDIO_DISK_TTL": "0", "STUDIO_STORE_TTL": "0"}  # no free-space cache, so a test can change what the fake reports  # as the Docker image sets it
+               # no free-space or store cache, so a test can change what the fake reports; as the Docker image sets it
+               "STUDIO_DISK_TTL": "0", "STUDIO_STORE_TTL": "0", **self.extra_env}
         for k in ("STUDIO_PASSWORD", "STUDIO_BIND", "HOST"):
             env.pop(k, None)
-        p = subprocess.Popen(cmd, cwd=ROOT, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        self.procs.append(p)
-        url = f"http://127.0.0.1:{port}"
-        for _ in range(100):
-            if p.poll() is not None:
-                raise RuntimeError(f"{cmd[-1]} exited with {p.returncode}")
-            try:
-                urllib.request.urlopen(url + "/", timeout=1).read(1)
-                return url
-            except (urllib.error.URLError, OSError):
-                time.sleep(0.1)
-        raise RuntimeError(f"{cmd[-1]} didn't answer on {url}")
+        for attempt in range(3):
+            env["PORT"] = str(port)
+            log = tempfile.NamedTemporaryFile(prefix="studio-contract-", suffix=".log", delete=False)
+            self.logs.append(log.name)
+            p = subprocess.Popen(cmd, cwd=ROOT, env=env, stdout=log, stderr=subprocess.STDOUT)
+            log.close()
+            self.procs.append(p)
+            url = f"http://127.0.0.1:{port}"
+            for _ in range(100):
+                if p.poll() is not None:
+                    break
+                try:
+                    urllib.request.urlopen(url + "/", timeout=1).read(1)
+                    return url
+                except (urllib.error.URLError, OSError):
+                    time.sleep(0.1)
+            else:
+                raise RuntimeError(f"{cmd[-1]} didn't answer on {url}\n{self.tail(log.name)}")
+            if attempt == 2:
+                raise RuntimeError(f"{cmd[-1]} exited with {p.returncode}\n{self.tail(log.name)}")
+            port = free_port()  # most likely the port was taken: try another
+        raise AssertionError("unreachable")
+
+    @staticmethod
+    def tail(path):
+        try:
+            return "--- server output (tail) ---\n" + Path(path).read_text("utf-8", "replace")[-2000:]
+        except OSError:
+            return ""
 
     def _docker(self, port, data_dir):
         name = f"studio-contract-{port}"
@@ -151,20 +176,31 @@ class Harness:
             self.fake.server_close()
         for d in self.tmp:
             shutil.rmtree(d, ignore_errors=True)
-        self.procs, self.tmp, self.fake = [], [], None
+        for f in self.logs:
+            try:
+                os.unlink(f)
+            except OSError:
+                pass
+        self.procs, self.tmp, self.logs, self.fake = [], [], [], None
 
 
 class ContractCase(unittest.TestCase):
     """One harness per test class; self.fake is the fake Tiiny (its request log is self.fake.state.requests)."""
 
+    extra_env = {}  # a subclass can set e.g. {"STUDIO_DISK_TTL": "60"} to run with the production cache times
+
     @classmethod
     def setUpClass(cls):
-        cls.h = Harness().start()
+        cls.h = Harness(cls.extra_env).start()
         cls.fake = cls.h.fake
 
     @classmethod
     def tearDownClass(cls):
+        unrouted = list(cls.fake.state.unrouted)
         cls.h.stop()
+        # every device call a server makes must have a route in the fake (and so be documented): not a silent 404
+        if unrouted:
+            raise AssertionError("the fake Tiiny had no route for: " + ", ".join(dict.fromkeys(unrouted)))
 
     def get(self, path, **kw):
         return request(self.h.py_url, "GET", path, **kw), request(self.h.rs_url, "GET", path, **kw)

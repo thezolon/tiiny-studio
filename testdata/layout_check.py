@@ -7,18 +7,18 @@ window, a wide and short one), in every workspace, Audio tool, the Models drawer
 Guards the size bugs fixed before: #124 (Settings' OK off-screen at 200%), #125 (picture drifting right with a long strip),
 and a tall picture's toolbar in a short window (the shape from #92; the queued card itself isn't covered).
 Needs: pip install playwright==1.64.1 && python -m playwright install chromium. Never contacts a real device.
-Usage: python testdata/layout_check.py"""
-import json
+Usage: python testdata/layout_check.py [--server rust|python]   (default: the Rust server that ships, see ui_server.py).
+Also fails on JavaScript errors in the page."""
 import os
 import subprocess
 import sys
 import tempfile
 import time
-import urllib.request
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 import fake_tiiny  # noqa: E402
+import ui_server  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 SIZES = [(960, 540, "TV at 200%"), (800, 600, "small window"), (1600, 700, "wide and short"), (1280, 860, "laptop")]
@@ -63,25 +63,17 @@ STRIP = """() => {
 
 def main():
     from playwright.sync_api import sync_playwright
+    kind = ui_server.server_kind()
+    js_errors = []
     fake, device = fake_tiiny.start()
     fake.state.flags["release"] = {"tag_name": "v99.0.0", "body": "## What's new\n\n" + "- LAYOUT TEST line\n" * 80,
                                    "html_url": "https://github.com/thezolon/tiiny-studio/releases/tag/v99.0.0"}
     data = tempfile.mkdtemp(prefix="layout-")
-    port = 7961
-    env = {**os.environ, "DATA_DIR": data, "TIINY_URL": device, "TIINY_KEY": "fake-key", "PORT": str(port), "TIINY_NO_BROWSER": "1",
-           "STUDIO_UPDATE_URL": device + "/__release"}
-    env.pop("STUDIO_DOCKER", None)
-    server = subprocess.Popen([sys.executable, str(ROOT / "server.py")], env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    base = f"http://127.0.0.1:{port}"
+    srv = ui_server.Server(kind, data, device, device + "/__release")
+    base = srv.base
     fails = []
     try:
-        for _ in range(50):
-            try:
-                urllib.request.urlopen(base + "/api/settings", timeout=2)
-                break
-            except OSError:
-                time.sleep(0.2)
-        post = lambda path, body: urllib.request.urlopen(urllib.request.Request(base + path, json.dumps(body).encode(), {"Content-Type": "application/json"}), timeout=30).read()
+        post = srv.post
         post("/api/model/launch", {"id": "Qwen/Qwen-Image-2.1"})
         time.sleep(1)
         # the model store: two updates waiting and a download that stays under way, so the drawer shows all of it
@@ -95,6 +87,7 @@ def main():
             browser = p.chromium.launch()
             for w, h, what in SIZES:
                 page = browser.new_page(viewport={"width": w, "height": h})
+                ui_server.watch(page, js_errors, f"{w}x{h}: ")
 
                 def check(state, page=page, size=f"{w}x{h} ({what})"):
                     page.wait_for_timeout(400)
@@ -141,15 +134,16 @@ def main():
                 page.close()
             browser.close()
     finally:
-        server.terminate()
-        server.wait(10)
+        srv.stop()
         fake.shutdown()
         fake.server_close()
         subprocess.run([sys.executable, "-c", f"import shutil; shutil.rmtree({data!r}, ignore_errors=True)"])
     for f in fails:
         print(f)
-    print(f"\n{len(fails)} layout problems")
-    sys.exit(1 if fails else 0)
+    for e in dict.fromkeys(js_errors):
+        print("JS error: " + e)
+    print(f"\n{len(fails)} layout problems, {len(js_errors)} JavaScript errors ({kind} server)")
+    sys.exit(1 if fails or js_errors else 0)
 
 
 if __name__ == "__main__":

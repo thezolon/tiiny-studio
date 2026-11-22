@@ -197,6 +197,7 @@ class State:
     def __init__(self, key, launch_delay, running):
         self.key, self.launch_delay, self.initial = key, launch_delay, tuple(running)
         self.lock = threading.Lock()
+        self.unrouted = []  # "METHOD path" of every request no route answered (kept over reset(); contract tests assert it's empty)
         self.port = 0
         self.reset()
 
@@ -307,6 +308,14 @@ class Handler(BaseHTTPRequestHandler):
         pass
 
     # ---------- plumbing ----------
+    def take(self, flag):
+        """True (and one less) while the counter flag is above 0; under the lock, so parallel requests can't skip a count."""
+        with self.st.lock:
+            if self.st.flags.get(flag, 0) > 0:
+                self.st.flags[flag] -= 1
+                return True
+        return False
+
     def disk(self):
         flags = self.st.flags
         if flags.get("no_disk"):
@@ -359,17 +368,17 @@ class Handler(BaseHTTPRequestHandler):
         # a voice model's own port (no key): only while Broken-TTS is loaded, so the gateway still refuses keyless calls
         tts_port = path in ("/v1/models", "/v1/audio/speech") and not self.headers.get("Authorization") and "Fake/Broken-TTS" in self.st.running
         open_paths = open_paths or tts_port
+        flags = self.st.flags
+        if flags.get("locked"):  # after a power cycle, until TiinyOS unlocks it: the web server answers, nothing behind it
+            return self.send_bytes(502, b"<html><head><title>502 Bad Gateway</title></head><body>nginx</body></html>", "text/html")
         if not open_paths:
             if self.headers.get("Authorization") != f"Bearer {self.st.key}":
                 return self.err(401, "Unauthorized")
         self.body, self.multi, self.query = body if isinstance(body, dict) else {}, extra.get("multipart"), parse_qs(u.query)
-        flags = self.st.flags
         if path in flags.get("delay", {}):  # a slow model; the live session lets progress polling see something
             self.st.sessions["live"] = "running"
             time.sleep(flags["delay"][path])
             self.st.sessions.pop("live", None)
-        if flags.get("locked"):  # after a power cycle, until TiinyOS unlocks it: the web server answers, nothing behind it
-            return self.send_bytes(502, b"<html><head><title>502 Bad Gateway</title></head><body>nginx</body></html>", "text/html")
         if path in flags.get("fail", {}):
             return self.err(*flags["fail"][path])
         if path in flags.get("html", ()):
@@ -381,6 +390,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(400, {"error": {"message": f"Model '{self.body.get('model')}' not found"}})
             return self.send_bytes(200, WAV, "audio/wav")
         if not self.route(method, unquote(path)):
+            with self.st.lock:
+                self.st.unrouted.append(f"{method} {path}")
             self.err(404, "endpoint not found")
 
     def control(self, method, path, body=None):
@@ -488,7 +499,7 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json(200, {"message": f"Model {mid} deleted finish."})
         elif method == "GET" and re.fullmatch(r"/api/v1/models/online_models/.+/icon", p):
             if p.split("/online_models/", 1)[1].rsplit("/", 1)[0] == VIDEO:  # 0.1.38 has no icon for MiniMax-H3-Turbo
-                return self.send_json(404, {"error": {"code": "NOT_FOUND", "message": "Icon not found."}, "detail": "Icon not found."})
+                return self.send_json(404, {"error": {"code": "NOT_FOUND", "message": "Icon not found."}, "detail": "Icon not found."}) or True
             self.send_bytes(200, PNG, "image/png")
         elif method == "GET" and p == "/api/v1/models/running":
             with st.lock:
@@ -551,10 +562,11 @@ class Handler(BaseHTTPRequestHandler):
                                  "npu": {"status": "ok"}})
         elif method == "POST" and p == "/v1/chat/completions":
             self.chat()
-        elif method == "POST" and p in ("/v1/images/generations", "/v1/images/edits"):
-            if st.flags.get("image_warmup", 0) > 0:  # like Qwen-Image just after it reports "running"
-                st.flags["image_warmup"] -= 1
-                return self.send_json(500, {"error": {"message": "xh2a backend fail"}})
+        elif method == "POST" and p == "/v1/images/generations":  # edits go through here too: /images/edits and /variations don't exist
+            if (self.body.get("n") or 1) != 1:  # docs/DEVICE-API.md: "n" > 1 fails
+                return self.send_json(500, {"error": {"message": "n must be 1: one image per request"}}) or True
+            if self.take("image_warmup"):  # like Qwen-Image just after it reports "running"
+                return self.send_json(500, {"error": {"message": "xh2a backend fail"}}) or True
             img = CUTOUT_PNG if st.flags.get("cutout_png") else PNG  # an image model's cut-out: RGBA with faint noise
             self.send_json(200, {"created": int(time.time()), "data": [{"b64_json": base64.b64encode(img).decode()}]})
         elif method == "POST" and p == "/v1/audio/speech" and self.body.get("model") in ("Fake/CustomVoice", "Fake/VoiceDesign", "Fake/Broken-TTS"):
@@ -572,6 +584,9 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 self.send_bytes(200, WAV, "audio/wav")
         elif method == "POST" and p == "/v1/audio/speech":
+            if self.body.get("model") == "Qwen/Qwen3-TTS-Base" and not (self.body.get("ref_audio") and self.body.get("ref_text")):
+                # docs/DEVICE-API.md: the Base model only clones, and wants both
+                return self.send_json(400, {"error": {"message": "ref_audio and ref_text are both required", "type": "invalid_request"}}) or True
             if st.flags.get("speech_text"):
                 self.send_bytes(200, b"not audio at all", "text/plain")
             else:
@@ -702,8 +717,7 @@ class Handler(BaseHTTPRequestHandler):
         if method == "DELETE" and len(parts) == 3:
             del st.videos[v["id"]]
             return self.send_json(200, {"id": v["id"], "object": "video.deleted", "deleted": True})
-        if method == "GET" and st.flags.get("video_flaky", 0) > 0:  # the link drops for a few requests
-            st.flags["video_flaky"] -= 1
+        if method == "GET" and self.take("video_flaky"):  # the link drops for a few requests
             return self.send_json(502, {"error": {"message": "Bad gateway"}})
         if method == "GET" and len(parts) == 3:
             v["looks"] += 1
@@ -713,8 +727,7 @@ class Handler(BaseHTTPRequestHandler):
                     v.update(rendered_length(int(v["seconds"])))
             return self.send_json(200, {k: x for k, x in v.items() if k != "looks"})
         if method == "GET" and parts[3:] == ["content"]:
-            if st.flags.get("content_flaky", 0) > 0:
-                st.flags["content_flaky"] -= 1
+            if self.take("content_flaky"):
                 return self.send_json(503, {"error": {"message": "Service unavailable"}})
             if v["status"] != "completed":
                 return self.send_json(409, {"error": {"message": "video is not ready"}})
@@ -771,6 +784,9 @@ class Handler(BaseHTTPRequestHandler):
             time.sleep(float(st.flags["song_answer_lost"]))
             self.close_connection = True
             return
+        if method == "POST" and p == "/v1/music/generate" and "SongGeneration" in str(self.body.get("model")):
+            # docs/DEVICE-API.md: plain /generate fails for SongGeneration (it wants /generate/preview and /resume)
+            return self.send_json(404, {"detail": "Session not found"})
         if method == "POST" and p in ("/v1/music/generate", "/v1/music/generate/preview", "/v1/music/generate/resume", "/v1/generate"):
             sid = self.body.get("session_id") or self.new_session("completed")
             st.sessions[sid] = "completed"
@@ -811,8 +827,7 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_json(200, {"data": {"task_id": tid, "status": "queued"}})
         m = re.fullmatch(r"/v1/(?:3d/)?tasks/([\w-]+)/artifacts/([\w:.-]+)", p)
         if method == "GET" and m:
-            if st.flags.get("artifact_flaky", 0) > 0:  # the next n artifact fetches get a 502
-                st.flags["artifact_flaky"] -= 1
+            if self.take("artifact_flaky"):  # the next n artifact fetches get a 502
                 return self.err(502, "bad gateway")
             t = st.tasks.get(m.group(1))
             art = next((a for i, a in enumerate(TRELLIS_OUT.get(t["stage"], []) if t else []) if f"{m.group(1)}-{i}" == unquote(m.group(2))), None)
@@ -825,8 +840,7 @@ class Handler(BaseHTTPRequestHandler):
             t["cancelled"] = not st.flags.get("ignore_cancel")  # ignore_cancel: a device that never stops the task
             return self.send_json(200, {"data": {"task_id": m.group(1), "status": "cancelled"}})
         if method == "GET" and not m.group(2):
-            if st.flags.get("task_flaky", 0) > 0:  # a dropped link: the next n polls get a 502 and don't count
-                st.flags["task_flaky"] -= 1
+            if self.take("task_flaky"):  # a dropped link: the next n polls get a 502 and don't count
                 return self.err(502, "bad gateway")
             t["polls"] += 1  # queued -> running -> completed on successive polls
             status = "cancelled" if t["cancelled"] else "running" if t["polls"] < st.flags.get("task_polls", 2) or st.flags.get("task_hold") else "completed"
@@ -874,8 +888,15 @@ TRELLIS_OUT = {"shape": [("shape", "trellis2_shape.zip", b"PK\x03\x04shape"), ("
 FORM_FIELD = {"material_artifact": "material", "mesh_glb": "mesh"}  # the task form's own names for these inputs
 
 
+class Server(ThreadingHTTPServer):
+    def handle_error(self, request, client_address):
+        if isinstance(sys.exc_info()[1], ConnectionError):  # the client hung up (a cancelled or timed-out request)
+            return
+        super().handle_error(request, client_address)
+
+
 def make_server(port=0, key="fake-key", launch_delay=0.2, running=(CHAT_MODEL,), host="127.0.0.1"):
-    srv = ThreadingHTTPServer((host, port), Handler)
+    srv = Server((host, port), Handler)
     srv.daemon_threads = True
     srv.state = State(key, launch_delay, running)
     srv.state.port = srv.server_address[1]  # model "containers" answer on the fake's own port
