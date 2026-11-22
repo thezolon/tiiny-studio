@@ -1,5 +1,6 @@
-"""Contract-test support: the fake Tiiny, the Python server and the Rust server, side by side.
-Subclass ContractCase; self.get/self.post send the same request to both servers, self.same() compares.
+"""Contract-test support: the fake Tiiny and the Rust server (the local binary, or the Docker image).
+Subclass ContractCase; self.get/self.post send a request to the Rust server and return its Response, which the test
+checks against explicit expectations (self.expect() for a status and a JSON body, self.run_job() for a job).
 The Rust binary is built with `cargo build` in rust/ when missing (tests skip if cargo isn't there, unless
 STUDIO_REQUIRE_RUST=1, which CI sets: then a missing Rust server is an error, never a silent skip)."""
 import json
@@ -24,12 +25,15 @@ import fake_tiiny  # noqa: E402
 
 KEY = "fake-key"
 AUTH = {"Authorization": f"Bearer {KEY}"}
-# STUDIO_RUST_IMAGE=tiiny-studio:rust runs the Rust side as that Docker image instead of the local binary; both
-# servers then reach the fake Tiiny as host.docker.internal (it listens on all interfaces for the test).
+# STUDIO_RUST_IMAGE=tiiny-studio:rust runs the server as that Docker image instead of the local binary; it then reaches
+# the fake Tiiny as host.docker.internal (the fake listens on all interfaces for the test).
 IMAGE = os.environ.get("STUDIO_RUST_IMAGE", "")
 RUST_BIN = ROOT / "rust" / "target" / "debug" / ("tiiny-studio-server.exe" if os.name == "nt" else "tiiny-studio-server")
-# Keys that differ between runs and servers: ids, timestamps.
-IGNORE = ("id", "device_id","t", "created", "created_at", "updated", "updated_at", "timestamp")
+# Keys that differ between runs: ids, timestamps.
+IGNORE = ("id", "device_id", "t", "created", "created_at", "updated", "updated_at", "timestamp")
+
+
+_ANY = object()  # "no body given" for ContractCase.expect
 
 
 class Response(namedtuple("Response", "status headers body")):
@@ -80,17 +84,18 @@ def rust_binary():
 
 class Harness:
     def __init__(self, extra_env=None):
-        self.extra_env = extra_env or {}  # added to both servers' environment (after the harness's own settings)
+        self.extra_env = extra_env or {}  # added to the server's environment (after the harness's own settings)
         self.procs, self.tmp, self.logs = [], [], []
         self.fake, self.fake_url = None, None
-        self.py_url = self.rs_url = None
+        self.rs_url = None
+        self.data = None  # the server's data folder
         self.containers = []
 
     def _spawn(self, cmd, port, data_dir):
         """Start a server on port and wait for it. If it dies at once (the port was taken between free_port() and its
         bind) it is started again on a new port; its output goes to a temp file whose tail is in the error."""
         env = {**os.environ, "PORT": str(port), "DATA_DIR": str(data_dir), "TIINY_URL": self.fake_url, "TIINY_KEY": KEY,
-               "PYTHONUNBUFFERED": "1", "STUDIO_WARMUP_WAIT": "0.2", "STUDIO_DOCKER": "1",
+               "STUDIO_WARMUP_WAIT": "0.2", "STUDIO_DOCKER": "1",
                "STUDIO_UPDATE_URL": f"{self.fake_url}/__release",  # "GitHub" is the fake
                # no free-space or store cache, so a test can change what the fake reports; as the Docker image sets it
                "STUDIO_DISK_TTL": "0", "STUDIO_STORE_TTL": "0", **self.extra_env}
@@ -151,10 +156,9 @@ class Harness:
                 self.fake_url = f"http://host.docker.internal:{self.fake.server_address[1]}"
             else:
                 self.fake, self.fake_url = fake_tiiny.start(key=KEY)
-            dirs = [Path(tempfile.mkdtemp(prefix=f"studio-{n}-")) for n in ("py", "rs")]
-            self.tmp += dirs
-            self.py_url = self._spawn([sys.executable, str(ROOT / "server.py")], free_port(), dirs[0])
-            self.rs_url = self._docker(free_port(), dirs[1]) if IMAGE else self._spawn([str(binary)], free_port(), dirs[1])
+            self.data = Path(tempfile.mkdtemp(prefix="studio-rs-"))
+            self.tmp.append(self.data)
+            self.rs_url = self._docker(free_port(), self.data) if IMAGE else self._spawn([str(binary)], free_port(), self.data)
         except BaseException:
             self.stop()
             raise
@@ -203,29 +207,30 @@ class ContractCase(unittest.TestCase):
             raise AssertionError("the fake Tiiny had no route for: " + ", ".join(dict.fromkeys(unrouted)))
 
     def get(self, path, **kw):
-        return request(self.h.py_url, "GET", path, **kw), request(self.h.rs_url, "GET", path, **kw)
+        return request(self.h.rs_url, "GET", path, **kw)
 
     def post(self, path, body=None, **kw):
-        return request(self.h.py_url, "POST", path, body, **kw), request(self.h.rs_url, "POST", path, body, **kw)
+        return request(self.h.rs_url, "POST", path, body, **kw)
+
+    def delete(self, path, **kw):
+        return request(self.h.rs_url, "DELETE", path, **kw)
 
     def post_raw(self, path, data, headers):
-        def send(base):
-            req = urllib.request.Request(base + path, data, method="POST", headers=headers)
-            try:
-                with urllib.request.urlopen(req, timeout=30) as r:
-                    return Response(r.status, {k.title(): v for k, v in r.headers.items()}, r.read())
-            except urllib.error.HTTPError as e:
-                return Response(e.code, {k.title(): v for k, v in e.headers.items()}, e.read())
-        return send(self.h.py_url), send(self.h.rs_url)
+        req = urllib.request.Request(self.h.rs_url + path, data, method="POST", headers=headers)
+        try:
+            with urllib.request.urlopen(req, timeout=30) as r:
+                return Response(r.status, {k.title(): v for k, v in r.headers.items()}, r.read())
+        except urllib.error.HTTPError as e:
+            return Response(e.code, {k.title(): v for k, v in e.headers.items()}, e.read())
 
-    def same(self, pair, ignore=IGNORE):
-        """Same status code and equal JSON bodies, ignoring the given keys (at any depth)."""
-        py, rs = pair
-        self.assertEqual(py.status, rs.status, f"status: python {py.status}, rust {rs.status}")
-        # in Docker the studio correctly can't open a folder on this computer
-        # (the MCP server, and so the "mcp" setting, is Rust only)
-        ignore = tuple(ignore) + ("mcp",) + (("can_open_folder",) if IMAGE else ())
-        self.assertEqual(strip(py.json, ignore), strip(rs.json, ignore))
+    def expect(self, r, status, body=_ANY, ignore=IGNORE):
+        """The answer has this status and, if given, this JSON body (equal once the ignored keys - ids, timestamps, which
+        differ per run - are left out at any depth). Returns the answer's JSON (or None if it had no body)."""
+        self.assertEqual(r.status, status, r.body[:300])
+        if body is _ANY:
+            return None
+        self.assertEqual(strip(r.json, ignore), strip(body, ignore))
+        return r.json
 
     # ---------- jobs against the fake ----------
     def wait_until(self, cond, what, timeout=10):
@@ -257,9 +262,10 @@ class ContractCase(unittest.TestCase):
         """Wait until the studio has sent this request to the fake (for work it does in the background)."""
         self.wait_until(lambda: any(c[:2] == (method, path) for c in self.calls()), f"the studio to send {method} {path}", timeout)
 
-    def run_job(self, base, req, reset=True, timeout=60):
+    def run_job(self, req, reset=True, timeout=60):
         """Run one job to the end; returns (job, requests made to the fake). `load` loads models first (a name or a list),
-        `flags` sets fake behaviour (see fake_tiiny.py); reset=False keeps the fake's state (with a fresh log)."""
+        `flags` sets fake behaviour (see fake_tiiny.py); reset=False keeps the fake's state (with a fresh log).
+        self.last_calls keeps the requests."""
         req = dict(req)
         load, flags = req.pop("load", None), req.pop("flags", None)
         if reset:
@@ -269,56 +275,53 @@ class ContractCase(unittest.TestCase):
         request(self.h.fake_url, "POST", "/__reset_log")
         if flags:
             request(self.h.fake_url, "POST", "/__flags", flags)
-        job = request(base, "POST", "/api/jobs", req).json
+        job = request(self.h.rs_url, "POST", "/api/jobs", req).json
         if "id" not in job:  # refused at submit (e.g. an unknown kind)
+            self.last_calls = []
             return job, []
-        return self.finish(base, job, timeout)
+        return self.finish(job, timeout)
 
-    def finish(self, base, job, timeout=60):
+    def finish(self, job, timeout=60):
         """Poll a job until it ends; returns (job, the requests the fake logged)."""
         last = {}
 
         def ended():
             last.clear()
-            last.update(request(base, "GET", f"/api/jobs/{job['id']}").json)
+            last.update(request(self.h.rs_url, "GET", f"/api/jobs/{job['id']}").json)
             return last.get("finished")
 
         self.wait_until(ended, lambda: f"job {job['id']} ({job.get('kind')}) to end; last: {last.get('status')} {last.get('message')!r}", timeout)
-        return dict(last), self.calls()
+        self.last_calls = self.calls()
+        return dict(last), self.last_calls
 
-    def wait_job(self, base, job, cond, what, timeout=20):
+    def wait_job(self, job, cond, what, timeout=20):
         """Poll a job until cond(job) holds (e.g. it reached a stage) and return it."""
         def check():
-            j = request(base, "GET", f"/api/jobs/{job['id']}").json
+            j = request(self.h.rs_url, "GET", f"/api/jobs/{job['id']}").json
             return j if cond(j) else None
 
         return self.wait_until(check, what, timeout)
 
     def view(self, job):
-        """A job as same_job compares it: without what differs per run (ids, times); a test class sets its own."""
+        """A job as a test compares it: without what differs per run (ids, times); a test class sets its own."""
         return strip(job, IGNORE)
 
     def comparable(self, calls):
-        """The device requests as same_job compares them; a test class can drop what legitimately differs."""
+        """The device requests as a test compares them; a test class can drop what legitimately differs."""
         return calls
 
-    def same_job(self, req, **kw):
-        """Run a job on both servers; same job result and same device requests. self.last_calls keeps Rust's."""
-        py, py_calls = self.run_job(self.h.py_url, req, **kw)
-        rs, rs_calls = self.run_job(self.h.rs_url, req, **kw)
-        self.assertEqual(self.view(py), self.view(rs))
-        self.assertEqual(self.comparable(py_calls), self.comparable(rs_calls))
-        self.last_calls = rs_calls
-        return py, rs
+    def check_job(self, req, job, calls=None, **kw):
+        """Run a job; its result (see view) must equal `job` and, if given, the requests it made to the fake (see
+        comparable) must equal `calls`. Returns (job, calls) as run_job does."""
+        got, made = self.run_job(req, **kw)
+        self.assertEqual(self.view(got), job)
+        if calls is not None:
+            self.assertEqual(self.comparable(made), calls)
+        return got, made
 
-    def files_equal(self, py, rs, key="outputs"):
-        """Both servers saved the same files (same suffix, same media; the Rust server also tags them, #58)."""
-        p, r = py["entry"][key], rs["entry"][key]
-        self.assertEqual(len(p), len(r))
-        for a, b in zip(p, r, strict=True):
-            self.assertEqual(name_suffix(a), name_suffix(b))  # "0.png", "speech.wav"
-            self.assertEqual(media(a, request(self.h.py_url, "GET", "/images/" + a).body),
-                             media(b, request(self.h.rs_url, "GET", "/images/" + b).body))
+    def file_media(self, job, key="outputs"):
+        """The saved files of a finished job as (name suffix, media bytes without the tags the server writes, #58)."""
+        return [(name_suffix(n), media(n, request(self.h.rs_url, "GET", "/images/" + n).body)) for n in job["entry"][key]]
 
 
 def name_suffix(name):
