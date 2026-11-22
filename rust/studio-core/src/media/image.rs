@@ -28,6 +28,18 @@ fn warmup_wait() -> std::time::Duration {
 }
 
 /// int() of a request number the UI may send as a number or a string.
+/// (file extension, media type) of a picture by its first bytes: JPEG and WebP are kept as what they are, anything else is
+/// taken for a PNG (what the models answer with).
+pub fn sniff(bytes: &[u8]) -> (&'static str, &'static str) {
+    if bytes.starts_with(&[0xff, 0xd8, 0xff]) {
+        ("jpg", "image/jpeg")
+    } else if bytes.len() > 12 && &bytes[..4] == b"RIFF" && &bytes[8..12] == b"WEBP" {
+        ("webp", "image/webp")
+    } else {
+        ("png", "image/png")
+    }
+}
+
 fn as_int(v: &Value) -> Option<i64> {
     v.as_i64()
         .or_else(|| v.as_f64().map(|f| f as i64))
@@ -95,7 +107,7 @@ pub async fn run(ctx: Ctx) -> JobResult {
         };
         ctx.update(json!({"message": message, "progress": progress}));
         if let Some(s) = seed0.as_ref().and_then(as_int) {
-            body.insert("seed".into(), json!(s + i));
+            body.insert("seed".into(), json!(s.saturating_add(i)));
         }
         let (mut code, mut one) = ctx
             .call(
@@ -150,6 +162,7 @@ pub async fn run(ctx: Ctx) -> JobResult {
         src_names.push(save(&ctx, &format!("{}-src{i}.{ext}", ctx.id), &bytes)?);
     }
     let mut outputs = vec![];
+    let mut made = 0; // pictures the device answered with
     for (i, d) in data.iter().enumerate() {
         if let Some(b64) = d
             .get("b64_json")
@@ -159,14 +172,35 @@ pub async fn run(ctx: Ctx) -> JobResult {
             let bytes = base64::engine::general_purpose::STANDARD
                 .decode(b64)
                 .map_err(|e| JobError(format!("Error: {e}")))?;
-            outputs.push(save(&ctx, &format!("{}-{i}.png", ctx.id), &bytes)?);
+            outputs.push(save(
+                &ctx,
+                &format!("{}-{i}.{}", ctx.id, sniff(&bytes).0),
+                &bytes,
+            )?);
+            made += 1;
         }
     }
     let params: Map<String, Value> = body
         .into_iter()
         .filter(|(k, _)| k != "image" && k != "response_format")
         .collect();
-    Ok(
-        json!({"kind": "image", "mode": if refs { "refs" } else if sources.is_empty() { "create" } else { "edit" }, "params": params, "sources": src_names, "outputs": outputs}),
-    )
+    let mut entry = json!({"kind": "image", "mode": if refs { "refs" } else if sources.is_empty() { "create" } else { "edit" }, "params": params, "sources": src_names, "outputs": outputs});
+    if made < count {
+        // some pictures failed: say so instead of looking like a complete result
+        entry["note"] = json!(format!("Only {made} of {count} pictures were made."));
+    }
+    Ok(entry)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::sniff;
+
+    #[test]
+    fn pictures_are_named_by_what_they_are() {
+        assert_eq!(sniff(&[0xff, 0xd8, 0xff, 0xe0, 0, 0]).0, "jpg");
+        assert_eq!(sniff(b"RIFF\0\0\0\0WEBPVP8 ").1, "image/webp");
+        assert_eq!(sniff(b"\x89PNG\r\n\x1a\n").0, "png");
+        assert_eq!(sniff(b"").0, "png");
+    }
 }

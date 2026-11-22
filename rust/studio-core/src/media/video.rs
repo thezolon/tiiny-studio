@@ -82,7 +82,11 @@ pub async fn run(ctx: Ctx) -> JobResult {
     // the start frame; the device ignores any end frame (0.1.38), so none is sent
     if !s("image").is_empty() {
         let (ctype, data) = decode_uri(s("image"))?;
-        sources.push(save(ctx, &format!("{}-frame0.png", ctx.id), &data)?);
+        sources.push(save(
+            ctx,
+            &format!("{}-frame0.{}", ctx.id, super::image::sniff(&data).0),
+            &data,
+        )?);
         body.insert(
             "image".into(),
             json!(format!(
