@@ -38,12 +38,26 @@ pub fn warn_data(msg: String) {
 
 /// Files that could not be read (not "missing", not "damaged"): saving to them is refused for the rest of this run, so
 /// a record that is still there is never replaced by one built from "nothing".
-static BLOCKED: Mutex<Vec<PathBuf>> = Mutex::new(Vec::new());
+static BLOCKED: Mutex<Vec<(PathBuf, Option<String>)>> = Mutex::new(Vec::new());
 
-fn block_saves(path: &Path) {
+/// Refuse saves to `path`; `warning` is the data warning that goes away with the block.
+fn block_saves(path: &Path, warning: Option<String>) {
     let mut b = BLOCKED.lock().unwrap_or_else(|e| e.into_inner());
-    if !b.iter().any(|p| p == path) {
-        b.push(path.to_path_buf());
+    if !b.iter().any(|(p, _)| p == path) {
+        b.push((path.to_path_buf(), warning));
+    }
+}
+
+/// A later successful read: the block and its warning go away.
+fn unblock_saves(path: &Path) {
+    let mut b = BLOCKED.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(i) = b.iter().position(|(p, _)| p == path) {
+        if let (_, Some(w)) = b.remove(i) {
+            DATA_WARNINGS
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .retain(|x| *x != w);
+        }
     }
 }
 
@@ -52,7 +66,7 @@ fn saves_blocked(path: &Path) -> bool {
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .iter()
-        .any(|p| p == path)
+        .any(|(p, _)| p == path)
 }
 
 pub fn data_warnings() -> Vec<String> {
@@ -83,7 +97,7 @@ pub fn set_aside(path: &Path, why: &str) {
     warn_data(match kept {
         Ok(()) => format!("{name} could not be read ({why}). It was kept as {aside_name} in the data folder and the studio started with an empty one."),
         Err(e) => {
-            block_saves(path);
+            block_saves(path, None);
             format!("{name} could not be read ({why}) and could not be moved aside ({}). Fix or remove it before saving anything.", io_reason(&e))
         }
     });
@@ -107,20 +121,28 @@ fn read_json_with(path: &Path, read: impl Fn(&Path) -> std::io::Result<Vec<u8>>)
         return None;
     }
     let why = match read(path) {
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return None,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            unblock_saves(path);
+            return None;
+        }
         Err(e) => {
-            block_saves(path);
-            warn_data(format!(
-                "{name} could not be read ({}). It was left where it is and nothing is saved to it until the studio is restarted.",
+            let msg = format!(
+                "{name} could not be opened ({}). It was left where it is and nothing is saved to it while it can't be read.",
                 io_reason(&e)
-            ));
+            );
+            block_saves(path, Some(msg.clone()));
+            warn_data(msg);
             return None;
         }
         Ok(b) => match serde_json::from_slice(&b) {
-            Ok(v) => return Some(v),
+            Ok(v) => {
+                unblock_saves(path);
+                return Some(v);
+            }
             Err(e) => format!("not valid JSON: {e}"),
         },
     };
+    unblock_saves(path);
     set_aside(path, &why);
     None
 }
@@ -479,6 +501,19 @@ mod tests {
             "saves are refused"
         );
         assert_eq!(std::fs::read(&busy).unwrap(), b"[{\"id\": \"keep\"}]");
+        // a later successful read clears the block and its warning
+        let warned = || {
+            data_warnings()
+                .iter()
+                .any(|w| w.starts_with("history.json could not be opened ("))
+        };
+        assert!(warned());
+        assert!(read_json_or_set_aside(&busy).is_some());
+        assert!(!warned());
+        assert!(
+            write_atomic(&busy, b"[{\"id\": \"keep\"}]", false).is_ok(),
+            "saves work again"
+        );
         // content that was read and is not JSON is damaged: moved aside, then the path is free again
         let bad = dir.join("voices.json");
         std::fs::write(&bad, b"{not json").unwrap();
