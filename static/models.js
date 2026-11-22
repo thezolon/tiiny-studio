@@ -294,7 +294,7 @@ function factsList(m) {
     ["Store label", m.version_label && `${m.version_label} (the store's own label; the build a download installs can differ)`],
     ["Installed build", m.installed && m.version], ["Update notes", m.need_update && [m.update_title, m.update_desc].filter(Boolean).join(": ")],
   ].filter(([, v]) => v != null && v !== false && v !== "");
-  return el("dl", { class: "mm-facts" }, rows.map(([k, v]) => [el("dt", {}, k), el("dd", {}, String(v))]));
+  return el("dl", { class: "mm-facts" }, rows.flatMap(([k, v]) => [el("dt", {}, k), el("dd", {}, String(v))]));
 }
 function storeCard(m) {
   const status = m.installed ? "running" : UNDER_WAY.includes(m.status) ? "loading" : "";
