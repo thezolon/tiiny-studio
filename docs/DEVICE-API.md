@@ -304,9 +304,9 @@ From Tiiny's docs (**docs**), not tested here.
   also gives 500 for any `voice`, for `instruct` and for `response_format` mp3; mp3 works on its own port. The gateway
   takes only `wav`, `pcm` and `mp3` (400 for opus or flac). `tiiny run tts -o x.mp3` writes WAV audio.
 
-  **The studio's speech job** (`run_speech` / `speech.rs`) goes through the gateway first and uses the own port only
-  after a 500, so these models can silently give a clip with a missing sentence. Not fixed yet; the fix would be the
-  own port first when the link reaches it, and a warning on USB.
+  **The studio's speech job** (`run_speech` / `speech.rs`) uses the model's own port first wherever the link reaches it,
+  and the gateway only when it can't (USB) or the own port fails. Over USB the Speak panel warns when one of these five
+  is picked and suggests Kokoro-82M or Supertonic-3.
 - **Thinking** (tested 2026-10-30, 0.1.38): follow the model's `thinking` object, not its name. `toggleable` models
   (Qwen3.5/3.6) switch with `chat_template_kwargs.enable_thinking` (off: no reasoning, ~10x faster); `reasoning_effort`
   changes nothing for them. gpt-oss (`toggleable: false`, levels low/medium/high) reasons whatever it's sent and no longer

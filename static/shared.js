@@ -304,6 +304,15 @@ function wifiNote(m) {
   return el("div", { class: "hint-line warn" }, `${shortName(m.id)} needs a Wi-Fi/LAN connection: over this one (USB) the Tiiny's gateway can't run it. `
     + "Switch to the Tiiny's Wi-Fi address in Settings, or pick another model.");
 }
+/** Voice models the gateway garbles (TiinyOS 0.1.39): it answers 500 for many texts, and for others drops the last
+ *  sentence or moves it to the front. Their own port is fine, and the studio uses it where it can (Wi-Fi/LAN). */
+const gatewayGarbles = (m) => /MOSS-TTS-Nano|OmniVoice|VoxCPM2|Qwen3-TTS.*CustomVoice|VibeVoice-Realtime/i.test(m?.id || "");
+/** A warning when such a voice model is picked and this connection (the USB cable) only reaches the gateway. */
+function gatewaySpeechNote(m) {
+  if (!m || S.directAccess !== false || !gatewayGarbles(m)) return null;
+  return el("div", { class: "hint-line warn" }, `Over USB, ${shortName(m.id)} often fails or leaves out a sentence (a TiinyOS gateway problem). `
+    + "Kokoro-82M and Supertonic-3 work over USB; over the Tiiny's Wi-Fi address every voice model works.");
+}
 /** The installed models that can do a tool's job. */
 function toolModels(tool) {
   const list = (S.allModels || []).filter((m) => m.type === TOOL_TYPES[tool]);

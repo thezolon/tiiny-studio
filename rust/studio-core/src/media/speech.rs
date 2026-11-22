@@ -17,7 +17,7 @@ fn text<'a>(req: &'a Value, k: &str) -> &'a str {
 
 fn upstream_failed(model: &str) -> String {
     format!(
-        "{} failed on the device (\"The upstream TTS model failed\"). Some voice models and modes don't work through TiinyOS's gateway yet (cloning with MOSS-TTS-Nano; Supertonic-3 failed this way on 0.1.38 and works from 0.1.39). Try another voice model.",
+        "{} failed on the device (\"The upstream TTS model failed\"). Through TiinyOS's gateway, several voice models fail on many texts (MOSS-TTS-Nano, OmniVoice, VoxCPM2, Qwen3-TTS CustomVoice, VibeVoice-Realtime), and cloning with MOSS-TTS-Nano doesn't work. Over USB only the gateway is reachable: Kokoro-82M and Supertonic-3 work there, or connect over Wi-Fi.",
         model.rsplit('/').next().unwrap_or(model)
     )
 }
@@ -74,7 +74,11 @@ pub async fn run(ctx: Ctx) -> JobResult {
     let chunks = split_for_speech(&said, 320);
     let url = format!("{}/v1/audio/speech", ctx.target.url);
     let mut parts: Vec<Vec<u8>> = vec![];
-    let mut direct: Option<(String, String)> = None;
+    // The model's own port first, where the link reaches it (Wi-Fi/LAN, not USB): through the gateway, MOSS-TTS-Nano,
+    // OmniVoice, VoxCPM2, Qwen3-TTS CustomVoice and VibeVoice-Realtime answer 500 for many texts, and for others a
+    // WAV that lacks its last sentence or has it at the front (TiinyOS 0.1.39, docs/DEVICE-API.md). The own port says
+    // all of it, in order. The gateway is the fallback: for the rest of the job once the own port fails.
+    let mut direct = speech_direct(&ctx, &model).await;
     for (i, chunk) in chunks.iter().enumerate() {
         if ctx.cancelled() {
             return Err(JobError("Cancelled".into()));
@@ -91,30 +95,33 @@ pub async fn run(ctx: Ctx) -> JobResult {
         };
         ctx.update(json!({"message": message, "progress": progress}));
         body.insert("input".into(), json!(tts_text(chunk)));
-        let (code, res) = match &direct {
-            Some((ct, name)) => {
-                http_bytes(
-                    &ctx,
-                    "POST",
-                    &format!("{ct}/v1/audio/speech"),
-                    json_body(&with_model(&body, name)),
-                    3600,
-                    false,
-                )
-                .await?
+        if let Some((ct, name)) = &direct {
+            let own = http_bytes(
+                &ctx,
+                "POST",
+                &format!("{ct}/v1/audio/speech"),
+                json_body(&with_model(&body, name)),
+                3600,
+                false,
+            )
+            .await;
+            if let Ok((200, Ok(wav))) = own {
+                if wav.starts_with(b"RIFF") {
+                    parts.push(wav);
+                    continue;
+                }
             }
-            None => {
-                http_bytes(
-                    &ctx,
-                    "POST",
-                    &url,
-                    json_body(&Value::Object(body.clone())),
-                    3600,
-                    true,
-                )
-                .await?
-            }
-        };
+            direct = None;
+        }
+        let (code, res) = http_bytes(
+            &ctx,
+            "POST",
+            &url,
+            json_body(&Value::Object(body.clone())),
+            3600,
+            true,
+        )
+        .await?;
         let why = match res {
             Ok(wav) if code == 200 && wav.starts_with(b"RIFF") => {
                 parts.push(wav);
@@ -123,36 +130,13 @@ pub async fn run(ctx: Ctx) -> JobResult {
             Ok(other) => err(&json!(String::from_utf8_lossy(&other))),
             Err(v) => err(&v),
         };
-        if !why.contains("upstream TTS model failed") && direct.is_none() {
-            return Err(JobError(if no_voice {
-                format!("{why} (No voice was chosen. If this model has no default voice, give it a speaker, a voice description or a reference clip.)")
-            } else {
-                why
-            }));
-        }
-        // The gateway sends some containers the store id, which they don't know (Supertonic-3, 0.1.38): ask the
-        // model's own port under its own name, where the link allows it.
-        direct = if direct.is_some() {
-            None
+        return Err(JobError(if why.contains("upstream TTS model failed") {
+            upstream_failed(&model)
+        } else if no_voice {
+            format!("{why} (No voice was chosen. If this model has no default voice, give it a speaker, a voice description or a reference clip.)")
         } else {
-            speech_direct(&ctx, &model).await
-        };
-        let Some((ct, name)) = &direct else {
-            return Err(JobError(upstream_failed(&model)));
-        };
-        match http_bytes(
-            &ctx,
-            "POST",
-            &format!("{ct}/v1/audio/speech"),
-            json_body(&with_model(&body, name)),
-            3600,
-            false,
-        )
-        .await?
-        {
-            (200, Ok(wav)) if wav.starts_with(b"RIFF") => parts.push(wav),
-            _ => return Err(JobError(upstream_failed(&model))),
-        }
+            why
+        }));
     }
     let joined = join_wavs(&parts).map_err(|e| JobError(e.to_string()))?;
     let out = save(&ctx, &format!("{}-speech.wav", ctx.id), &joined)?;

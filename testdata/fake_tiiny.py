@@ -12,6 +12,8 @@ never stops), "image_warmup" N (the next N image requests fail like Qwen-Image j
 come back as RGBA cut-outs), "video_flaky" N / "content_flaky" N (the next N video polls answer 502 / downloads 503),
 "video_hold" (a clip renders until it's cancelled), "video_no_room" (clips fail with the NPU's "Weight installation failed"),
 "song_answer_lost" N (a plain-gateway song finishes on the device but its answer never arrives; the request hangs N seconds).
+"gateway_garbles" (speech through the gateway comes back a sentence short, like five voice models on 0.1.39; a voice
+model's own port, keyless /v1/models and /v1/audio/speech under its own name, is always whole).
 Model store and downloads: every CATALOG model starts installed; STORE_ONLY ones are in the store only. A download advances
 with time: "download_rate" N (% per second, 50 by default), "download_hold" (stays at 10%), "download_fail" (stops with
 status "error" at 30%, like a Tiiny without internet), "offline" (downloads fail at once and every need_update reads false,
@@ -89,6 +91,13 @@ def rgba_png(w, h, pixels, filt=4):
 
 
 PNG, WAV = tiny_png(), tiny_wav()
+# what the gateway sends for the voice models it garbles (TiinyOS 0.1.39): a valid WAV that lacks its last sentence
+GARBLED_WAV = tiny_wav(0.125)
+
+
+def own_name(mid):
+    """The name a voice model's container knows itself by on its own port (Supertonic-3: model_config.id)."""
+    return mid.split("/")[-1]
 # 3x2: a red subject (opaque, half-transparent edge) on purple background noise with alpha 1-2
 CUTOUT_PNG = rgba_png(3, 2, bytes([169, 57, 212, 1, 200, 30, 30, 255, 125, 78, 201, 2,
                                    10, 20, 30, 0, 200, 30, 30, 128, 90, 90, 90, 31]))
@@ -319,6 +328,10 @@ class Handler(BaseHTTPRequestHandler):
         pass
 
     # ---------- plumbing ----------
+    def speech_wav(self):
+        """gateway_garbles: the gateway's answer lacks a sentence (five voice models on 0.1.39); the own port's is whole."""
+        return GARBLED_WAV if self.st.flags.get("gateway_garbles") and not self.own_port else WAV
+
     def take(self, flag):
         """True (and one less) while the counter flag is above 0; under the lock, so parallel requests can't skip a count."""
         with self.st.lock:
@@ -376,8 +389,10 @@ class Handler(BaseHTTPRequestHandler):
         open_paths = method == "GET" and (path == "/" or path.endswith("/icon"))  # the device serves model icons without a key
         # a model container's own port (what Studio reaches directly over Wi-Fi/LAN) takes no key
         open_paths = open_paths or path in ("/v1/generate", "/v1/generate/wav") or path.startswith("/v1/sessions")
-        # a voice model's own port (no key): only while Broken-TTS is loaded, so the gateway still refuses keyless calls
-        tts_port = path in ("/v1/models", "/v1/audio/speech") and not self.headers.get("Authorization") and "Fake/Broken-TTS" in self.st.running
+        # a voice model's own port (no key): only while a voice model is loaded, so the gateway still refuses keyless calls
+        voices = [m for m in self.st.running if ALL_MODELS.get(m, {}).get("type") == "Text-to-Speech"]
+        tts_port = path in ("/v1/models", "/v1/audio/speech") and not self.headers.get("Authorization") and bool(voices)
+        self.own_port = False
         open_paths = open_paths or tts_port
         flags = self.st.flags
         if flags.get("locked"):  # after a power cycle, until TiinyOS unlocks it: the web server answers, nothing behind it
@@ -394,12 +409,13 @@ class Handler(BaseHTTPRequestHandler):
             return self.err(*flags["fail"][path])
         if path in flags.get("html", ()):
             return self.send_bytes(200, b"<html><body>Please log in</body></html>", "text/html")
-        if tts_port:  # Broken-TTS's container, like Supertonic-3's on 0.1.38: it works under its own name only
+        if tts_port:  # the voice model's container: it knows itself by its own name only (like Supertonic-3's)
             if method == "GET":
-                return self.send_json(200, {"model_config": {"id": "Broken-TTS"}})
-            if self.body.get("model") != "Broken-TTS":
+                return self.send_json(200, {"model_config": {"id": own_name(voices[0])}})
+            mid = next((m for m in voices if own_name(m) == self.body.get("model")), None)
+            if not mid:
                 return self.send_json(400, {"error": {"message": f"Model '{self.body.get('model')}' not found"}})
-            return self.send_bytes(200, WAV, "audio/wav")
+            self.body, self.own_port = {**self.body, "model": mid}, True  # then as the gateway, minus its failures
         if not self.route(method, unquote(path)):
             with self.st.lock:
                 self.st.unrouted.append(f"{method} {path}")
@@ -609,7 +625,7 @@ class Handler(BaseHTTPRequestHandler):
             # how the real ones answered on 0.1.38: CustomVoice wants a known "voice" and refuses "instruct"; VoiceDesign
             # needs "instruct" (the description); Supertonic-3 failed whatever it was sent
             b, mid = self.body, self.body.get("model")
-            if mid == "Fake/Broken-TTS":
+            if mid == "Fake/Broken-TTS" and not self.own_port:
                 self.send_json(500, {"error": {"message": "The upstream TTS model failed.", "type": "model_error"}})
             elif mid == "Fake/CustomVoice" and b.get("instruct"):
                 self.send_json(500, {"error": {"message": "voice_design is not supported by this model", "type": "unsupported_capability"}})
@@ -618,7 +634,7 @@ class Handler(BaseHTTPRequestHandler):
             elif mid == "Fake/VoiceDesign" and not b.get("instruct"):
                 self.send_json(500, {"error": {"message": "custom_voice is not supported by this model", "type": "unsupported_capability"}})
             else:
-                self.send_bytes(200, WAV, "audio/wav")
+                self.send_bytes(200, self.speech_wav(), "audio/wav")
         elif method == "POST" and p == "/v1/audio/speech":
             if self.body.get("model") == "Qwen/Qwen3-TTS-Base" and not (self.body.get("ref_audio") and self.body.get("ref_text")):
                 # docs/DEVICE-API.md: the Base model only clones, and wants both
@@ -626,7 +642,7 @@ class Handler(BaseHTTPRequestHandler):
             if st.flags.get("speech_text"):
                 self.send_bytes(200, b"not audio at all", "text/plain")
             else:
-                self.send_bytes(200, WAV, "audio/wav")
+                self.send_bytes(200, self.speech_wav(), "audio/wav")
         elif method == "POST" and p == "/v1/audio/transcriptions":
             # like the real one (TiinyOS 1.0.3, Parakeet): a WAV much over 90 s fails
             if (self.multi or {}).get("sizes", {}).get("file", 0) > 44 + 100 * 32000 and (self.multi or {}).get("files", {}).get("file", "").endswith(".wav"):

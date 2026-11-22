@@ -326,8 +326,11 @@ Things on the Tiiny's side (TiinyOS 0.1.35 to 0.1.38) that the studio works arou
   only works over Wi-Fi/LAN; PP-OCRv6 works on every link.
 - Video (MiniMax-H3-Turbo, 0.1.38) is slow: about 7 minutes for 2 seconds at 480p with 4 steps, over 15 at 7. Only a
   start picture works; an end picture (`last_image`) is ignored, so the studio doesn't offer one.
-- Supertonic-3 failed through the gateway on TiinyOS 0.1.38 ("The upstream TTS model failed"); it works from 0.1.39. On
-  older TiinyOS the studio falls back to its own port, which only works over Wi-Fi/LAN.
+- Supertonic-3 failed through the gateway on TiinyOS 0.1.38 ("The upstream TTS model failed"); it works from 0.1.39.
+- Through the gateway (TiinyOS 0.1.39), MOSS-TTS-Nano, OmniVoice, VoxCPM2, Qwen3-TTS CustomVoice and VibeVoice-Realtime
+  often fail or leave out a sentence. The studio speaks through a voice model's own port whenever the connection
+  reaches it (Wi-Fi/LAN), so this only affects USB, where the Speak panel warns and Kokoro-82M or Supertonic-3 are the
+  reliable choices.
 - PP-DocLayoutV3 has no gateway route and its reading order is wrong even on a simple page, so Text mode doesn't
   use it.
 - The device can't list 3D tasks, so a 3D build cut short (the studio closed mid-build) can't be recovered. Videos,

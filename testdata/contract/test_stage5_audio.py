@@ -28,6 +28,8 @@ WAV_FILE, PNG_FILE = fake_tiiny.tiny_wav(), fake_tiiny.tiny_png()
 MP3_FILE, MP4_FILE, GLB_FILE = media("x.mp3", fake_tiiny.MP3), media("x.mp4", fake_tiiny.MP4), fake_tiiny.GLB
 SYS, RUN = ("GET", "/api/v1/sys/status"), ("GET", "/api/v1/models/running")
 SPEECH, TRANSCRIBE = ("POST", "/v1/audio/speech"), ("POST", "/v1/audio/transcriptions")
+# a speech job asks for the voice model's own port first (where the link reaches it), then speaks there
+OWN = [RUN, ("GET", "/v1/models")]
 CAPS, TASKS = ("GET", "/v1/3d/capabilities"), ("POST", "/v1/3d/tasks")
 VIDEO_ID = "/v1/videos/video_00000000000000000000000000000001"
 VIDEO_CALLS = [SYS, RUN, ("POST", "/v1/videos"), ("GET", VIDEO_ID), ("GET", VIDEO_ID), ("GET", VIDEO_ID + "/content"), ("DELETE", VIDEO_ID)]
@@ -115,20 +117,31 @@ class Audio(Jobs):
     def test_speech_without_a_voice_uses_the_models_default(self):
         # a model with its own default voice (Qwen3-TTS-Base clones, so it needs a reference, as on the device)
         self.check_job(self.speech(model="Fake/CustomVoice", load="Fake/CustomVoice", ref_audio=None, ref_text=None),
-                       entry=speech_entry(model="Fake/CustomVoice", ref_text=None), calls=[SYS, RUN, SPEECH])
+                       entry=speech_entry(model="Fake/CustomVoice", ref_text=None), calls=[SYS, RUN, *OWN, SPEECH])
         body = next(c[3] for c in self.calls() if c[1] == "/v1/audio/speech")
         for k in ("voice", "ref_audio", "instruct"):
             self.assertNotIn(k, body)
 
     def test_speech_short(self):
         job, _ = self.check_job(self.speech(language="en", instruct=" calm ", voice_name="RUST TEST voice"),
-                                entry=speech_entry(language="en", instruct="calm", voice="RUST TEST voice"), calls=[SYS, RUN, SPEECH])
+                                entry=speech_entry(language="en", instruct="calm", voice="RUST TEST voice"), calls=[SYS, RUN, *OWN, SPEECH])
         self.assertEqual(job["entry"]["params"]["parts"], 1)
         self.assertEqual(self.file_media(job), [("speech.wav", WAV_FILE)])
         self.assertEqual(self.file_media(job, "sources"), [("ref.wav", WAV_FILE)])
 
+    def test_speech_uses_the_own_port_where_the_gateway_drops_sentences(self):
+        # TiinyOS 0.1.39: through the gateway five voice models give a WAV without its last sentence (or with it moved),
+        # which looks like any good answer; their own port is whole. Over Wi-Fi every part goes to the own port.
+        job, _ = self.check_job(self.speech(text=LONG_TEXT, flags={"gateway_garbles": True}),
+                                entry=speech_entry(text=LONG_TEXT, parts=3, duration=1.25), calls=[SYS, RUN, *OWN, SPEECH, SPEECH, SPEECH])
+        self.assertEqual({c[3]["model"] for c in self.calls() if c[:2] == SPEECH}, {TTS.split("/")[-1]})
+        # over USB only the gateway answers: the studio can't tell its short WAV from a whole one (the Speak panel warns)
+        job, _ = self.check_job(self.speech(flags={"gateway_garbles": True, "closed_port": True}),
+                                entry=speech_entry(duration=0.12), calls=[SYS, RUN, RUN, SPEECH])
+        self.assertEqual([c[3]["model"] for c in self.calls() if c[:2] == SPEECH], [TTS])
+
     def test_speech_long_text_is_split_and_joined(self):
-        job, _ = self.check_job(self.speech(text=LONG_TEXT), entry=speech_entry(text=LONG_TEXT, parts=3, duration=1.25), calls=[SYS, RUN, SPEECH, SPEECH, SPEECH])
+        job, _ = self.check_job(self.speech(text=LONG_TEXT), entry=speech_entry(text=LONG_TEXT, parts=3, duration=1.25), calls=[SYS, RUN, *OWN, SPEECH, SPEECH, SPEECH])
         self.assertGreater(job["entry"]["params"]["parts"], 1)
         (name, wav), = self.file_media(job)  # the three parts, joined into one WAV
         self.assertEqual((name, len(wav), wav[:4]), ("speech.wav", 60044, b"RIFF"))
@@ -338,7 +351,7 @@ class Audio(Jobs):
                  speech_entry(model="Fake/CustomVoice", language="en", voice="ryan", ref_text=None, speaker="ryan")),
                 ("Fake/VoiceDesign", {"design": "A deep, slow voice."}, {"instruct": "A deep, slow voice."}, ("ref_audio", "voice"),
                  speech_entry(model="Fake/VoiceDesign", language="en", ref_text=None, design="A deep, slow voice."))]:
-            job, _ = self.check_job({**base, "model": mid, "load": mid, **extra}, entry=entry, calls=[SYS, RUN, SPEECH])
+            job, _ = self.check_job({**base, "model": mid, "load": mid, **extra}, entry=entry, calls=[SYS, RUN, *OWN, SPEECH])
             self.assertEqual(job["status"], "done", (mid, job.get("error")))
             self.assertEqual(job["entry"]["sources"], [])  # no reference clip to keep
             body = next(c[3] for c in self.calls() if c[1] == "/v1/audio/speech")
@@ -346,13 +359,15 @@ class Audio(Jobs):
                 self.assertEqual(body[k], v)
             for k in not_sent:
                 self.assertNotIn(k, body)
+        # the own port refuses it too, then the gateway: its error is the one shown
         self.failed({**base, "model": "Fake/CustomVoice", "load": "Fake/CustomVoice", "speaker": "nobody"}, "Unsupported speaker")
-        # the gateway fails it (Supertonic-3 on 0.1.38); over USB that's the end, over Wi-Fi its own port answers
+        self.assertEqual([c[3]["model"] for c in self.calls() if c[:2] == SPEECH], ["CustomVoice", "Fake/CustomVoice"])
+        # the gateway fails it (Supertonic-3 on 0.1.38): over USB that's the end, over Wi-Fi its own port answers first
         broken = {**base, "model": "Fake/Broken-TTS", "load": "Fake/Broken-TTS", "speaker": "F1"}
-        self.failed({**broken, "flags": {"closed_port": True}}, "don't work through TiinyOS's gateway")
+        self.failed({**broken, "flags": {"closed_port": True}}, "Over USB only the gateway is reachable")
         self.check_job(broken, entry=speech_entry(model="Fake/Broken-TTS", language="en", voice="F1", ref_text=None, speaker="F1"),
-                       calls=[SYS, RUN, SPEECH, RUN, ("GET", "/v1/models"), SPEECH])
-        self.assertEqual([c[3]["model"] for c in self.calls() if c[:2] == ("POST", "/v1/audio/speech")], ["Fake/Broken-TTS", "Broken-TTS"])
+                       calls=[SYS, RUN, *OWN, SPEECH])
+        self.assertEqual([c[3]["model"] for c in self.calls() if c[:2] == SPEECH], ["Broken-TTS"])
         self.load_on_fake("Fake/CustomVoice", "Qwen/Qwen3-TTS-Base")  # what the panel reads
         info = request(self.h.rs_url, "GET", "/api/model/info?id=Fake%2FCustomVoice").json
         self.assertEqual((info["id"], info["type"]), ("Fake/CustomVoice", "Text-to-Speech"))
