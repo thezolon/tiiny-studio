@@ -6,7 +6,7 @@ import json
 import unittest
 import zipfile
 
-from harness import ContractCase, request
+from harness import ContractCase
 
 IGNORE = ("id", "created", "file", "updated")
 WAV = "data:audio/wav;base64," + base64.b64encode(b"RIFF....WAVEfmt TEST").decode()
