@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+**Fixed**
+- **Models:** a model that is being loaded is no longer shown as a download; a model that isn't in the Model Store no
+  longer shows its progress twice ("41% · 41%"); "No updates found" no longer sounds as if the Tiiny were offline.
+
 ## 0.7.1 (2026-11-22)
 
 Fixes from a full review of 0.7.0 (code, design, security and tests): safer saved data, documents that can't crash the
