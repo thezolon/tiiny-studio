@@ -50,6 +50,10 @@ const S = {
 
 const fmtSec = (s) => s < 60 ? `${Math.round(s)}s` : `${Math.floor(s / 60)}m ${String(Math.round(s % 60)).padStart(2, "0")}s`;
 
+/** Theme: "system" (the default) follows the OS; "light" or "dark" is the user's own choice (Settings → Appearance). */
+function applyTheme(v) { if (v === "light" || v === "dark") document.documentElement.dataset.theme = v; else delete document.documentElement.dataset.theme; }
+applyTheme(store.get("theme", "system"));
+
 /* ---------- toasts ---------- */
 function toast(msg, kind = "") {
   const t = el("div", { class: "toast " + kind, title: "Click to dismiss", onclick: () => t.remove() });
@@ -468,3 +472,23 @@ function nameButtons() {
 }
 new MutationObserver(() => { nameFields(); nameButtons(); }).observe(document.body, { childList: true, subtree: true });
 nameFields(); nameButtons();
+
+/* ---------- keyboard shortcuts (the ? key, or Settings) ---------- */
+const SHORTCUTS = [["M", "Open or close the Models panel"], ["← →", "Image: previous / next picture in the gallery"], ["E", "Image: edit the picture on show"],
+  ["V", "Image: same settings, new seed (queues a job)"], ["R", "Image: load its settings into the composer"], ["C", "Image: before / after"], ["D", "Image: download"],
+  ["Ctrl Enter", "Run the current tool"], ["Space", "Audio: play / pause"], ["?", "This list"]];
+function openKeys() {
+  const card = el("div", { class: "modal-card" },
+    el("div", { class: "modal-head" }, el("h3", { id: "keysTitle" }, "Keyboard shortcuts"), el("span", { class: "spacer" }),
+      el("button", { class: "icon-btn", title: "Close (Esc)", "aria-label": "Close", onclick: closeKeys }, "✕")),
+    el("div", { class: "set-body" }, el("table", { class: "keys-table" }, ...SHORTCUTS.map(([k, t]) => el("tr", {}, el("td", {}, ...k.split(" ").map((x) => el("kbd", {}, x))), el("td", {}, t))))),
+    el("div", { class: "modal-foot" }, el("small", { style: "color:var(--faint)" }, "They work when no text field has the focus.")));
+  $("#keysModal").replaceChildren(card);
+  openModal($("#keysModal"));
+}
+function closeKeys() { closeModal($("#keysModal")); }
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && $("#keysModal").classList.contains("show")) { e.stopPropagation(); closeKeys(); return; }
+  if (e.key !== "?" || e.target.closest("input, textarea, select") || e.ctrlKey || e.metaKey || e.altKey || MODALS.length) return;
+  e.preventDefault(); openKeys();
+}, true);

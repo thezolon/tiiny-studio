@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Tiiny Studio</title>
 <link rel="icon" type="image/png" href="/static/favicon.png">
+<script>try { var t = JSON.parse(localStorage.getItem("tiiny.theme")); if (t === "light" || t === "dark") document.documentElement.dataset.theme = t; } catch (e) {}</script>
 <link rel="stylesheet" href="/static/studio.css">
 </head>
 <body>
@@ -183,6 +184,7 @@
 </div>
 
 <div class="modal" id="settingsModal" role="dialog" aria-modal="true" aria-labelledby="settingsTitle"></div>
+<div class="modal" id="keysModal" role="dialog" aria-modal="true" aria-labelledby="keysTitle"></div>
 <div class="modal" id="updateModal" role="dialog" aria-modal="true" aria-labelledby="updateTitle"></div>
 <div class="toasts" id="toasts" aria-live="polite"></div>
 <div class="dropveil" id="dropveil"><div id="dropveilText">Drop to use as source image</div></div>

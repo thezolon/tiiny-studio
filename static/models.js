@@ -193,8 +193,8 @@ function updatesArea() {
         el("button", { class: "btn-sm accent", onclick: () => getModel(id) }, `${queueBusy() ? "Queue the download" : "Download again"} · ${GB(storeModel(id)?.size)}`))));
   }
   if (!waiting.length) {
-    out.push(el("div", { class: "hint-line mm-uptodate" }, "No model updates waiting. ",
-      el("span", {}, "The Tiiny can't see updates while it has no internet, so this also shows when it's offline.")));
+    out.push(el("div", { class: "hint-line mm-uptodate" }, "No updates found ",
+      el("span", {}, "(the Tiiny needs internet to check).")));
     return out;
   }
   const total = waiting.reduce((a, m) => a + (m.size || 0), 0);

@@ -183,9 +183,14 @@ function settingsBody(firstRun) {
       el("p", {}, i.lan_access
         ? (i.password ? "Other devices on your network can open the studio with the password." : "Other devices on your network can open the studio — and no password is set. Add STUDIO_PASSWORD to .env, or remove STUDIO_BIND to go back to this-computer-only.")
         : "Nobody else on your network can open it. To allow phones or other computers, set STUDIO_BIND=0.0.0.0 (and a STUDIO_PASSWORD) in .env and restart.")),
+    el("div", { class: "set-network" }, el("b", {}, "Appearance"),
+      el("label", { class: "field" }, el("div", { class: "label" }, "Theme", el("span", { class: "hint" }, "System follows your computer")),
+        el("select", { class: "input", onchange: (e) => { store.set("theme", e.target.value); applyTheme(e.target.value); } },
+          ...[["system", "System"], ["light", "Light"], ["dark", "Dark"]].map(([v, t]) => el("option", { value: v, selected: store.get("theme", "system") === v }, t))))),
     el("div", { class: "row set-actions" },
       el("a", { class: "set-credit", href: "https://github.com/thezolon", target: "_blank", rel: "noopener" }, `Tiiny Studio ${SET.info?.version || ""} · by Zolon Farsane`.replace("  ", " ")),
       el("span", { class: "spacer" }),
+      el("button", { class: "btn-sm ghost", type: "button", title: "Shortcuts: press ? anywhere", onclick: openKeys }, "Keyboard shortcuts"),
       el("button", { class: "btn-sm accent", type: "button", onclick: closeSettings }, "Done")),
   ];
 }
