@@ -788,19 +788,25 @@ async fn model_change(
     Path(action): Path<String>,
     body: Bytes,
 ) -> Response {
-    if !matches!(
-        action.as_str(),
-        "download" | "pause" | "cancel" | "delete" | "update"
-    ) {
+    let queue = matches!(action.as_str(), "queue" | "dequeue" | "resume" | "dismiss");
+    if !queue
+        && !matches!(
+            action.as_str(),
+            "download" | "pause" | "cancel" | "delete" | "update"
+        )
+    {
         return not_found().await;
     }
     match read_json(&body) {
         // in its own task: a closed browser tab must not stop an update between its delete and its download
         Ok(b) => {
-            let task =
-                tokio::spawn(
-                    async move { crate::downloads::model_change(&state, &action, &b).await },
-                );
+            let task = tokio::spawn(async move {
+                if queue {
+                    crate::downloads::queue_change(&state, &action, &b).await
+                } else {
+                    crate::downloads::model_change(&state, &action, &b).await
+                }
+            });
             match task.await {
                 Ok(answer) => reply(answer),
                 Err(_) => error(StatusCode::INTERNAL_SERVER_ERROR, "The change failed."),

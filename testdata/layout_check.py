@@ -87,6 +87,7 @@ def main():
         # the model store: two updates waiting and a download that stays under way, so the drawer shows all of it
         fake.state.flags.update(updates=["Qwen/Qwen3-4B-Instruct", "Fake/Whisper-ASR"], download_hold=True)
         post("/api/model/download", {"id": "Fake/Store-Small"})
+        post("/api/model/queue", {"ids": ["Fake/Store-Image", "Fake/Store-Big"], "kind": "download"})  # the queue list too
         # a tall picture: the shape that pushed the preview off to the right in #92
         post("/api/jobs", {"kind": "image", "model": "Qwen/Qwen-Image-2.1", "prompt": "LAYOUT TEST tall apple", "size": "576x1024"})
         time.sleep(2)

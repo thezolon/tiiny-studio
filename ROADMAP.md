@@ -22,8 +22,9 @@ Where Tiiny Studio stands, what's next, and what doesn't work yet. Version **0.6
   background doesn't end up in the model.
 - **Gallery, models panel and device:** search and smart search, favourites, zip export, bulk delete; load and
   unload models with the NPU memory budget shown; live device activity; power off.
-- **Model Store:** browse every model in the Tiiny's store with all its details, download one at a time with progress
-  (pause, resume, cancel), install updates one by one or all at once, and delete models, without the TiinyOS app.
+- **Model Store:** browse every model in the Tiiny's store with all its details, download with progress (pause,
+  resume, cancel) and a download queue that runs the rest one after another (remove one, or clear it), install updates
+  one by one or all at once, and delete models, without the TiinyOS app.
   Every download, update and delete asks first; a loaded or busy model is never deleted or updated.
 - **Pick the model:** when several installed models can do a tab's job, the tab shows which one it uses and lets you
   pick another, or load and unload any of them.

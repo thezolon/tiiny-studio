@@ -66,6 +66,7 @@ def main():
         # the model store: two updates waiting and a download that stays under way, so the drawer shows all of it
         fake.state.flags.update(updates=["Qwen/Qwen3-4B-Instruct", "Fake/Whisper-ASR"], download_hold=True)
         post("/api/model/download", {"id": "Fake/Store-Small"})
+        post("/api/model/queue", {"ids": ["Fake/Store-Image", "Fake/Store-Big"], "kind": "download"})  # the queue list too
         post("/api/jobs", {"kind": "image", "model": "Qwen/Qwen-Image-2.1", "prompt": "A11Y TEST apple", "size": "512x512"})
         time.sleep(2)
         axe = axe_source()

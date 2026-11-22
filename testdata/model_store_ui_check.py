@@ -1,6 +1,7 @@
 """The Model Store in the web UI, clicked through against the fake Tiiny (Python server): download with its confirm and
-progress, delete, Update all one after another, cancel (never announced as finished), cancel inside Update all (it
-stops, the model shows as missing, the next one is left alone), and the update confirm in the updates list.
+progress, delete, Update all one after another, cancel (never announced as finished), the download queue (add while
+one runs, remove one, clear all), cancelling a queued update (that model shows as missing, the queue goes on), and the
+update confirm in the updates list.
 Needs: pip install playwright==1.64.1 && python -m playwright install chromium. Never contacts a real device.
 Usage: python testdata/model_store_ui_check.py"""
 import os
@@ -67,44 +68,65 @@ try:
         check("2 updates waiting shown", "2 updates waiting" in page.locator("#drawerBody").inner_text())
         page.get_by_role("button", name="Update all (2)").click()
         page.locator(".mm-confirm").get_by_role("button", name="Update all").click()
-        page.wait_for_function("() => S.store && S.store.updates === 0 && !S.updating && !S.updateQueue.length", timeout=40000)
-        check("Update all finished both", True)
+        page.wait_for_function("() => S.store && S.store.updates === 0 && !S.dlQueue.items.length && !S.downloads.length", timeout=40000)
+        check("Update all finished both (through the queue)", True)
         reqs = [(r["method"], r["path"]) for r in fake.state.requests if r["method"] in ("DELETE", "POST") and "/api/v1/models/" in r["path"]]
         order = [r for r in reqs if r[0] == "DELETE" or r[1].endswith("/download")]
         check("updates ran one after another", order[-4:] == [("DELETE", "/api/v1/models/Fake/Whisper-ASR"), ("POST", "/api/v1/models/Fake/Whisper-ASR/download"),
                                                          ("DELETE", "/api/v1/models/Fake/PP-OCRv6"), ("POST", "/api/v1/models/Fake/PP-OCRv6/download")])
         check("no update left", "No model updates waiting" in page.locator("#drawerBody").inner_text())
-        # --- from the review: a cancel is not a finish; cancelling inside Update all stops it ---
+        # --- a cancel is not a finish ---
         fake.state.flags.update(download_rate=2, updates=["Fake/Foundation-1", "Fake/YuE2"])
         page.evaluate("document.querySelectorAll('.toast').forEach((t) => t.remove())")
         page.get_by_role("tab", name="Model Store").click()
         page.get_by_role("button", name="Download · 6.2 GB, Store Image").click()
         page.locator(".mm-confirm").get_by_role("button", name="Download", exact=True).click()
         page.wait_for_function("() => S.downloads.some((d) => d.id === 'Fake/Store-Image' && d.status === 'downloading')", timeout=10000)
+        # --- the queue: while one downloads, more can be added, removed one by one, or cleared ---
+        page.get_by_role("button", name="Add to queue · 0.30 GB, Store Small").click()
+        check("queue confirm says it waits its turn", "to the download queue" in page.locator(".mm-confirm").inner_text())
+        page.locator(".mm-confirm").get_by_role("button", name="Add to queue").click()
+        page.get_by_role("button", name="Add to queue · 18.3 GB, Store Big").click()
+        page.locator(".mm-confirm").get_by_role("button", name="Add to queue").click()
+        page.wait_for_function("() => S.dlQueue.items.length === 2", timeout=10000)
+        check("the queue lists both, in order", page.evaluate("S.dlQueue.items.map((i) => i.id)") == ["Fake/Store-Small", "Fake/Store-Big"]
+              and page.locator(".mm-queue-list li").count() == 2)
+        page.get_by_role("button", name="Remove Store Small from the queue").first.click()
+        page.wait_for_function("() => S.dlQueue.items.length === 1", timeout=10000)
+        check("one item removed", page.evaluate("S.dlQueue.items[0].id") == "Fake/Store-Big")
+        page.get_by_role("button", name="Clear queue").click()
+        page.wait_for_function("() => !S.dlQueue.items.length", timeout=10000)
+        check("queue cleared; the running download goes on", page.evaluate("S.downloads.some((d) => d.id === 'Fake/Store-Image' && d.status === 'downloading')"))
         page.locator(".mm-downloads").get_by_role("button", name="Cancel").click()
         page.locator(".mm-confirm").get_by_role("button", name="Stop the download").click()
         page.wait_for_function("() => (S.store?.models || []).find((m) => m.id === 'Fake/Store-Image')?.status === 'not_downloaded' && !S.checking.size", timeout=15000)
         page.wait_for_timeout(3000)
         toasts = page.locator("#toasts").inner_text()
         check("cancel isn't announced as finished", "is on your Tiiny" not in toasts and "stopped downloading" not in toasts)
+        starts = [r["path"] for r in fake.state.requests if r["method"] == "POST" and r["path"].endswith("/download")]
+        check("removed and cleared items never started", "/api/v1/models/Fake/Store-Small/download" not in starts[-3:] and "/api/v1/models/Fake/Store-Big/download" not in starts)
+        # --- cancelling one queued update leaves that model missing; the queue goes on with the next ---
         page.get_by_role("tab", name="Installed").first.click()
         page.wait_for_function("() => S.store && S.store.updates === 2", timeout=10000)
         page.get_by_role("button", name="Update all (2)").click()
         page.locator(".mm-confirm").get_by_role("button", name="Update all").click()
-        page.wait_for_function("() => S.updating && S.downloads.some((d) => d.status === 'downloading')", timeout=15000)
-        first = page.evaluate("S.updating.id")
-        page.wait_for_timeout(5000)  # past the 4 s fallback: must not count as finished
-        check("an update still downloading isn't taken as finished", page.evaluate("S.updating && S.updating.id") == first and page.evaluate("S.updateQueue.length") == 1)
+        page.wait_for_function("() => S.downloads.some((d) => d.status === 'downloading' && d.update)", timeout=15000)
+        first = page.evaluate("S.downloads.find((d) => d.update).id")
+        second = "Fake/YuE2" if first == "Fake/Foundation-1" else "Fake/Foundation-1"
+        page.wait_for_timeout(5000)
+        check("an update still downloading isn't taken as finished", "is on your Tiiny" not in page.locator("#toasts").inner_text()
+              and page.evaluate("S.dlQueue.items.map((i) => i.id)") == [second])
         page.locator(".mm-downloads").get_by_role("button", name="Cancel").click()
         check("cancel confirm warns the old build is gone", "old build was already deleted" in page.locator(".mm-confirm").inner_text())
         page.locator(".mm-confirm").get_by_role("button", name="Stop the download").click()
-        page.wait_for_function("() => !S.updating && !S.updateQueue.length && !S.checking.size", timeout=15000)
-        page.wait_for_timeout(4000)
-        dels = [r["path"] for r in fake.state.requests if r["method"] == "DELETE"]
-        second = "Fake/YuE2" if first == "Fake/Foundation-1" else "Fake/Foundation-1"
-        check("Update all stopped: the second model was left alone", f"/api/v1/models/{second}" not in dels)
-        check("the cancelled update shows as missing", first in page.evaluate("S.missing") and "is missing" in page.locator("#drawerBody").inner_text())
+        page.wait_for_function(f"() => S.missing.includes('{first}')", timeout=15000)
+        check("the cancelled update shows as missing", "is missing" in page.locator("#drawerBody").inner_text())
+        page.wait_for_function(f"() => S.downloads.some((d) => d.id === '{second}' && d.update)", timeout=15000)
+        check("the queue went on with the next update", True)
         check("no false 'on your Tiiny' toast", "is on your Tiiny" not in page.locator("#toasts").inner_text())
+        page.locator(".mm-downloads").get_by_role("button", name="Cancel").click()
+        page.locator(".mm-confirm").get_by_role("button", name="Stop the download").click()
+        page.wait_for_function("() => !S.downloads.length && !S.dlQueue.items.length", timeout=15000)
         # the update confirm opens where it was asked for, in the updates list (an "Other models" row has no card)
         fake.state.flags.update(updates=["Qwen/Qwen3-Embedding-0.6B"], download_rate=20)
         page.wait_for_function("() => S.store && S.store.models.some((m) => m.id === 'Qwen/Qwen3-Embedding-0.6B' && m.need_update)", timeout=10000)

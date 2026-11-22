@@ -813,6 +813,10 @@ details.adv summary .sum { margin-left: auto; color: var(--faint); font-weight: 
 .mm-facts { display: grid; grid-template-columns: max-content 1fr; gap: 3px 12px; margin: 8px 0 0; font-size: 12px; }
 .mm-facts dt { color: var(--faint); }
 .mm-facts dd { margin: 0; color: var(--muted); overflow-wrap: anywhere; }
+.mm-queue { margin-top: 12px; }
+.mm-queue-list { list-style: none; padding: 0; margin: 8px 0 0; }
+.mm-queue-list .other-row { background: var(--panel); }
+.mm-stopped { margin: 8px 0 0; }
 .mcard-actions { flex-wrap: wrap; }
 
 .model-hint { margin-top: 10px; color: var(--faint); font-size: 12px; display: flex; flex-wrap: wrap; gap: 4px 10px; }

@@ -27,13 +27,24 @@ class Models(ContractCase):
                 if record:  # polls until something happens are left out: how many there are depends on timing
                     results.append((method, path, r.status, strip(json.loads(r.body or b"{}"), IGNORE)))
                 return r.status, json.loads(r.body or b"{}")
-            steps(call)
+            self.forget(base)
+            try:
+                steps(call)
+            finally:
+                self.forget(base)  # nothing queued may run on into the other server's turn or the next test
             log = json.loads(request(self.h.fake_url, "GET", "/__requests").body)
             out.append((results, [(r["method"], r["path"]) for r in log if r["method"] != "GET"]))
         (py, py_log), (rs, rs_log) = out
         self.assertEqual(py, rs)
         self.assertEqual(py_log, rs_log)
         return py, py_log
+
+    def forget(self, base):
+        """Clear a server's download queue and its list of models an update left missing (both live in memory)."""
+        request(base, "POST", "/api/model/dequeue", {"all": True})
+        r = request(base, "GET", "/api/store")
+        for mid in (json.loads(r.body).get("missing") or []) if r.status == 200 else []:
+            request(base, "POST", "/api/model/dismiss", {"id": mid})
 
     def flags(self, **f):
         request(self.h.fake_url, "POST", "/__flags", f)
@@ -267,6 +278,122 @@ class Models(ContractCase):
             self.assertEqual(call("POST", "/api/model/update", {"id": asr, "confirm": asr})[0], 200)
         _, log = self.scenario(steps)
         self.assertEqual(sum(1 for c in log if c[0] == "DELETE"), 1)  # only the update that fits deleted anything
+
+    # ---------- the download queue (requested: set up several, cancel one or all) ----------
+    def queue_of(self, call):
+        return call("GET", "/api/store", record=False)[1]["queue"]
+
+    def wait_for(self, cond, what, timeout=20):
+        end = time.monotonic() + timeout
+        while time.monotonic() < end:
+            if cond():
+                return
+            time.sleep(0.2)
+        self.fail(f"timed out waiting for {what}")
+
+    def test_queue_runs_in_order(self):
+        img = "Fake/Store-Image"
+
+        def steps(call):
+            self.flags(download_rate=40)
+            self.assertEqual(call("POST", "/api/model/queue", {"ids": [SMALL, img], "kind": "download"})[0], 200)
+            self.wait_status(call, img, "downloaded", timeout=30)
+            self.assertEqual(self.wait_status(call, SMALL, "downloaded")["installed"], True)
+            self.assertEqual(self.queue_of(call), {"items": [], "stopped": None})
+        _, log = self.scenario(steps)
+        starts = [c[1] for c in log if c[1].endswith("/download")]
+        self.assertEqual(starts, [f"/api/v1/models/{SMALL}/download", f"/api/v1/models/{img}/download"])
+
+    def test_queue_remove_one_and_clear_all(self):
+        img = "Fake/Store-Image"
+
+        def steps(call):
+            self.flags(download_hold=True)
+            call("POST", "/api/model/queue", {"ids": [SMALL, img, BIG], "kind": "download"})
+            self.wait_status(call, SMALL, "downloading")
+            q = self.queue_of(call)
+            self.assertEqual([i["id"] for i in q["items"]], [img, BIG])
+            self.assertEqual(q["items"][1]["size"], 18_300_000_000)
+            self.assertEqual(call("POST", "/api/model/dequeue", {"id": img})[0], 200)
+            self.assertEqual([i["id"] for i in self.queue_of(call)["items"]], [BIG])
+            self.assertEqual(call("POST", "/api/model/dequeue", {"all": True})[0], 200)
+            self.assertEqual(self.queue_of(call)["items"], [])
+            self.assertEqual(self.wait_status(call, SMALL, "downloading")["status"], "downloading")  # clearing leaves the current one
+            call("POST", "/api/model/cancel", {"id": SMALL})
+            self.wait_status(call, SMALL, "not_downloaded")
+        _, log = self.scenario(steps)
+        self.assertEqual([c[1] for c in log if c[1].endswith("/download")], [f"/api/v1/models/{SMALL}/download"])
+
+    def test_queue_waits_while_a_download_is_paused(self):
+        img = "Fake/Store-Image"
+
+        def steps(call):
+            self.flags(download_hold=True)
+            call("POST", "/api/model/download", {"id": SMALL})
+            call("POST", "/api/model/pause", {"id": SMALL})
+            call("POST", "/api/model/queue", {"ids": [img], "kind": "download"})
+            time.sleep(4.5)  # longer than the worker's tick
+            self.assertEqual(self.wait_status(call, img, "not_downloaded")["status"], "not_downloaded")
+            call("POST", "/api/model/cancel", {"id": SMALL})
+            self.wait_status(call, img, "downloading", timeout=15)
+        self.scenario(steps)
+
+    def test_queue_stops_on_a_failed_download(self):
+        img = "Fake/Store-Image"
+
+        def steps(call):
+            self.flags(download_fail=True, download_rate=40)
+            call("POST", "/api/model/queue", {"ids": [SMALL, img], "kind": "download"})
+            self.wait_status(call, SMALL, "error")
+            self.wait_for(lambda: self.queue_of(call)["stopped"], "the queue to stop")
+            q = self.queue_of(call)
+            self.assertIn("Does the Tiiny have internet", q["stopped"])
+            self.assertEqual([i["id"] for i in q["items"]], [img])
+            self.assertEqual(self.wait_status(call, img, "not_downloaded")["status"], "not_downloaded")
+            self.flags(download_fail=False)
+            call("POST", "/api/model/cancel", {"id": SMALL})  # dismiss the failed one
+            self.assertEqual(call("POST", "/api/model/resume", {})[0], 200)
+            self.wait_status(call, img, "downloaded", timeout=30)
+        self.scenario(steps)
+
+    def test_queue_stops_with_the_reason_when_an_item_does_not_fit(self):
+        def steps(call):
+            self.flags(disk_free_gb=19)
+            call("POST", "/api/model/queue", {"ids": [BIG], "kind": "download"})
+            self.wait_for(lambda: self.queue_of(call)["stopped"], "the queue to stop")
+            q = self.queue_of(call)
+            self.assertIn("Not enough space", q["stopped"])
+            self.assertEqual([i["id"] for i in q["items"]], [BIG])  # kept, to retry after making room
+        _, log = self.scenario(steps)
+        self.assertFalse(any(c[1].endswith("/download") for c in log))
+
+    def test_queued_updates_need_confirm_and_a_cancel_leaves_it_missing(self):
+        asr = "Fake/Whisper-ASR"
+
+        def steps(call):
+            self.flags(updates=[asr], download_hold=True)
+            self.assertEqual(call("POST", "/api/model/queue", {"ids": [asr], "kind": "update"})[0], 400)
+            self.assertEqual(call("POST", "/api/model/queue", {"ids": [asr], "kind": "update", "confirm": [asr]})[0], 200)
+            m = self.wait_status(call, asr, "downloading", timeout=15)
+            self.assertTrue(m["update"])
+            self.assertEqual(call("GET", "/api/downloads", record=False)[1]["downloads"][0]["update"], True)
+            call("POST", "/api/model/cancel", {"id": asr})
+            self.wait_for(lambda: call("GET", "/api/store", record=False)[1]["missing"] == [asr], "it to show as missing")
+            self.assertEqual(call("POST", "/api/model/dismiss", {"id": asr})[0], 200)
+            self.assertEqual(call("GET", "/api/store")[1]["missing"], [])
+        self.scenario(steps)
+
+    def test_queue_refuses_what_it_cannot_do(self):
+        def steps(call):
+            self.assertEqual(call("POST", "/api/model/queue", {"ids": [SMALL], "kind": "launch"})[0], 400)
+            self.assertEqual(call("POST", "/api/model/queue", {"ids": [], "kind": "download"})[0], 400)
+            self.assertEqual(call("POST", "/api/model/queue", {"ids": ["../x/y"], "kind": "download"})[0], 400)
+            self.assertEqual(call("POST", "/api/model/queue", {"ids": ["Fake/Not-In-Store"], "kind": "download"})[0], 404)
+            self.assertEqual(call("POST", "/api/model/queue", {"ids": [CHAT], "kind": "download"})[0], 409)  # installed
+            self.assertEqual(call("POST", "/api/model/queue", {"ids": [CHAT], "kind": "update", "confirm": [CHAT]})[0], 409)
+            self.assertEqual(call("POST", "/api/model/dequeue", {})[0], 400)
+            self.assertEqual(self.queue_of(call), {"items": [], "stopped": None})
+        self.scenario(steps)
 
 
 if __name__ == "__main__":

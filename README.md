@@ -62,8 +62,9 @@ Showcase and discussion: [Tiiny Studio on TiinyVerse](https://tiinyverse.com/pos
   and live device activity (NPU busy %, memory, CPU/RAM; power and temperature too when the
   on-device dashboard on port 9109 runs), and get a prompt when something has to be unloaded.
 - **Model Store** (in the Models panel): browse every model the Tiiny's store offers with all of its details, download
-  one with progress (pause, resume, cancel; one at a time), see which installed models have an update and install
-  them (one or all), and delete models you don't use, with the Tiiny's free storage shown. The Tiiny downloads over its
+  one with progress (pause, resume, cancel), line up more in a **download queue** that runs them one after another
+  (remove one, or clear the queue; it keeps going with the window closed), see which installed models have an update
+  and install them (one or all), and delete models you don't use, with the Tiiny's free storage shown. The Tiiny downloads over its
   own Wi-Fi, even when the studio is connected by USB. A loaded or busy model is never deleted or updated, and every
   download, update and delete asks first.
 - The UI adapts to each model's capabilities (for example, Edit is locked for create-only models),

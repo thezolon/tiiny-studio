@@ -589,7 +589,8 @@ def store_entry(mid, m, row):
            "workspace": WORKSPACE.get((m or row or {}).get("type"), "other"), "size": store_size(m) or None,
            "update_title": tag.get("update_title"), "update_desc": tag.get("update_desc"),
            "installed": status == "downloaded", "status": status, "progress": (row or {}).get("progress") if status in UNDER_WAY else None,
-           "need_update": bool(row and status == "downloaded" and row.get("need_update")), "version": (row or {}).get("version")}
+           "need_update": bool(row and status == "downloaded" and row.get("need_update")), "version": (row or {}).get("version"),
+           "update": mid in UPDATING and status in UNDER_WAY}
     if not m:  # on the Tiiny but not in the store (imported, or the store can't be read): what the device row says
         out.update({k: row.get(k) for k in ("type", "params", "npu_usage", "desc", "supported", "input", "output", "load_time")}, name=mid.split("/")[-1])
     return out
@@ -606,8 +607,9 @@ def model_store():
     models = [store_entry(mid, m, rows.get(mid)) for mid, m in facts.items()]
     models += [store_entry(mid, None, r) for mid, r in rows.items() if mid not in facts]
     space = MEDIA.disk_space()
+    queue, missing = queue_view(facts or stale_facts())
     return 200, {"models": models, "downloading": next((m["id"] for m in models if m["status"] == "downloading"), None),
-                 "updates": sum(m["need_update"] for m in models), "store_error": store_error,
+                 "updates": sum(m["need_update"] for m in models), "store_error": store_error, "queue": queue, "missing": missing,
                  "disk": {"free_gb": round(space[0], 1), "total_gb": round(space[1], 1)} if space else None}
 
 
@@ -616,9 +618,12 @@ def downloads():
     if err:
         return err, rows
     facts = stale_facts()
-    return 200, {"downloads": [{"id": mid, "name": name_of(mid, facts), "status": live_status(r),
+    queue, missing = queue_view(facts)
+    with QUEUE_LOCK:
+        updating = set(UPDATING)
+    return 200, {"downloads": [{"id": mid, "name": name_of(mid, facts), "status": live_status(r), "update": mid in updating,
                                 "progress": r.get("progress"), "size": store_size(facts.get(mid)) or None}
-                               for mid, r in rows.items() if live_status(r) in UNDER_WAY]}
+                               for mid, r in rows.items() if live_status(r) in UNDER_WAY], "queue": queue, "missing": missing}
 
 
 def device_reason(res, code):
@@ -732,7 +737,13 @@ def change_model(action, mid):
             if code >= 300:
                 return fail(502, f"The Tiiny didn't stop {name}: {device_reason(res, code)}")
         code, res = device("DELETE", f"/api/v1/models/{mid}", timeout=120)
-        return (200, {"ok": True}) if code < 300 else fail(502, f"The Tiiny didn't stop {name}: {device_reason(res, code)}")
+        if code >= 300:
+            return fail(502, f"The Tiiny didn't stop {name}: {device_reason(res, code)}")
+        with QUEUE_LOCK:
+            if mid in UPDATING:  # its old build was deleted for the update: now it's missing
+                UPDATING.discard(mid)
+                MISSING.add(mid)
+        return 200, {"ok": True}
     if state is None:
         return fail(404, f"{name} isn't on your Tiiny.")
     if state != "downloaded":
@@ -756,10 +767,143 @@ def change_model(action, mid):
         if err or mid in rows:
             return fail(502, f"Couldn't delete the old build of {name} ({device_reason(res, code)}); it's left as it was.")
     code, res = device("POST", f"/api/v1/models/{mid}/download", timeout=60)
+    with QUEUE_LOCK:
+        (UPDATING if code < 300 else MISSING).add(mid)
     if code >= 300:
         return fail(502, f"{name}'s old build was deleted, but the download of the new one didn't start "
                          f"({device_reason(res, code)}). It's missing until you download it again.", "update_missing")
     return 200, {"ok": True, "started": mid}
+
+
+# ---------- download queue: set up several downloads and updates, they run one after another ----------
+# It lives here, not in the browser: it keeps going with the studio window closed. The worker starts the next item
+# only when nothing is downloading or paused, through change_model (the same checks as a click). Any failure stops
+# the queue with its reason (a dropped Wi-Fi must not run through the rest, each update deleting first); the user
+# resumes or clears it. Memory only: a restart of the studio forgets the queue (the Tiiny keeps what it was doing).
+QUEUE = {"items": [], "stopped": None, "url": None}  # items: [{"id", "kind": "download" | "update"}], in order
+UPDATING = set()  # updates whose old build is deleted and whose download is under way
+MISSING = set()  # deleted for an update that didn't finish: the UI offers to download them again
+QUEUE_LOCK = threading.Lock()
+QUEUE_WAKE = threading.Event()
+QUEUE_KINDS = ("download", "update")
+
+
+def queue_view(facts):
+    with QUEUE_LOCK:
+        items, stopped, missing = list(QUEUE["items"]), QUEUE["stopped"], sorted(MISSING)
+    return {"items": [{"id": i["id"], "kind": i["kind"], "name": name_of(i["id"], facts), "size": store_size(facts.get(i["id"])) or None}
+                      for i in items], "stopped": stopped}, missing
+
+
+def queue_change(action, body):
+    """queue {ids, kind, confirm (updates)}, dequeue {id} or {all: true}, resume, dismiss {id}: (status, JSON)."""
+    if action == "resume":
+        with QUEUE_LOCK:
+            QUEUE["stopped"] = None
+        QUEUE_WAKE.set()
+        return 200, {"ok": True}
+    if action == "dequeue" and body.get("all") is True:
+        with QUEUE_LOCK:
+            QUEUE["items"], QUEUE["stopped"] = [], None
+        return 200, {"ok": True}
+    if action in ("dequeue", "dismiss"):
+        mid = body.get("id")
+        if not isinstance(mid, str) or not mid:
+            return fail(400, "id required")
+        with QUEUE_LOCK:
+            if action == "dismiss":
+                MISSING.discard(mid)
+            else:
+                QUEUE["items"] = [i for i in QUEUE["items"] if i["id"] != mid]
+                if not QUEUE["items"]:
+                    QUEUE["stopped"] = None
+        return 200, {"ok": True}
+    kind, ids = body.get("kind"), body.get("ids")
+    if kind not in QUEUE_KINDS:
+        return fail(400, "kind must be \"download\" or \"update\".")
+    if not isinstance(ids, list) or not ids or not all(isinstance(m, str) and m for m in ids):
+        return fail(400, "ids required")
+    if any(not MODEL_ID.fullmatch(m) or any(p in (".", "..") for p in m.split("/")) for m in ids):
+        return fail(400, "That isn't a model id.")
+    if kind == "update" and body.get("confirm") != ids:
+        return fail(400, "Confirm the updates: send the same ids again as \"confirm\".")
+    err, rows = device_rows()
+    if err:
+        return err, rows
+    err, facts = store_facts()
+    if err:
+        return err, facts
+    for mid in ids:
+        state, name = live_status(rows[mid]) if mid in rows else None, name_of(mid, facts)
+        if mid not in facts:
+            return fail(404, f"{mid} isn't in the Model Store.")
+        if kind == "download" and state == "downloaded":
+            return fail(409, f"{name} is already on your Tiiny.")
+        if kind == "update" and not (state == "downloaded" and rows[mid].get("need_update")):
+            return fail(409, f"No update is waiting for {name}. (The Tiiny reports none while it has no internet.)")
+    url = (SETTINGS.current() or {}).get("url")
+    with QUEUE_LOCK:
+        if QUEUE["url"] != url:  # a queue belongs to one Tiiny
+            QUEUE["items"] = []
+        QUEUE["url"], QUEUE["stopped"] = url, None  # adding is a go: a stopped queue starts again
+        queued = {i["id"] for i in QUEUE["items"]}
+        QUEUE["items"] += [{"id": m, "kind": kind} for m in dict.fromkeys(ids) if m not in queued]
+    QUEUE_WAKE.set()
+    return 200, {"ok": True}
+
+
+def queue_tick():
+    """One look at the Tiiny: settle updates, then start the next queued item if nothing else is under way."""
+    with QUEUE_LOCK:
+        if not (QUEUE["items"] or UPDATING or MISSING):
+            return
+    err, rows = device_rows()
+    if err:
+        return
+    with QUEUE_LOCK:
+        for mid in list(UPDATING):
+            state = live_status(rows[mid]) if mid in rows else None
+            if state not in UNDER_WAY:  # installed, or gone
+                UPDATING.discard(mid)
+                if state is None:  # gone without being installed
+                    MISSING.add(mid)
+        for mid in list(MISSING):
+            if mid in rows:  # downloaded again (or under way)
+                MISSING.discard(mid)
+        if not QUEUE["items"] or QUEUE["stopped"]:
+            return
+        if QUEUE["url"] != (SETTINGS.current() or {}).get("url"):
+            QUEUE["stopped"] = "The active Tiiny changed. Switch back to resume the queue, or clear it."
+            return
+        if any(live_status(r) == "error" for r in rows.values()):
+            QUEUE["stopped"] = "A download failed. Does the Tiiny have internet (Wi-Fi)? Resume the queue when it does."
+            return
+        if any(live_status(r) in ("downloading", "paused") for r in rows.values()):
+            return  # one at a time; a paused download holds the queue until it's resumed or cancelled
+        item = QUEUE["items"][0]
+        state = live_status(rows[item["id"]]) if item["id"] in rows else None
+        done = state == "downloaded" if item["kind"] == "download" else not (state == "downloaded" and rows[item["id"]].get("need_update"))
+        if done:  # nothing left to do for it (installed meanwhile, or the update went in elsewhere)
+            QUEUE["items"].pop(0)
+            QUEUE_WAKE.set()
+            return
+    code, res = model_change(item["kind"], {"id": item["id"], "confirm": item["id"]})
+    with QUEUE_LOCK:
+        if QUEUE["items"] and QUEUE["items"][0] is item:
+            if code == 200 or (res.get("error") or {}).get("type") == "update_missing":
+                QUEUE["items"].pop(0)
+            if code != 200:
+                QUEUE["stopped"] = f"{name_of(item['id'], stale_facts())}: {(res.get('error') or {}).get('message') or code}"
+
+
+def queue_worker():
+    while True:
+        QUEUE_WAKE.wait(3)
+        QUEUE_WAKE.clear()
+        try:
+            queue_tick()
+        except Exception as e:  # never let the worker die; the next tick tries again
+            print("download queue:", e, flush=True)
 
 
 MEDIA = Media(SETTINGS, IMAGES, add_history, lambda m, p, b=None, t=30, url=None, key=None: device(m, p, b, timeout=t, url=url, key=key), DEVICE_LOCK)
@@ -1141,6 +1285,9 @@ class Handler(BaseHTTPRequestHandler):
         m = re.fullmatch(r"/api/model/(download|pause|cancel|delete|update)", self.path)
         if m:
             return self.send_json(*model_change(m.group(1), self.read_json()))
+        m = re.fullmatch(r"/api/model/(queue|dequeue|resume|dismiss)", self.path)
+        if m:
+            return self.send_json(*queue_change(m.group(1), self.read_json()))
         if self.path == "/api/device/shutdown":
             # Same call the TiinyOS app's "Shut down" makes; the device answers and powers off seconds later.
             if jobs_active():
@@ -1409,6 +1556,7 @@ if __name__ == "__main__":
             time.sleep(5)  # leave the message on screen briefly
         sys.exit(1)
     threading.Thread(target=SETTINGS.monitor, daemon=True).start()
+    threading.Thread(target=queue_worker, daemon=True).start()
     if FROZEN:
         print(f"Data folder: {DATA}\nOpen {url} in your browser. Close this window to stop the studio.", flush=True)
         if not os.environ.get("TIINY_NO_BROWSER"):
