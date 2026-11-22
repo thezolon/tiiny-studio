@@ -36,6 +36,25 @@ pub fn warn_data(msg: String) {
     }
 }
 
+/// Files that could not be read (not "missing", not "damaged"): saving to them is refused for the rest of this run, so
+/// a record that is still there is never replaced by one built from "nothing".
+static BLOCKED: Mutex<Vec<PathBuf>> = Mutex::new(Vec::new());
+
+fn block_saves(path: &Path) {
+    let mut b = BLOCKED.lock().unwrap_or_else(|e| e.into_inner());
+    if !b.iter().any(|p| p == path) {
+        b.push(path.to_path_buf());
+    }
+}
+
+fn saves_blocked(path: &Path) -> bool {
+    BLOCKED
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .iter()
+        .any(|p| p == path)
+}
+
 pub fn data_warnings() -> Vec<String> {
     DATA_WARNINGS
         .lock()
@@ -63,24 +82,40 @@ pub fn set_aside(path: &Path, why: &str) {
     let aside_name = aside.file_name().and_then(|n| n.to_str()).unwrap_or("");
     warn_data(match kept {
         Ok(()) => format!("{name} could not be read ({why}). It was kept as {aside_name} in the data folder and the studio started with an empty one."),
-        Err(e) => format!("{name} could not be read ({why}) and could not be moved aside ({}). Fix or remove it before saving anything.", io_reason(&e)),
+        Err(e) => {
+            block_saves(path);
+            format!("{name} could not be read ({why}) and could not be moved aside ({}). Fix or remove it before saving anything.", io_reason(&e))
+        }
     });
 }
 
-/// Read a JSON file where "not there yet" (None) is fine but "there and unusable" is not: that file is moved aside
-/// (`set_aside`) and then counts as missing.
+/// Read a JSON file where "not there yet" (None) is fine but "there and unusable" is not. Only content that was read
+/// and is not valid JSON counts as damaged: that file is moved aside (`set_aside`) and then counts as missing. Any
+/// other read error (a sharing violation from a virus scanner or backup, no permission) leaves the file where it is,
+/// says so, and refuses saves to it for this run (`write_atomic`).
 pub fn read_json_or_set_aside(path: &Path) -> Option<Value> {
+    read_json_with(path, |p| std::fs::read(p))
+}
+
+fn read_json_with(path: &Path, read: impl Fn(&Path) -> std::io::Result<Vec<u8>>) -> Option<Value> {
+    let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("file");
     if path.is_dir() {
         // a folder where the file belongs: leave it, saves fail until someone looks at it
-        let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("file");
         warn_data(format!(
             "{name} is a folder, not a file. Fix or remove it before saving anything."
         ));
         return None;
     }
-    let why = match std::fs::read(path) {
+    let why = match read(path) {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return None,
-        Err(e) => io_reason(&e),
+        Err(e) => {
+            block_saves(path);
+            warn_data(format!(
+                "{name} could not be read ({}). It was left where it is and nothing is saved to it until the studio is restarted.",
+                io_reason(&e)
+            ));
+            return None;
+        }
         Ok(b) => match serde_json::from_slice(&b) {
             Ok(v) => return Some(v),
             Err(e) => format!("not valid JSON: {e}"),
@@ -104,6 +139,9 @@ pub fn io_reason(e: &std::io::Error) -> String {
 /// crash never leaves half a file. Err is the reason it couldn't be written.
 pub fn write_atomic(path: &Path, bytes: &[u8], private: bool) -> Result<(), String> {
     use std::io::Write;
+    if saves_blocked(path) {
+        return Err("it could not be read at start, so it is left alone".into());
+    }
     let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("file");
     let tmp = path.with_file_name(format!(
         "{name}.{}.tmp",
@@ -406,6 +444,39 @@ impl Store {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_read_error_leaves_the_file_and_blocks_saves_but_bad_content_is_set_aside() {
+        let dir =
+            std::env::temp_dir().join(format!("studio-store-{}", uuid::Uuid::new_v4().simple()));
+        std::fs::create_dir_all(&dir).unwrap();
+        // a sharing violation / no permission: not damaged, so it stays and is never overwritten
+        let busy = dir.join("history.json");
+        std::fs::write(&busy, b"[{\"id\": \"keep\"}]").unwrap();
+        let denied = |_: &Path| Err(std::io::Error::from(std::io::ErrorKind::PermissionDenied));
+        assert!(read_json_with(&busy, denied).is_none());
+        assert!(busy.exists(), "left in place");
+        assert!(
+            !std::fs::read_dir(&dir).unwrap().any(|e| e
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .contains(".broken-")),
+            "not moved aside"
+        );
+        assert!(
+            write_atomic(&busy, b"[]", false).is_err(),
+            "saves are refused"
+        );
+        assert_eq!(std::fs::read(&busy).unwrap(), b"[{\"id\": \"keep\"}]");
+        // content that was read and is not JSON is damaged: moved aside, then the path is free again
+        let bad = dir.join("voices.json");
+        std::fs::write(&bad, b"{not json").unwrap();
+        assert!(read_json_or_set_aside(&bad).is_none());
+        assert!(!bad.exists(), "moved aside");
+        assert!(write_atomic(&bad, b"[]", false).is_ok());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn history_round_trip_and_shred() {
