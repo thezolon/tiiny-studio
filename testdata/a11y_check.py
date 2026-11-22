@@ -63,6 +63,10 @@ def main():
         post = lambda path, body: urllib.request.urlopen(urllib.request.Request(base + path, json.dumps(body).encode(), {"Content-Type": "application/json"}), timeout=30).read()
         post("/api/model/launch", {"id": "Qwen/Qwen-Image-2.1"})
         time.sleep(1)
+        # the model store: two updates waiting and a download that stays under way, so the drawer shows all of it
+        fake.state.flags.update(updates=["Qwen/Qwen3-4B-Instruct", "Fake/Whisper-ASR"], download_hold=True)
+        post("/api/model/download", {"id": "Fake/Store-Small"})
+        post("/api/model/queue", {"ids": ["Fake/Store-Image", "Fake/Store-Big"], "kind": "download"})  # the queue list too
         post("/api/jobs", {"kind": "image", "model": "Qwen/Qwen-Image-2.1", "prompt": "A11Y TEST apple", "size": "512x512"})
         time.sleep(2)
         axe = axe_source()
@@ -94,7 +98,11 @@ def main():
                         page.locator("#aTools button").nth(i).click()
                         scan(f"Audio tool {i + 1}")
                 page.get_by_role("tab", name="Image", exact=True).first.click()
-                for state, js in (("models drawer", "openDrawer()"), ("settings", "document.querySelector('#settingsBtn').click()"),
+                for state, js in (("models drawer", "openDrawer()"),
+                                  ("model store", "openDrawer(); setMtab('store')"),
+                                  ("store download confirm", "openDrawer(); setMtab('store'); setTimeout(() => confirmFor('download', 'Fake/Store-Big'), 300)"),
+                                  ("model updates", "openDrawer(); setMtab('installed'); setTimeout(() => confirmFor('delete', 'Qwen/Qwen3-4B-Instruct'), 300)"),
+                                  ("settings", "document.querySelector('#settingsBtn').click()"),
                                   ("add device", "openSettings(false); SET.editing = 'new'; refreshSettings()"),
                                   ("update dialog", "document.querySelector('#updateOpen').click()"),
                                   ("annotate", ANNOTATE),  # openAnnot needs a source picture: the gallery's image
@@ -102,7 +110,7 @@ def main():
                     page.evaluate(js)
                     scan(state)
                     page.keyboard.press("Escape")
-                    page.evaluate("closeDrawer(); closeAnnot(); S.sources = []; renderComposer()")
+                    page.evaluate("closeDrawer(); setMtab('installed'); closeAnnot(); S.sources = []; renderComposer()")
                 page.evaluate("galState('image').select = true; renderStrip()")  # select mode swaps the delete buttons for check marks
                 scan("gallery select")
                 page.evaluate("galState('image').select = false; renderStrip()")

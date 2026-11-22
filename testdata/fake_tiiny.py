@@ -12,6 +12,15 @@ never stops), "image_warmup" N (the next N image requests fail like Qwen-Image j
 come back as RGBA cut-outs), "video_flaky" N / "content_flaky" N (the next N video polls answer 502 / downloads 503),
 "video_hold" (a clip renders until it's cancelled), "video_no_room" (clips fail with the NPU's "Weight installation failed"),
 "song_answer_lost" N (a plain-gateway song finishes on the device but its answer never arrives; the request hangs N seconds).
+Model store and downloads: every CATALOG model starts installed; STORE_ONLY ones are in the store only. A download advances
+with time: "download_rate" N (% per second, 50 by default), "download_hold" (stays at 10%), "download_fail" (stops with
+status "error" at 30%, like a Tiiny without internet), "offline" (downloads fail at once and every need_update reads false,
+as on the real device), "updates" [ids] (these read need_update until downloaded again). As on 0.1.39 (probed 2026-11-21):
+pause_download leaves status "download_stop", download again resumes from there, interrupt only stops chats. DELETE of a
+paused download drops it, row and all (also tested on 0.1.39). The disk counts what a download has fetched so far.
+More: "odd_status" {id: status} lists that model in both model lists with a status the studio doesn't know (not
+installed); "update_size" {id: bytes} makes the store's download bigger than the installed build; "delete_lost" makes a
+DELETE happen but answer 504, like an answer lost on the way back.
 GET /__release (no auth) stands in for GitHub's releases/latest: it answers the "release" flag (a release JSON; 404 when unset), or
 "release_fail" N (that status instead), and logs each call: GET /__release_hits (User-Agent and Accept of every call).
 POST /__seed {"videos": [{"id", "status", "age", "seconds"}], "sessions": [{"session_id", "model_id", "route", "status", "age"}]} plants results the studio never
@@ -163,6 +172,25 @@ CATALOG = [
     model("Fake/PP-OCRv6", "PP-OCRv6", "OCR", 5, [], "image", "text"),
     model("Qwen/Qwen3-Embedding-0.6B", "Qwen3 Embedding", "Embedding", 1),
 ]
+# in the Model Store but not installed when the fake starts
+STORE_ONLY = [
+    {**model("Fake/Store-Small", "Store Small", "Text-to-Speech", 4, [], "text", "audio"), "size": 300_000_000},
+    {**model("Fake/Store-Big", "Store Big", "Text Generation", 47, ["Reasoning", "Tool Use"], thinking=SWITCH), "size": 18_300_000_000,
+     "params": "35B", "context_window": 262144},
+    {**model("Fake/Store-Image", "Store Image", "Text-to-Image", 30, ["Image Editing"], "text", "image"), "size": 6_200_000_000,
+     "image_size": "1024x1024(recommended);768x1344", "steps": 8, "guidance_scale": 1.0},
+]
+ALL_MODELS = {m["id"]: m for m in CATALOG + STORE_ONLY}
+
+
+def store_row(m, rank):
+    """One online_models entry, shaped like 0.1.39's (trimmed): the store's facts plus a single tag with the size."""
+    keep = {k: v for k, v in m.items() if k not in ("id", "display_name", "costMemory", "size", "version")}
+    tag = {"tag_name": "v1", "manifest": m["id"].split("/")[-1].lower(), "size": m["size"], "id": m["id"], "version": 20261106,
+           "update_title": f"{m['display_name']} faster", "update_desc": "Fake update notes.", "model_id": m["id"]}
+    return {**keep, "model_id": m["id"], "fullname": m["id"], "name": m["display_name"], "recommend_rank": rank, "mode": "production",
+            "version_label": "20261118", "downloads": 100 + rank, "likes": rank, "udpate_time": 1793267564, "created_time": 1776902400,
+            "icon_url": f"/api/v1/models/online_models/{m['id']}/icon", "tags": [tag]}
 
 
 class State:
@@ -179,9 +207,47 @@ class State:
             self.pending, self.tasks, self.sessions, self.videos = set(), {}, {}, {}
             self.session_meta = {}  # session id -> model_id, route, created_at (what GET /v1/music/sessions adds)
             self.flags = {}
+            self.installed = {m["id"] for m in CATALOG}
+            self.downloads = {}  # id -> {"done": % at the last (re)start, "since": time, "status": downloading/paused/error}
+            self.fresh = set()  # downloaded since the reset: no update waiting any more
+
+    PAUSED = "download_stop"  # what 0.1.39 calls a paused download
+
+    def tick(self):
+        """Move the downloads on; a finished one becomes installed. Call with the lock held."""
+        now, flags = time.time(), self.flags
+        for mid, d in list(self.downloads.items()):
+            if d["status"] != "downloading":
+                continue
+            if flags.get("offline"):
+                d.update(status="error", done=0.0)
+                continue
+            p = 10.0 if flags.get("download_hold") else d["done"] + float(flags.get("download_rate", 50)) * (now - d["since"])
+            if flags.get("download_fail") and p >= 30:
+                d.update(status="error", done=30.0)
+            elif p >= 100:
+                del self.downloads[mid]
+                self.installed.add(mid)
+                self.fresh.add(mid)
+            else:
+                d["progress"] = round(p, 1)
+
+    def progress(self, mid):
+        d = self.downloads.get(mid)
+        if not d:
+            return None
+        return d.get("progress", d["done"]) if d["status"] == "downloading" else d["done"]
+
+    def need_update(self, mid):
+        return mid in self.installed and mid in (self.flags.get("updates") or []) and mid not in self.fresh and not self.flags.get("offline")
+
+    def store_status(self, mid):
+        if mid in self.downloads:
+            return self.downloads[mid]["status"]
+        return "downloaded" if mid in self.installed else "not_downloaded"
 
     def _instance(self, mid):
-        m = next(m for m in CATALOG if m["id"] == mid)
+        m = ALL_MODELS[mid]
         return {"model_id": mid, "port": self.port, "npu_usage": m["npu_usage"], "active_request_count": 0}
 
     def used(self):
@@ -246,7 +312,11 @@ class Handler(BaseHTTPRequestHandler):
         if flags.get("no_disk"):
             return {}
         total = 921123848192
-        return {"total_bytes": total, "used_bytes": total - int(flags.get("disk_free_gb", 400) * 1e9)}
+        with self.st.lock:  # what was downloaded takes space, what was deleted frees it
+            moved = sum(ALL_MODELS[m]["size"] for m in self.st.installed - {c["id"] for c in CATALOG})
+            moved -= sum(c["size"] for c in CATALOG if c["id"] not in self.st.installed)
+            moved += sum(ALL_MODELS[m]["size"] * (self.st.progress(m) or 0) / 100 for m in self.st.downloads)
+        return {"total_bytes": total, "used_bytes": total - int(flags.get("disk_free_gb", 400) * 1e9) + moved}
 
     @property
     def st(self):
@@ -367,10 +437,55 @@ class Handler(BaseHTTPRequestHandler):
         if method == "GET" and p == "/":
             self.send_bytes(200, b"<html><body>Fake Tiiny status page</body></html>", "text/html; charset=utf-8")
         elif method == "GET" and p == "/api/v1/models/":
-            self.send_json(200, {"data": [{**m, "status": "running" if m["id"] in st.running else "stopped"} for m in CATALOG]})
+            with st.lock:
+                st.tick()
+                rows = [{**m, "status": "running" if m["id"] in st.running else "stopped", "need_update": st.need_update(m["id"])}
+                        for m in ALL_MODELS.values() if m["id"] in st.installed]
+                if self.query.get("including_downloading", [""])[0] == "true":
+                    # as download_models.py reads it: installed rows say downloaded, downloads their status and progress
+                    rows = [{**r, "status": "downloaded", "progress": 100.0} for r in rows]
+                    rows += [{**ALL_MODELS[mid], "status": d["status"], "progress": st.progress(mid), "need_update": False}
+                             for mid, d in st.downloads.items()]
+                # a state the studio doesn't know, in both lists (the =false one too: never trust it to hide downloads)
+                rows += [{**ALL_MODELS[mid], "status": status, "progress": 50.0, "need_update": False}
+                         for mid, status in (st.flags.get("odd_status") or {}).items()]
+            self.send_json(200, {"data": rows})
         elif method == "GET" and p == "/api/v1/models/online_models":
-            # the device answers a bare list here, keyed by model_id
-            self.send_json(200, [{**{k: v for k, v in m.items() if k not in ("id", "display_name", "costMemory", "size", "version")}, "model_id": m["id"], "name": m["display_name"]} for m in CATALOG])
+            # the device answers a bare list here, keyed by model_id, with each model's live download state
+            with st.lock:
+                st.tick()
+                sizes = st.flags.get("update_size") or {}
+                rows = [{**store_row({**m, "size": sizes.get(m["id"], m["size"])}, i), "status": st.store_status(m["id"]),
+                         "progress": st.progress(m["id"]) or (100.0 if m["id"] in st.installed else 0.0),
+                         "need_update": st.need_update(m["id"])} for i, m in enumerate(ALL_MODELS.values(), 1)]
+            self.send_json(200, rows)
+        elif method == "POST" and (m := re.fullmatch(r"/api/v1/models/(.+)/download", p)):
+            self.download(m.group(1))
+        elif method == "POST" and (m := re.fullmatch(r"/api/v1/models/(.+)/pause_download", p)):
+            with st.lock:
+                d = st.downloads.get(m.group(1))
+                if d and d["status"] == "downloading":
+                    d.update(status=st.PAUSED, done=st.progress(m.group(1)) or 0.0)
+            if not d or d["status"] != st.PAUSED:
+                return self.err(400, f"{m.group(1)} is not downloading") or True
+            self.send_json(200, {"message": f"Model {m.group(1)} download paused successfully.", "status": st.PAUSED,
+                                 "progress": d["done"], "pause_in_progress": False, "process_id": "fake"})
+        elif method == "DELETE" and (m := re.fullmatch(r"/api/v1/models/(.+)", p)):
+            mid = m.group(1)
+            with st.lock:
+                busy = mid in st.running or mid in st.pending  # a guess at the device: catches a studio that forgets to check
+                missing = mid not in st.installed and mid not in st.downloads
+                if not busy and not missing:
+                    st.installed.discard(mid)
+                    st.downloads.pop(mid, None)
+                    st.fresh.discard(mid)
+            if busy:
+                return self.err(409, f"Model {mid} is running; stop it first") or True
+            if missing:
+                return self.err(404, f"Model {mid} not found") or True
+            if st.flags.get("delete_lost"):  # it happened, but the answer never made it back
+                return self.err(504, "Gateway Time-out") or True
+            self.send_json(200, {"message": f"Model {mid} deleted finish."})
         elif method == "GET" and re.fullmatch(r"/api/v1/models/online_models/.+/icon", p):
             if p.split("/online_models/", 1)[1].rsplit("/", 1)[0] == VIDEO:  # 0.1.38 has no icon for MiniMax-H3-Turbo
                 return self.send_json(404, {"error": {"code": "NOT_FOUND", "message": "Icon not found."}, "detail": "Icon not found."})
@@ -390,7 +505,7 @@ class Handler(BaseHTTPRequestHandler):
                 st.pending.clear()
             self.send_json(200, {"status": "ok"})
         elif method == "POST" and (m := re.fullmatch(r"/api/v1/models/(.+)/(launch|stop)", p)):
-            if not any(c["id"] == m.group(1) for c in CATALOG):
+            if m.group(1) not in st.installed:
                 return self.err(404, f"model {m.group(1)} not found") or True
             (st.launch if m.group(2) == "launch" else st.stop)(m.group(1))
             self.send_json(200, {"status": "ok", "message": m.group(2) + " accepted"})
@@ -484,6 +599,23 @@ class Handler(BaseHTTPRequestHandler):
         else:
             return False
         return True
+
+    def download(self, mid):
+        st = self.st
+        if mid not in ALL_MODELS:
+            return self.err(404, f"Model {mid} not found in the store")
+        with st.lock:
+            st.tick()
+            d = st.downloads.get(mid)
+            if mid in st.installed:
+                answer = {"message": f"{mid} already downloaded", "progress": 100.0}
+            elif d and d["status"] == "downloading":
+                answer = {"message": f"{mid} is downloading", "progress": st.progress(mid)}
+            else:
+                done = d["done"] if d and d["status"] == st.PAUSED else 0.0  # download again = resume a paused one
+                st.downloads[mid] = {"done": done, "since": time.time(), "status": "downloading"}
+                answer = {"message": f"start download {mid}", "progress": done}
+        self.send_json(200, answer)
 
     def unload_candidate(self, mid):
         m = next((c for c in CATALOG if c["id"] == mid), None)

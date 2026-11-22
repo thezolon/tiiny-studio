@@ -110,13 +110,17 @@ class Media:
         self._disk = (time.time(), self.settings.url, val)
         return val
 
+    def forget_disk(self):
+        """The next disk_space() reads the device again (after something was downloaded, deleted or cancelled)."""
+        self._disk = (0, None, None)
+
     def check_disk(self, kind):
         """Fail early when the Tiiny has almost no room left for what this job would write there."""
         if kind in DISK_KINDS:
             space = self.disk_space()
             if space and space[0] < 2:
                 raise JobError(f"The Tiiny is almost out of space ({space[0]:.1f} GB free). "
-                               "Free some up (delete models or files in the TiinyOS app) and try again.")
+                               "Free some up (delete a model you don't use in Models → Installed, or files in the TiinyOS app) and try again.")
 
     def running_instance(self, model_id):
         code, run = self.device("GET", "/api/v1/models/running", None, 15)

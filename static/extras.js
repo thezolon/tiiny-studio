@@ -168,7 +168,7 @@ let ocrLastUrl = null;
 async function ocrImage(url, modelId) {
   ocrLastUrl = url;
   let m = ocrModel(modelId || store.get("ocr.model", null));
-  if (!m) return toast("No text-recognition (OCR) model is installed. Download one in the TiinyOS app.");
+  if (!m) return toast("No text-recognition (OCR) model is installed. Get one from the Model Store (Models → Model Store, under Other).");
   if (wifiNote(m)) {  // GLM-OCR over USB: read with one that works on this link
     const alt = ocrModels().find((x) => !needsWifi(x));
     if (!alt) return toast(`${shortName(m.id)} needs a Wi-Fi/LAN connection: switch to the Tiiny's Wi-Fi address in Settings.`, "err");
@@ -479,7 +479,7 @@ async function* serverParts(file, run) {
 /** Load the preferred OCR model if needed and wait for it (the Models panel shows progress). */
 async function ensureOcrModel(run, d) {
   let m = ocrModel(store.get("ocr.model", null));
-  if (!m) throw new Error("This part needs OCR, and no text-recognition model is installed. Download one in the TiinyOS app.");
+  if (!m) throw new Error("This part needs OCR, and no text-recognition model is installed. Get one from the Model Store (Models → Model Store, under Other).");
   if (m.status === "running") return m.id;
   d.meta(`Loading ${shortName(m.id)} for the scanned parts…`);
   await loadModel(m.id);

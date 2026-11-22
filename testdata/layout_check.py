@@ -84,6 +84,10 @@ def main():
         post = lambda path, body: urllib.request.urlopen(urllib.request.Request(base + path, json.dumps(body).encode(), {"Content-Type": "application/json"}), timeout=30).read()
         post("/api/model/launch", {"id": "Qwen/Qwen-Image-2.1"})
         time.sleep(1)
+        # the model store: two updates waiting and a download that stays under way, so the drawer shows all of it
+        fake.state.flags.update(updates=["Qwen/Qwen3-4B-Instruct", "Fake/Whisper-ASR"], download_hold=True)
+        post("/api/model/download", {"id": "Fake/Store-Small"})
+        post("/api/model/queue", {"ids": ["Fake/Store-Image", "Fake/Store-Big"], "kind": "download"})  # the queue list too
         # a tall picture: the shape that pushed the preview off to the right in #92
         post("/api/jobs", {"kind": "image", "model": "Qwen/Qwen-Image-2.1", "prompt": "LAYOUT TEST tall apple", "size": "576x1024"})
         time.sleep(2)
@@ -121,7 +125,11 @@ def main():
                         page.locator("#aTools button").nth(i).click()
                         check(f"Audio tool {i + 1}")
                 page.evaluate("[...document.querySelectorAll('[role=tab]')].find((b) => b.textContent.trim() === 'Image').click()")
-                for state, js in (("models drawer", "openDrawer()"), ("settings", "document.querySelector('#settingsBtn').click()"),
+                for state, js in (("models drawer", "openDrawer()"),
+                                  ("model store", "openDrawer(); setMtab('store')"),
+                                  ("store download confirm", "openDrawer(); setMtab('store'); setTimeout(() => confirmFor('download', 'Fake/Store-Big'), 300)"),
+                                  ("model updates", "openDrawer(); setMtab('installed'); setTimeout(() => confirmFor('delete', 'Qwen/Qwen3-4B-Instruct'), 300)"),
+                                  ("settings", "document.querySelector('#settingsBtn').click()"),
                                   ("add device", "openSettings(false); SET.editing = 'new'; refreshSettings()"),
                                   ("update dialog", "document.querySelector('#updateOpen').click()"),
                                   ("annotate", ANNOTATE),
@@ -129,7 +137,7 @@ def main():
                     page.evaluate(js)
                     check(state)
                     page.keyboard.press("Escape")
-                    page.evaluate("closeDrawer(); closeAnnot(); S.sources = []; renderComposer()")
+                    page.evaluate("closeDrawer(); setMtab('installed'); closeAnnot(); S.sources = []; renderComposer()")
                 page.close()
             browser.close()
     finally:

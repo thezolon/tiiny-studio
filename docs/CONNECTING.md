@@ -38,7 +38,7 @@ The cable creates a tiny private network with just two addresses: your computer 
   `172.20.31.110`, the Tiiny is the other address, `172.20.31.109`.
 - **macOS / Linux:** `ifconfig` or `ip addr`; look for the interface with a `/30` address.
 
-Two limits apply over USB:
+Three limits apply over USB:
 
 1. **Songs are limited.** Over the cable the Tiiny only exposes its gateway (port 80). Images, chat,
    transcription, voice cloning, 3D and music loops all go through it and work. Songs work through the
@@ -53,6 +53,9 @@ Two limits apply over USB:
    Docker), or move Docker's default network: Docker Desktop → Settings → Docker Engine → add
    `"bip": "10.200.0.1/24"` and restart Docker (verified: after this, the studio in Docker reaches
    the Tiiny over USB). That second fix affects every container on the machine.
+3. **Model downloads and updates still need the Tiiny's own internet.** The Tiiny fetches models itself, over its
+   Wi-Fi (or a USB-C Ethernet adapter); the cable to your computer doesn't give it a way out. With its Wi-Fi off, a
+   download fails at once.
 
 ## Several ways to reach it (home, hotspot, USB)
 
@@ -67,6 +70,11 @@ message appears when it switches.
 **Keep TiinyOS open.** After the Tiiny powers on, its API answers `502 Bad Gateway` until the TiinyOS
 desktop app connects, so open TiinyOS once after starting the Tiiny, or turn on TiinyOS's
 **Auto Start** setting so it starts with your computer.
+
+**Model downloads fail, or no updates ever show.** The Tiiny downloads models from the internet itself, over its own
+Wi-Fi, even when the studio reaches it by USB. Check that the Tiiny is on a network with internet (the TiinyOS app
+shows it). While it has no internet the Tiiny reports no updates at all, so "No model updates waiting" can just mean
+it's offline. A big model on a phone hotspot uses that much of your data.
 
 | Test connection says | What to do |
 |---|---|

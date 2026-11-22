@@ -17,8 +17,8 @@ Showcase and discussion: [Tiiny Studio on TiinyVerse](https://tiinyverse.com/pos
 | **Image**: create and edit on the Tiiny (HiDream here) | **3D**: the same dog as a textured GLB, made in 6 minutes |
 | ![3D: a model being built, with its stages and a Cancel button](docs/screenshots/3d-building.webp) | ![Audio: a recording transcribed, with voice cloning on the left](docs/screenshots/audio.webp) |
 | **3D** while it builds: shape → simplify → texture → export | **Audio**: voices, loops, songs and transcription |
-| ![Models panel: NPU memory shared by two models, live device activity, load buttons](docs/screenshots/models.webp) | ![Song: a one-minute instrumental made on the Tiiny, with save, MP3 and vary](docs/screenshots/song.webp) |
-| **Models**: what's loaded, NPU memory and device activity | **Songs**: lyrics or instrumental, saved as WAV or MP3 |
+| ![Models panel on the Model Store tab: models the Tiiny can download, each with its size, NPU share, features and a Download button](docs/screenshots/models.webp) | ![Song: a one-minute instrumental made on the Tiiny, with save, MP3 and vary](docs/screenshots/song.webp) |
+| **Models**: the Model Store (download, queue, update, delete), plus loading and NPU memory | **Songs**: lyrics or instrumental, saved as WAV or MP3 |
 
 - **Image**: create from a prompt, or a new picture that uses up to 10 of yours as references
   ("the mug from image 1 in a cafe", in any shape); edit with plain-language instructions; circle an area to change;
@@ -62,6 +62,12 @@ Showcase and discussion: [Tiiny Studio on TiinyVerse](https://tiinyverse.com/pos
 - **Models panel**: load and unload any installed model (or all at once), see the NPU memory budget
   and live device activity (NPU busy %, memory, CPU/RAM; power and temperature too when the
   on-device dashboard on port 9109 runs), and get a prompt when something has to be unloaded.
+- **Model Store** (in the Models panel): browse every model the Tiiny's store offers with all of its details, download
+  one with progress (pause, resume, cancel), line up more in a **download queue** that runs them one after another
+  (remove one, or clear the queue; it keeps going with the window closed), see which installed models have an update
+  and install them (one or all), and delete models you don't use, with the Tiiny's free storage shown. The Tiiny downloads over its
+  own Wi-Fi, even when the studio is connected by USB. A loaded or busy model is never deleted or updated, and every
+  download, update and delete asks first.
 - The UI adapts to each model's capabilities (for example, Edit is locked for create-only models),
   and remembers steps, guidance, size and negative prompt per image model.
 
@@ -177,7 +183,8 @@ once and 30 tool calls a minute.
 
 What an agent can and can't see: only the jobs it started itself. There is no tool that lists or reads your gallery,
 chats or vault, and `get_job` refuses job ids it didn't start. It can see which models are installed and the names of
-your saved voices (to speak with them). Text that comes back (transcripts, OCR, chat replies) is wrapped in
+your saved voices (to speak with them), but it can't download, update or delete models: that stays in the Models
+panel, behind a confirm. Text that comes back (transcripts, OCR, chat replies) is wrapped in
 `<untrusted>` tags and screened for prompt injection; a suspicious one is flagged in the result, never dropped. Links to
 result files use the address the agent called, and need the studio password if you set one. Like the rest of the
 studio, MCP only answers on this computer unless you open the studio to your network.
@@ -237,6 +244,7 @@ off by default in Docker.
 | `static/shared.js` | workspaces, job polling, model gating, audio helpers, waveform player |
 | `static/audio.js`, `static/mesh.js`, `static/video.js` | Audio, 3D and Video workspaces |
 | `static/extras.js` | gallery tools, live device stats, OCR and documents in Text mode |
+| `static/models.js` | the Model Store tab: downloads, updates and deleting models |
 | `static/chat.js` | Chat workspace |
 | `static/vendor/` | bundled for offline use: [`<model-viewer>`](https://modelviewer.dev) 3.5.0, [pdf.js](https://mozilla.github.io/pdf.js/) 4.10.38 with its CMaps, [UTIF.js](https://github.com/photopea/UTIF.js) 3.1.0 and pako 1.0.11 (TIFF) |
 | `docs/CONNECTING.md` | finding the address and API key; USB notes; troubleshooting |

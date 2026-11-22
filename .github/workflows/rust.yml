@@ -72,6 +72,8 @@ jobs:
         run: python testdata/a11y_check.py
       - name: Check layout at small and odd window sizes (every control reachable; fixed size bugs stay fixed)
         run: python testdata/layout_check.py
+      - name: Model Store click-through (download, cancel, Update all; fake Tiiny)
+        run: python testdata/model_store_ui_check.py
 
   lint:
     name: Lint (rustfmt, clippy, ruff)

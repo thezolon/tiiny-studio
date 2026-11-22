@@ -247,6 +247,7 @@ async function recoverFromDevice() {
 /* ---------- models per tool ---------- */
 const TOOL_TYPES = { speech: "Text-to-Speech", transcribe: "ASR", loop: "Music Generation", song: "Music Generation", mesh: "Image-to-3D",
   chat: "Text Generation or Image-Text-to-Text", vision: "Image-Text-to-Text with image input" };
+const TOOL_WS = { speech: "audio", transcribe: "audio", loop: "audio", song: "audio", mesh: "3d", chat: "text", vision: "text" };  // the store's filter
 const CHAT_TYPES = ["Image-Text-to-Text", "Text Generation"];
 const seesImages = (m) => /\bImage\b/.test(m.input || "");
 /** What a loaded model reports about itself (/api/model/info, #23), fetched once per model and kept; null until it's
@@ -400,7 +401,9 @@ function modelGate(tool, what, picker) {
   const m = modelForTool(tool);
   // Music used to need the models' own ports (blocked over USB); the gateway's /v1/music routes now cover it.
   if (m && (m.status === "running" || picker)) return null;  // with a picker, its card offers Load
-  if (!m) return el("div", { class: "gate" }, el("b", {}, `No ${what} model installed.`), el("p", {}, `Download one in the TiinyOS app (${TOOL_TYPES[tool]}).`));
+  if (!m) return el("div", { class: "gate" }, el("div", { class: "grow" }, el("b", {}, `No ${what} model installed.`),
+    el("p", {}, `Get one from the Model Store (${TOOL_TYPES[tool]}).`)),
+    typeof openStore === "function" ? el("button", { class: "btn-sm accent", onclick: () => openStore(TOOL_WS[tool]) }, "Open the Model Store") : null);
   const loading = S.loading[m.id] != null || m.status === "loading";
   return el("div", { class: "gate" },
     modelImg(m, { class: "gate-ico" }),

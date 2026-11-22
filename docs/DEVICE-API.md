@@ -59,7 +59,7 @@ too (**tested**).
 | GET | `/api/v1/sys/device_info` | cpu, gpu, dnpu, ram, storage, network, versions, device name, settings | **tested** |
 | POST | `/api/v1/sys/setting` | change a device setting | **spec** |
 | POST | `/api/v1/sys/base_urls` | runtime base URLs | **spec** |
-| GET | `/api/v1/sys/storage`, `/storage/llm`, `/storage/agent` | storage use | **spec** |
+| GET | `/api/v1/sys/storage` (tested, see Models), `/storage/llm` (`{total_size, models: []}` on 0.1.39), `/storage/agent` | storage use | **tested** / **spec** |
 | DELETE | `/api/v1/sys/storage/agent/{agent_name}` | delete an agent's data | **spec** |
 | GET/POST | `/api/v1/sys/wifi/wifi_list`, `wifi_connect`, `wifi_disconnect`, `connection_status`, `connection_switch`, `wifi_change`, `wifi_auto_connect` | Wi-Fi setup | **docs**/**app** — 404 on port 80 over Wi-Fi (2026-10-25); probably USB/first-setup only |
 | GET | `/api/v1/npu/status` | NPU memory budget and utilisation (util only while a model is loaded) | **tested** |
@@ -79,10 +79,21 @@ All through port 80 (the model service). `{id}` is the URL-encoded model id, e.g
 | POST | `/api/v1/models/{id}/launch/stream` | load with progress stream | **app** |
 | POST | `/api/v1/models/{id}/stop` | unload | **tested** |
 | POST | `/api/v1/models/unload_all` | unload everything | **tested** |
-| POST | `/api/v1/models/{id}/download`, `/pause_download`, `/interrupt`; `/api/v1/models/interrupt_all` | downloads | **docs**/**app** |
-| DELETE | `/api/v1/models/{id}` | delete a downloaded model | **docs** |
+| GET | `/api/v1/models/?including_downloading=true` | the same plus models being downloaded: `status` downloading → downloaded, or `error` (e.g. no internet), `progress` 0-100, `need_update` | **tested** |
+| POST | `/api/v1/models/{id}/download` (empty body) | start a download: `{"message": "start download …", "progress": 0.0}`; watch it with the list above. The id keeps its `/` here. The Tiiny downloads over its own Wi-Fi: with its Wi-Fi off it refuses, even over USB | **tested** (0.1.39) |
+| POST | `/api/v1/models/{id}/pause_download` (empty body) | pause a download: `{"message": "… download paused successfully.", "status": "download_stop", "progress": 28.06, …}`; the list shows `status: download_stop`. **Resume** = `POST …/download` again: it continues from where it stopped | **tested** (0.1.39, 2026-11-21) |
+| POST | `/api/v1/models/{id}/interrupt`; `/api/v1/models/interrupt_all` | **not a download cancel**: only stops an in-flight chat reply (`"No in-flight chat completion found"`); a download keeps going. To cancel one, pause it and `DELETE` it (the studio does): `DELETE` of a paused download answers `deleted finish.` and the row is gone at once (**tested** 2026-11-21) | **tested** (0.1.39) |
+| GET | `/api/v1/models/storage` | disk use per model: `data.models[]` with `model_id`, `size_bytes`, `docker_*_size`; totals (`total_size_bytes`, shared/unique) | **tested** (0.1.39) |
+| GET | `/api/v1/sys/storage` | `total_bytes`, `used_bytes`, `remaining_bytes`, `details[]` (`name`, `size_bytes`) | **tested** (0.1.39) |
+| DELETE | `/api/v1/models/{id}` | delete a downloaded model: `{"message": "Model … deleted finish."}`; the id keeps its `/` | **tested** (0.1.39) |
+| GET | `/api/v1/models/online_models` | the Model Store: a bare list, keyed by `model_id`; `name`, `type`, `params`, `npu_usage`, `desc`, `supported`, `context_window`, `recommend_rank`, `status` (`downloaded`/`not_downloaded`), `progress`, `need_update`, `version_label`; `tags[]`: `size` (bytes, the download), `version`, `update_title`, `update_desc` | **tested** |
 | POST | `/api/v1/models/import`, `/import/inspect`; GET `/import/toolkits` | import a custom model (checks toolkit support) | **docs**/**app** |
-| GET | `/api/v1/models/types`, `/storage`, `/online_models`, `/api/v1/model-stats` | model types, disk use, store catalogue, stats | probed |
+| GET | `/api/v1/models/types`, `/api/v1/model-stats` | model types, stats | probed |
+
+**Updating a model = delete + download** (tested on 0.1.39): there is no update call. `need_update` in the model list
+says one is waiting. Two traps: while the Tiiny has no internet every model reads `need_update: false` (so "no
+updates" can just mean it's offline), and the store's `version_label` is not the build a download installs, so don't
+compare versions. A download that fails after the delete leaves the model missing until it is downloaded again.
 | GET (ws) | `/api/v1/models/running/ws`, `/api/v1/models/npu/status/ws` | live updates | **app** |
 | GET | `/api/v1/statistics/week_usage?start_date=…`, `/app_week_usage` | usage stats | **app** (needs `start_date`) |
 

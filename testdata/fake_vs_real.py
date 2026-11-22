@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "testdata"))
 import fake_tiiny  # noqa: E402
 
-PATHS = ["/v1/models", "/api/v1/models/?including_downloading=false", "/api/v1/models/running", "/api/v1/models/online_models",
+PATHS = ["/v1/models", "/api/v1/models/?including_downloading=false", "/api/v1/models/?including_downloading=true", "/api/v1/models/running", "/api/v1/models/online_models",
          "/api/v1/npu/status", "/api/v1/sys/status", "/api/v1/sys/device_info", "/api/v1/sys/ac_power/"]
 
 

@@ -4,6 +4,7 @@
 pub mod chat;
 pub mod config;
 pub mod device;
+mod downloads;
 pub mod extract;
 pub mod jobs;
 mod library;
@@ -54,6 +55,13 @@ pub struct AppState {
     pub(crate) search_cache: Arc<Mutex<SearchCache>>,
     /// (when asked, the answer) of GET /api/update; a failure is cached too
     pub(crate) update_cache: Arc<tokio::sync::Mutex<Option<(Instant, serde_json::Value)>>>,
+    /// The Model Store's entries, cached 60 s per device; see downloads::store_facts
+    pub(crate) store_cache: Arc<Mutex<Option<downloads::StoreCache>>>,
+    /// Every model download, pause, cancel, delete and update: its checks and its device calls run under this lock
+    pub(crate) change_lock: Arc<tokio::sync::Mutex<()>>,
+    /// The download queue, updates under way and models an update left missing; see downloads::queue_tick
+    pub(crate) queue: Arc<Mutex<downloads::Queue>>,
+    pub(crate) queue_wake: Arc<tokio::sync::Notify>,
 }
 
 impl AppState {
@@ -79,6 +87,10 @@ impl AppState {
             store: Arc::new(store::Store::new(&config_dir)),
             search_cache: Arc::default(),
             update_cache: Arc::default(),
+            store_cache: Arc::default(),
+            change_lock: Arc::default(),
+            queue: Arc::default(),
+            queue_wake: Arc::default(),
         }
     }
 
@@ -109,6 +121,7 @@ pub async fn serve(listener: tokio::net::TcpListener, config: Config) -> std::io
             tokio::time::sleep(std::time::Duration::from_secs(20)).await;
         }
     });
+    tokio::spawn(downloads::queue_worker(state.clone()));
     // the client address decides a few things (e.g. only this computer may open the results folder)
     let jobs = state.clone();
     axum::serve(
