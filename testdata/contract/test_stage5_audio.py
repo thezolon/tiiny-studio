@@ -67,8 +67,10 @@ class Audio(Jobs):
         return {"kind": "speech", "model": TTS, "text": "RUST TEST hello there.", "ref_audio": WAV, "ref_text": "hi", "load": TTS, **kw}
 
     def test_speech_without_a_voice_uses_the_models_default(self):
-        py, rs = self.same_job(self.speech(ref_audio=None, ref_text=None))
+        # a model with its own default voice (Qwen3-TTS-Base clones, so it needs a reference, as on the device)
+        py, rs = self.same_job(self.speech(model="Fake/CustomVoice", load="Fake/CustomVoice", ref_audio=None, ref_text=None))
         self.assertEqual(py["status"], "done", py.get("error"))
+        self.assertEqual(rs["status"], "done", rs.get("error"))
         body = next(c[3] for c in self.calls() if c[1] == "/v1/audio/speech")
         for k in ("voice", "ref_audio", "instruct"):
             self.assertNotIn(k, body)
