@@ -61,6 +61,7 @@ class DeviceTarget:
     can change mid-job (auto-switch, or the Settings screen); a key must never be sent to a device it doesn't belong to."""
     def __init__(self, settings):
         cur = settings.current() or {}  # one read: url and key from the same device
+        self.id = cur.get("id")
         self.url, self.key = cur.get("url", ""), cur.get("key", "")
         self.host = urlparse(self.url).hostname or ""
         self.swap_allowed = settings.swap_allowed
@@ -380,20 +381,29 @@ class Media:
             except OSError:
                 pass  # best effort: a clip or song deleted here could be pulled back from the device at the next look
 
-    def delete_device_sessions(self, ids):
+    def delete_device_sessions(self, sessions):
         """Best effort, in the background (it waits its turn for the device): the Tiiny keeps a finished song's session
-        until it's deleted. Never blocks or fails the local delete."""
-        ids = [i for i in ids if i]
+        until it's deleted. Never blocks or fails the local delete. `sessions` are (session id, id of the Tiiny that made
+        it) pairs: each goes to its own Tiiny; an older entry without one goes to the active Tiiny, and a Tiiny that is
+        no longer saved can't be reached."""
         m = self.snapshot()
-        if not ids or not m.settings.url:
+        saved = {d["id"]: d for d in getattr(self.settings, "devices", [])}
+        jobs = []
+        for sid, dev in sessions:
+            if not sid:
+                continue
+            to = (m.settings.url, m.settings.key) if dev is None else ((saved[dev].get("url", ""), saved[dev].get("key", "")) if dev in saved else ("", ""))
+            if to[0]:
+                jobs.append((sid, to))
+        if not jobs:
             return
-        self.mark_seen(*ids)
+        self.mark_seen(*[sid for sid, _ in jobs])
 
         def work():
             with self.lock:
-                for i in ids:
+                for sid, (url, key) in jobs:
                     try:
-                        self.http("DELETE", f"{m.settings.url}/v1/music/sessions/{quote(i, safe='')}", timeout=15, headers=m.gateway_headers())
+                        self.http("DELETE", f"{url}/v1/music/sessions/{quote(sid, safe='')}", timeout=15, headers={"Authorization": f"Bearer {key}"})
                     except JobError:
                         pass
         threading.Thread(target=work, daemon=True).start()
@@ -497,7 +507,7 @@ class Media:
         except JobError:
             return None
         entry = {"id": eid, "created": int(time.time()), "kind": kind, "seconds": 0, "params": {"model": model, "recovered": True},
-                 "sources": [], "outputs": [out], "downloads": [], "duration": None, "device": {"music_session": sid}}
+                 "sources": [], "outputs": [out], "downloads": [], "duration": None, "device": {"music_session": sid, "device_id": self.settings.id}}
         try:
             self.record(entry)
         except JobError:
@@ -926,7 +936,7 @@ def run_loop(m, job, req):
     after = m.session_ids() if before is not None else None
     new = sorted(after - before - {None}) if after is not None else []
     m.mark_seen(*new)
-    device = {"device": {"music_session": new[0]}} if len(new) == 1 else {}
+    device = {"device": {"music_session": new[0], "device_id": m.settings.id}} if len(new) == 1 else {}
     return {"kind": "loop", **device, "params": {"model": job["model"], "prompt": prompt, **config, "bpm": req.get("bpm"),
                                        "bars": req.get("bars"), "key": req.get("key")},
             "sources": [], "outputs": [out], "duration": config.get("seconds_total")}
@@ -1070,7 +1080,7 @@ def _song_entry(m, job, req, res, config, sources, route, url):
             pass
         if route == "preview":
             resume = {"session_id": sid}  # a preview can be continued once
-        device = {"music_session": sid}  # the session stays on the Tiiny until this entry is deleted
+        device = {"music_session": sid, "device_id": m.settings.id}  # the session stays on the Tiiny until this entry is deleted
         m.mark_seen(sid)
     if req.get("resume_session") and req.get("from_entry") and getattr(m, "edit_history", None):
         try:

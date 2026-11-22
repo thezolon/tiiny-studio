@@ -209,7 +209,7 @@ pub async fn run_loop(ctx: Ctx) -> JobResult {
     }
     let mut entry = json!({"kind": "loop", "params": params, "sources": [], "outputs": [out], "duration": config.get("seconds_total")});
     if let [sid] = new.as_slice() {
-        entry["device"] = json!({"music_session": sid});
+        entry["device"] = json!({"music_session": sid, "device_id": ctx.target.id});
     }
     Ok(entry)
 }
@@ -566,7 +566,7 @@ async fn song_entry(
             // leave it unclaimed: recovery picks it up on the next open
             return Err(JobError("The Tiiny finished this song, but it couldn't be downloaded. It'll be saved from the Tiiny the next time the studio opens.".into()));
         }
-        device = Some(json!({"music_session": sid})); // the session stays on the Tiiny until this entry is deleted
+        device = Some(json!({"music_session": sid, "device_id": ctx.target.id})); // the session stays on the Tiiny until this entry is deleted
         ctx.state.store.mark_seen(std::slice::from_ref(sid), false);
     }
     if from_session {
